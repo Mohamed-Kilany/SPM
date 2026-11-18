@@ -80,7 +80,7 @@ docker-compose.test.yml  Isolated test stack
 - Load test: `scripts/loadtest.ps1`.
 - Air-gapped image mirroring: `scripts/mirror-images.ps1`.
 - Health: `/health/live`, `/health/ready`, `/health`.
-- Metrics: Prometheus-format endpoint from the API.
+- Metrics: not yet exposed. Tracked as `OBS-01` in `TASKS.md`; there is no Prometheus endpoint today.
 
 ## Status
 
