@@ -121,6 +121,10 @@ Rules:
   and snapshots. A larger PR needs a written justification in the PR description.
 - One reviewer is enough while the team has one maintainer; the target is two approvals once
   a second maintainer exists (`GOV-12`).
+- **Authorship:** while the project has one maintainer, every human commit on `master` is
+  authored by that maintainer. Dependabot is the sole accepted non-human author: it may open
+  dependency/security-update PRs, which run the full gate and are squash-merged like any other
+  change. No other bot or automation may author history (`ADR-023`).
 
 ### 2.2 Pull request contract
 
@@ -140,6 +144,9 @@ Every PR must:
    output. Secret scanning and the dependency-review gate are backstops, not permission.
 10. Never weaken a check, skip a test, add `continue-on-error`, or edit branch protection to
     get a merge. Fix the cause or revert the change.
+11. Only Dependabot may author a PR as a bot. Dependabot PRs carry the `dependencies` label,
+    run the full gate, and are never merged through a bypass. Security updates take precedence
+    over routine version updates (`ADR-023`).
 
 ### 2.3 Required checks (PR gate)
 
@@ -161,6 +168,11 @@ Additional checks are added only when they are deterministic, actionable and fas
 keep the median PR under 20 minutes. Flaky or advisory checks are not made required until
 they are stable; they run as non-blocking annotations first.
 
+Dependabot opens two classes of PR: weekly grouped version updates (minor/patch per ecosystem)
+and grouped security updates. Both use the required contexts above; `Security: dependency
+review` is the diff-specific gate. Security-update PRs are triaged before version updates, and
+no Dependabot PR may be merged unless every required check is green (`ADR-023`).
+
 ### 2.4 Branch protection on `master`
 
 The repository enforces:
@@ -173,7 +185,8 @@ The repository enforces:
 - No branch deletion.
 - Administrators are subject to the same rules (`enforce_admins: true`).
 - Approvals: **0 required while there is one maintainer**; raise to 1 with dismissal of stale
-  approvals as soon as a second maintainer exists. Self-approval is never accepted.
+  approvals as soon as a second maintainer exists. Self-approval is never accepted. Dependabot
+  cannot approve; once a second maintainer exists, its PRs also require one human approval.
 - Squash merge is the only enabled merge method.
 
 > **Bootstrap note:** branch protection is enabled only after a small validation PR has run
@@ -2083,7 +2096,10 @@ actions still work), permission-filtered.
   - [x] The Compose job creates a throwaway `.env` from `.env.example`.
   - [x] CodeQL covers Go, JavaScript/TypeScript and Python.
   - [x] Dependabot opens PRs (which run the gate) rather than pushing updates.
-- **Tests/evidence:** YAML parses; the first validation PR runs every job successfully.
+  - [x] Dependabot config carries labels, assignee/reviewer, a `chore(deps)` commit prefix,
+    separately grouped security updates, and per-ecosystem open-PR limits (`ADR-023`).
+- **Tests/evidence:** YAML parses; the first validation PR runs every job successfully; a
+  Dependabot PR with a dependency diff runs `Security: dependency review` successfully.
 - **Docs:** PR template checklist mirrors the jobs.
 
 #### BASE-03 · Branch protection and merge policy
@@ -2140,13 +2156,16 @@ actions still work), permission-filtered.
 - **Depends on:** BASE-02
 - **Scope:** Add lockfile integrity checks, `govulncheck`, `npm audit`/`pip-audit` triage,
   SBOM generation (`syft`), image scanning (`trivy`), provenance/signing (`cosign`) and a
-  documented exception policy. Start advisory, then make high/critical findings blocking once
-  the baseline is clean.
+  documented exception policy. Keep Dependabot alerts and automated security fixes enabled,
+  with grouped security-update PRs and per-ecosystem limits (`ADR-023`). Start advisory, then
+  make high/critical findings blocking once the baseline is clean.
 - **Acceptance criteria:**
   - [ ] SBOMs are produced for API, UI and AI images.
   - [ ] High/critical vulnerabilities have an owner, due date and remediation or exception.
   - [ ] Images are signed and verification is documented.
   - [ ] Dependabot PRs run the full PR gate.
+  - [ ] Dependabot alerts and automated security fixes are enabled; grouped security-update
+    PRs are verified.
   - [ ] No secret scanning alert is ignored without a written reason.
 - **Tests/evidence:** SBOM artifact, scan report, signature verification command.
 - **Docs/telemetry:** `docs/SECURITY.md`, exception register, release checklist.
@@ -4270,6 +4289,7 @@ record).
 | ADR-020 | Feature flags in configuration, not a SaaS flag service | ACCEPTED | 2026-11-18 | BASE-08 |
 | ADR-021 | Dependency policy: pinned, reviewed, mirrored | ACCEPTED | 2026-11-18 | BASE-06, OPS-07 |
 | ADR-022 | Data retention and erasure as first-class jobs | ACCEPTED | 2026-11-18 | OPS-11 |
+| ADR-023 | Solo-authored history with Dependabot as the only bot author | ACCEPTED | 2026-11-18 | BASE-02, BASE-06 |
 
 ### ADR-001 · Trunk-based development with a protected `master`
 
@@ -4589,6 +4609,30 @@ record).
 - **Alternatives considered:** Manual DBA procedures (rejected: unauditable, error-prone);
   indefinite retention (rejected: compliance and cost).
 
+### ADR-023 · Solo-authored history with Dependabot as the only bot author
+
+- **Status:** ACCEPTED · **Date:** 2026-11-18
+- **Context:** The repository has one human maintainer. Unreviewed bot commits would blur
+  authorship and undermine the PR contract, but free GitHub-native dependency automation
+  materially reduces supply-chain risk and is expected in a public, enterprise-grade project.
+  Disabling it to keep a strictly human history would remove vulnerability alerts, automated
+  security fixes, dependency review and grouped update PRs for no security benefit.
+- **Decision:** All human history is authored by the maintainer and reaches `master` only
+  through a green PR. Dependabot is retained as the sole accepted non-human author. Its
+  version-update PRs are weekly, grouped per ecosystem for minor/patch, labeled
+  (`dependencies`, `type/chore`, `area/*`), assigned and review-requested to the maintainer,
+  prefixed `chore(deps)`, and capped per ecosystem. Security updates are grouped separately
+  and triaged before routine updates. Dependabot cannot bypass branch protection or approve,
+  and every bot PR runs the full PR gate. Any other bot requires a new ADR.
+- **Consequences:** `master` contains `chore(deps)` squash commits authored by
+  `dependabot[bot]`; the maintainer remains accountable for triaging, merging or closing every
+  bot PR and for the patch SLA. Secret scanning, push protection, CodeQL, dependency review,
+  vulnerability alerts and automated security fixes remain enabled at no cost.
+- **Alternatives considered:** Disabling Dependabot for a strictly human history (rejected:
+  loses free security coverage); auto-merging bot PRs (rejected: bypasses the gate and major
+  upgrades need judgment); a third-party dependency bot (rejected: extra supply-chain surface
+  with no benefit over native automation).
+
 ---
 
 ## 12. Metrics and release certification
@@ -4726,7 +4770,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `.github/workflows/pr-gate.yml` | Required PR checks | Maintainer | Active |
 | `.github/workflows/codeql.yml` | Security analysis | Maintainer | Active |
 | `.github/pull_request_template.md` | PR evidence contract | Maintainer | Active |
-| `.github/dependabot.yml` | Dependency update automation | Maintainer | Active |
+| `.github/dependabot.yml` | Dependency and security update automation (`ADR-023`) | Maintainer | Active |
 | `docs/SECURITY.md` | Disclosure and security policy | Maintainer | Planned (`BASE-07`) |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Planned (`GOV-04`) |
@@ -4785,7 +4829,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 |---|---|---|
 | GitHub Actions | PR verification | PR-only triggers; no `pull_request_target` |
 | CodeQL | Static analysis | Go, JavaScript/TypeScript, Python |
-| Dependabot | Dependency updates | Weekly grouped PRs; runs the full gate |
+| Dependabot | Dependency and security updates | Sole bot author; weekly grouped minor/patch PRs, grouped security PRs, labels/assignee, full gate (`ADR-023`) |
 | `gofmt`, `go vet`, `go test -race` | Go quality | Required in the gate |
 | `vue-tsc`, Vitest, Vite | UI quality | Required in the gate |
 | pytest | AI quality | Required in the gate |
@@ -4862,7 +4906,9 @@ multiple tasks uses the primary task ID and lists the rest in the body.
 
 Rules: every PR has exactly one `type/*`, at least one `area/*`, one `priority/*` and one
 `size/*`. Labels are applied by the author and verified by the reviewer. A `priority/p0` PR
-preempts other work and must be reviewed the same day.
+preempts other work and must be reviewed the same day. Dependabot applies `dependencies`,
+`type/chore` and the relevant `area/*` label automatically from `.github/dependabot.yml`; those
+labels must exist in the repository.
 
 ### 14.5 Issue and task conventions
 
@@ -4979,6 +5025,7 @@ preempts other work and must be reviewed the same day.
 | Date | Change | Author |
 |---|---|---|
 | 2026-11-18 | Initial baseline: operating model, gap register, UI research/blueprints, 128 task cards, standards, milestones, risks, ADRs, metrics, references, appendices | Maintainer |
+| 2026-11-18 | Retained and fortified Dependabot as the sole accepted bot author; added ADR-023, authorship policy, label/assignment/grouping checks and supply-chain notes | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

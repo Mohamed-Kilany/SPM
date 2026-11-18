@@ -1,28 +1,74 @@
 version: 2
+
+# Fortified dependency automation (ADR-023).
+#
+# - Dependabot is the sole accepted non-human author. Every update arrives as a PR and
+#   runs the full PR-only gate; nothing is pushed to master.
+# - Routine minor/patch updates are grouped per ecosystem to keep review load low.
+# - Security updates are grouped separately and triaged before version updates.
+# - Every PR is labeled for the taxonomy, assigned to the maintainer, and uses a
+#   Conventional Commits prefix so squash history stays consistent.
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: master
     schedule:
       interval: weekly
       day: monday
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
+    rebase-strategy: auto
+    labels:
+      - dependencies
+      - type/chore
+      - area/ops
+    assignees:
+      - Mohamed-Kilany
+    reviewers:
+      - Mohamed-Kilany
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      github-actions:
+      actions-security:
+        applies-to: security-updates
         patterns:
           - "*"
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: gomod
     directory: /api
+    target-branch: master
     schedule:
       interval: weekly
       day: monday
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
+    rebase-strategy: auto
+    labels:
+      - dependencies
+      - type/chore
+      - area/api
+    assignees:
+      - Mohamed-Kilany
+    reviewers:
+      - Mohamed-Kilany
+    commit-message:
+      prefix: "chore(deps)"
     groups:
+      go-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       go-minor-patch:
+        applies-to: version-updates
         patterns:
           - "*"
         update-types:
@@ -31,14 +77,32 @@ updates:
 
   - package-ecosystem: npm
     directory: /ui
+    target-branch: master
     schedule:
       interval: weekly
       day: monday
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
+    rebase-strategy: auto
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - type/chore
+      - area/ui
+    assignees:
+      - Mohamed-Kilany
+    reviewers:
+      - Mohamed-Kilany
+    commit-message:
+      prefix: "chore(deps)"
     groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       npm-minor-patch:
+        applies-to: version-updates
         patterns:
           - "*"
         update-types:
@@ -47,14 +111,31 @@ updates:
 
   - package-ecosystem: pip
     directory: /ai
+    target-branch: master
     schedule:
       interval: weekly
       day: monday
       time: "06:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
+    rebase-strategy: auto
+    labels:
+      - dependencies
+      - type/chore
+      - area/ai
+    assignees:
+      - Mohamed-Kilany
+    reviewers:
+      - Mohamed-Kilany
+    commit-message:
+      prefix: "chore(deps)"
     groups:
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       python-minor-patch:
+        applies-to: version-updates
         patterns:
           - "*"
         update-types:
