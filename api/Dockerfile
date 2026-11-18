@@ -1,0 +1,23 @@
+# ── Stage 1: Build the Go binary ───────────────────────────────────────────
+FROM golang:1.27-alpine AS builder
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /spm-api ./cmd/api
+
+# ── Stage 2: Runtime (alpine — includes wget for healthchecks) ─────────────
+FROM alpine:3.21
+
+RUN apk add --no-cache wget ca-certificates
+
+# API binary (schema migrations are embedded in the binary)
+COPY --from=builder /spm-api /spm-api
+
+EXPOSE 8080
+
+ENTRYPOINT ["/spm-api"]

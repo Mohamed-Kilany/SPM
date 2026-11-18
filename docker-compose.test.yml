@@ -1,0 +1,225 @@
+﻿# SPM Platform â€” CI Test Stack
+#
+# Mirrors docker-compose.yaml but uses isolated test volumes/network,
+# fixed credentials, and adds a test_runner container.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --exit-code-from test_runner
+#
+# The test_runner exits with the combined Go unit + integration test result.
+#
+# The separate Compose project name keeps test containers, volumes and cleanup
+# fully isolated from the main `spm` stack.
+
+name: spm-test
+
+networks:
+  spm_test_net:
+    driver: bridge
+
+volumes:
+  test_postgres_data:
+  test_nats_data:
+  test_gitea_data:
+
+services:
+
+  # â”€â”€ PostgreSQL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  test_postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB:       spm_test
+      POSTGRES_USER:     spm_test
+      POSTGRES_PASSWORD: spm_test_password
+      PGDATA:            /var/lib/postgresql/18/docker
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=4MB
+    volumes:
+      - test_postgres_data:/var/lib/postgresql
+      - ./api/internal/migrate/sql:/docker-entrypoint-initdb.d:ro
+    networks:
+      - spm_test_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spm_test -d spm_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  # â”€â”€ NATS JetStream â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  test_nats:
+    image: nats:2-alpine
+    command: ["-c", "/etc/nats/nats.conf"]
+    volumes:
+      - test_nats_data:/data
+      - ./nats/nats.conf:/etc/nats/nats.conf:ro
+    networks:
+      - spm_test_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # â”€â”€ Gitea â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  test_gitea:
+    image: gitea/gitea:1.24.7
+    environment:
+      USER_UID:                        "1000"
+      USER_GID:                        "1000"
+      GITEA__database__DB_TYPE:        postgres
+      GITEA__database__HOST:           test_postgres:5432
+      GITEA__database__NAME:           git
+      GITEA__database__USER:           spm_test
+      GITEA__database__PASSWD:         spm_test_password
+      GITEA__server__ROOT_URL:         http://test_gitea:3000
+      GITEA__server__HTTP_PORT:        "3000"
+      GITEA__server__SSH_PORT:         "22"
+      GITEA__server__SSH_LISTEN_PORT:  "22"
+      GITEA__security__SECRET_KEY:     ci-gitea-secret-key-not-for-prod
+      GITEA__security__INTERNAL_TOKEN: ci-gitea-internal-token-not-for-prod
+      GITEA__security__INSTALL_LOCK:   "true"
+      GITEA__actions__ENABLED:         "true"
+    volumes:
+      - test_gitea_data:/data
+    networks:
+      - spm_test_net
+    depends_on:
+      test_postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  # ── AI service — stateless CPU-only RAG ────────────────────────────────────
+  test_ai_service:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    environment:
+      PORT: "8090"
+      SPM_AI_DISABLE_LLM: "1"
+    networks:
+      spm_test_net:
+        aliases:
+          - ai_service
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ── SPM API Backend ───────────────────────────────────────────────────────
+  test_api_backend:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL:              "postgres://spm_test:spm_test_password@test_postgres:5432/spm_test?sslmode=disable"
+      NATS_URL:                  "nats://test_nats:4222"
+      NATS_EVENT_RETENTION_DAYS: "1"
+      JWT_SECRET:                "ci-jwt-secret-not-for-prod"
+      JWT_EXPIRY_HOURS:          "24"
+      GITEA_BASE_URL:            "http://test_gitea:3000"
+      GITEA_API_TOKEN:           "ci-gitea-api-token"
+      GITEA_ORG:                 "spm"
+      GITEA_WEBHOOK_SECRET:      "ci-webhook-secret"
+      ARGOCD_WEBHOOK_TOKEN:      "ci-argocd-token"
+      ARGOCD_ENABLED:            "false"
+      MANIFEST_REPO_PATH:        "spm-manifests"
+      MANIFEST_IMAGE_TAG_PATH:   "deploy/image-tag.txt"
+      AI_SERVICE_URL:            "http://test_ai_service:8090"
+      PORT:                      "8080"
+    networks:
+      spm_test_net:
+        aliases:
+          - api_backend
+    depends_on:
+      test_postgres:
+        condition: service_healthy
+      test_nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 20s
+
+  # â”€â”€ Vue SPA static file server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # Built from source so the CI stack is self-contained. The runtime base is
+  # pinned through the NGINX_IMAGE build argument so the CI stack uses the same
+  # cached image as production and can start without another registry pull.
+  test_ui_static:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        NGINX_IMAGE: nginx:1.30.5-alpine-otel
+    environment:
+      API_UPSTREAM: test_api_backend:8080
+    networks:
+      spm_test_net:
+        aliases:
+          - ui_static
+    depends_on:
+      test_api_backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # â”€â”€ Envoy edge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # Uses the same edge configuration as production. Network aliases above let
+  # the shared config resolve the test-prefixed services.
+  test_ui_envoy:
+    image: envoyproxy/envoy:v1.29.12
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    networks:
+      - spm_test_net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8080'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # â”€â”€ Test Runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # Runs all Go unit tests + integration tests, then exits.
+  # docker compose -f docker-compose.test.yml up --exit-code-from test_runner
+  test_runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+      target: integration_runner
+    environment:
+      SPM_BASE_URL:         "http://test_api_backend:8080"
+      DATABASE_URL:         "postgres://spm_test:spm_test_password@test_postgres:5432/spm_test?sslmode=disable"
+      NATS_URL:             "nats://test_nats:4222"
+      JWT_SECRET:           "ci-jwt-secret-not-for-prod"
+      GITEA_WEBHOOK_SECRET: "ci-webhook-secret"
+      ARGOCD_WEBHOOK_TOKEN: "ci-argocd-token"
+      TEST_ADMIN_USER:      "admin"
+      TEST_ADMIN_PASS:      "Admin@1234"
+      AI_SERVICE_URL:       "http://test_ai_service:8090"
+    networks:
+      - spm_test_net
+    depends_on:
+      test_api_backend:
+        condition: service_healthy
+      test_gitea:
+        condition: service_healthy

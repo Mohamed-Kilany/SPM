@@ -1,0 +1,1034 @@
+openapi: 3.1.0
+info:
+  title: SPM Platform API
+  version: 1.0.0
+  description: |
+    Offline-first software delivery platform API. The normalized workspace
+    aggregate is the source of truth for SDLC/STLC artifacts. Mutations emit a
+    `workspace.changed` event and bump the project SSE revision.
+servers:
+  - url: http://localhost:8080
+    description: Local Compose stack
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Projects
+  - name: Workspace
+  - name: Planning
+  - name: Work items
+  - name: Tests
+  - name: Delivery
+  - name: Reports
+  - name: Webhooks
+paths:
+  /health/live:
+    get:
+      security: []
+      tags: [Projects]
+      summary: Liveness probe
+      responses:
+        '200': { description: Process is alive }
+  /health/ready:
+    get:
+      security: []
+      tags: [Projects]
+      summary: Readiness probe
+      responses:
+        '200': { description: PostgreSQL and NATS are ready }
+        '503': { description: A dependency is unavailable }
+  /api/v1/auth/login:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Exchange local credentials for a JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: JWT issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects with normalized delivery counters
+      responses:
+        '200':
+          description: Projects visible to the caller
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectSummary' }
+    post:
+      tags: [Projects]
+      summary: Create a project and provision its repository and environments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 255 }
+                description: { type: string }
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  warnings:
+                    type: array
+                    items: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/v1/projects/{projectId}/workspace:
+    get:
+      tags: [Workspace]
+      summary: Load the complete linked workspace aggregate
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Workspace aggregate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/projects/{projectId}/stream:
+    get:
+      tags: [Workspace]
+      summary: Server-sent events stream
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: text/event-stream of workspace.changed and legacy events
+  /api/v1/projects/{projectId}/prds:
+    post:
+      tags: [Planning]
+      summary: Create a PRD
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PRDInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/prds/{prdId}:
+    put:
+      tags: [Planning]
+      summary: Update a PRD
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/PrdId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PRDInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+    delete:
+      tags: [Planning]
+      summary: Delete a PRD when it has no children
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/PrdId' }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/epics:
+    post:
+      tags: [Planning]
+      summary: Create an epic under a PRD
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EpicInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/features:
+    post:
+      tags: [Planning]
+      summary: Create a feature under an epic
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeatureInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/work-items:
+    post:
+      tags: [Work items]
+      summary: Create a story, task, subtask or bug
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkItemInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+        '422': { $ref: '#/components/responses/TraceabilityError' }
+  /api/v1/projects/{projectId}/work-items/{itemId}:
+    put:
+      tags: [Work items]
+      summary: Update a work item
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/ItemId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkItemInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+    delete:
+      tags: [Work items]
+      summary: Delete a work item and its children
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/ItemId' }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/work-items/{itemId}/status:
+    patch:
+      tags: [Work items]
+      summary: Apply a guarded workflow transition
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/ItemId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+        '422': { description: Transition is not allowed }
+  /api/v1/projects/{projectId}/test-cases:
+    post:
+      tags: [Tests]
+      summary: Create a test case with ordered steps and a feature link
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestCaseInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/test-runs:
+    post:
+      tags: [Tests]
+      summary: Start a test run
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestRunInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/test-runs/{runId}/results/{resultId}:
+    patch:
+      tags: [Tests]
+      summary: Record a test result
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/RunId' }
+        - { $ref: '#/components/parameters/ResultId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [not_run, passed, failed, blocked, skipped] }
+                actual_result: { type: string }
+                evidence_url: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}:
+    patch:
+      tags: [Tests]
+      summary: Record a step result
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/RunId' }
+        - { $ref: '#/components/parameters/ResultId' }
+        - { $ref: '#/components/parameters/StepResultId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [not_run, passed, failed, blocked, skipped] }
+                actual_result: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/test-runs/{runId}/results/{resultId}/bug:
+    post:
+      tags: [Tests]
+      summary: Raise a bug from a failed test result
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/RunId' }
+        - { $ref: '#/components/parameters/ResultId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                severity: { type: string, enum: [blocker, critical, major, minor, trivial] }
+                description: { type: string }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/test-runs/import:
+    post:
+      tags: [Tests]
+      summary: Import JUnit XML or normalized JSON test results
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - name: format
+          in: query
+          schema: { type: string, enum: [junit, json], default: junit }
+        - name: name
+          in: query
+          schema: { type: string }
+        - name: environment_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: build_id
+          in: query
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema: { type: string }
+          application/json:
+            schema: { $ref: '#/components/schemas/TestImport' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/repositories:
+    post:
+      tags: [Delivery]
+      summary: Link a repository and receive its webhook token
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                provider: { type: string, default: generic }
+                name: { type: string }
+                url: { type: string }
+                default_branch: { type: string, default: main }
+      responses:
+        '201':
+          description: Repository linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  webhook_token: { type: string }
+  /api/v1/projects/{projectId}/branches:
+    post:
+      tags: [Delivery]
+      summary: Link a branch to a work item
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BranchInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/pull-requests:
+    post:
+      tags: [Delivery]
+      summary: Create a pull request linked to a work item
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PullRequestInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/pull-requests/{prId}:
+    put:
+      tags: [Delivery]
+      summary: Update or merge a pull request; merge policy is server-enforced
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/PrId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                status: { type: string, enum: [open, draft, merged, closed] }
+                review_status: { type: string, enum: [pending, approved, changes_requested] }
+                merge_commit_sha: { type: string }
+                target_branch: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+        '422': { description: Merge policy blocked the merge }
+  /api/v1/projects/{projectId}/builds:
+    post:
+      tags: [Delivery]
+      summary: Record a build
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BuildInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/builds/{buildId}:
+    put:
+      tags: [Delivery]
+      summary: Update a build status
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/BuildId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [queued, running, success, failure, cancelled, timed_out] }
+                logs_url: { type: string }
+                external_id: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/environments:
+    post:
+      tags: [Delivery]
+      summary: Create an environment
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                type: { type: string, enum: [development, staging, production, custom] }
+                url: { type: string }
+                health_check_url: { type: string }
+                position: { type: integer }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/deployments:
+    post:
+      tags: [Delivery]
+      summary: Start an Argo CD or generic deployment
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeploymentInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/deployments/{deploymentId}:
+    put:
+      tags: [Delivery]
+      summary: Update deployment or Argo CD status
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/DeploymentId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+                health_status: { type: string, enum: [unknown, healthy, degraded, unhealthy] }
+                version: { type: string }
+                argo_app: { type: string }
+                argo_revision: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/deployments/{deploymentId}/health-checks:
+    post:
+      tags: [Delivery]
+      summary: Record a deployment health check
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/DeploymentId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HealthCheckInput' }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/deployments/{deploymentId}/rollback:
+    post:
+      tags: [Delivery]
+      summary: Roll back to the previous deployment
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - { $ref: '#/components/parameters/DeploymentId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /api/v1/projects/{projectId}/traceability:
+    get:
+      tags: [Reports]
+      summary: Feature-level traceability matrix and gap register
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      responses:
+        '200':
+          description: Matrix and gaps
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Traceability' }
+  /api/v1/projects/{projectId}/reports:
+    get:
+      tags: [Reports]
+      summary: Delivery confidence, coverage, trends and release readiness
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      responses:
+        '200':
+          description: Project report
+          content:
+            application/json:
+              schema: { type: object }
+  /api/v1/projects/{projectId}/release-readiness:
+    get:
+      tags: [Reports]
+      summary: Release gates
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      responses:
+        '200':
+          description: Release readiness
+          content:
+            application/json:
+              schema: { type: object }
+  /api/v1/projects/{projectId}/reports/export:
+    get:
+      tags: [Reports]
+      summary: Export a report as CSV or JSON
+      parameters:
+        - { $ref: '#/components/parameters/ProjectId' }
+        - name: type
+          in: query
+          schema: { type: string, enum: [summary, coverage, traceability, test-results, release-readiness] }
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, json], default: csv }
+      responses:
+        '200':
+          description: Report download
+          content:
+            text/csv: { schema: { type: string } }
+            application/json: { schema: { type: object } }
+  /api/v1/projects/{projectId}/settings:
+    get:
+      tags: [Delivery]
+      summary: Read merge policy and automation settings
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSettings' }
+    put:
+      tags: [Delivery]
+      summary: Update merge policy and automation settings
+      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectSettings' }
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSettings' }
+  /api/v1/webhooks/gitea:
+    post:
+      security: []
+      tags: [Webhooks]
+      summary: Gitea HMAC webhook
+      parameters:
+        - name: X-Gitea-Signature
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-Gitea-Event
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Accepted or ignored }
+  /api/v1/webhooks/argocd:
+    post:
+      security: []
+      tags: [Webhooks]
+      summary: Argo CD notification webhook
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArgoNotification' }
+      responses:
+        '200': { description: Deployment synchronized }
+  /api/v1/webhooks/git/{provider}:
+    post:
+      security: []
+      tags: [Webhooks]
+      summary: Generic Git provider webhook
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-SPM-Webhook-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Accepted or ignored }
+  /api/v1/webhooks/ci/{provider}:
+    post:
+      security: []
+      tags: [Webhooks]
+      summary: Generic CI provider webhook
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-SPM-Webhook-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Build synchronized }
+  /api/v1/webhooks/cd/{provider}:
+    post:
+      security: []
+      tags: [Webhooks]
+      summary: Generic CD provider webhook
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-SPM-Webhook-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Deployment synchronized }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PrdId:
+      name: prdId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PrId:
+      name: prId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BuildId:
+      name: buildId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DeploymentId:
+      name: deploymentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ResultId:
+      name: resultId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    StepResultId:
+      name: stepResultId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Created:
+      description: Mutation accepted
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TraceabilityError:
+      description: A required traceability link is missing
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        role: { type: string }
+    ProjectSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        key_prefix: { type: string }
+        work_item_count: { type: integer }
+        done_work_item_count: { type: integer }
+        test_case_count: { type: integer }
+        open_bug_count: { type: integer }
+        last_activity_at: { type: string, format: date-time }
+    Workspace:
+      type: object
+      description: Complete aggregate. See ui/src/types/workspace.ts for the typed client contract.
+      properties:
+        project: { type: object }
+        prds: { type: array, items: { type: object } }
+        epics: { type: array, items: { type: object } }
+        features: { type: array, items: { type: object } }
+        work_items: { type: array, items: { type: object } }
+        test_cases: { type: array, items: { type: object } }
+        test_runs: { type: array, items: { type: object } }
+        repositories: { type: array, items: { type: object } }
+        branches: { type: array, items: { type: object } }
+        pull_requests: { type: array, items: { type: object } }
+        builds: { type: array, items: { type: object } }
+        environments: { type: array, items: { type: object } }
+        deployments: { type: array, items: { type: object } }
+        health_checks: { type: array, items: { type: object } }
+        activity: { type: array, items: { type: object } }
+        revision: { type: integer }
+    PRDInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        summary: { type: string }
+        content: { type: string }
+        status: { type: string }
+    EpicInput:
+      type: object
+      required: [prd_id, title]
+      properties:
+        prd_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        status: { type: string }
+    FeatureInput:
+      type: object
+      required: [epic_id, title]
+      properties:
+        epic_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        status: { type: string }
+    WorkItemInput:
+      type: object
+      required: [type, title]
+      properties:
+        type: { type: string, enum: [story, task, subtask, bug] }
+        title: { type: string }
+        description: { type: string }
+        feature_id: { type: string, format: uuid }
+        parent_id: { type: string, format: uuid }
+        status: { type: string }
+        priority: { type: string }
+        severity: { type: string }
+        estimate_points: { type: number }
+        sprint_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+    TestCaseInput:
+      type: object
+      required: [title]
+      properties:
+        feature_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        preconditions: { type: string }
+        priority: { type: string }
+        type: { type: string }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              action: { type: string }
+              expected_result: { type: string }
+    TestRunInput:
+      type: object
+      required: [name, case_ids]
+      properties:
+        name: { type: string }
+        environment_id: { type: string, format: uuid }
+        build_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        case_ids: { type: array, items: { type: string, format: uuid } }
+    TestImport:
+      type: object
+      required: [cases]
+      properties:
+        name: { type: string }
+        cases:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              classname: { type: string }
+              status: { type: string, enum: [passed, failed, blocked, skipped] }
+              duration_ms: { type: integer }
+              failure: { type: string }
+              steps:
+                type: array
+                items: { type: object }
+    BranchInput:
+      type: object
+      required: [repository_id, work_item_id, name]
+      properties:
+        repository_id: { type: string, format: uuid }
+        work_item_id: { type: string, format: uuid }
+        name: { type: string }
+        head_commit_sha: { type: string }
+    PullRequestInput:
+      type: object
+      required: [repository_id, work_item_id, number, title]
+      properties:
+        repository_id: { type: string, format: uuid }
+        work_item_id: { type: string, format: uuid }
+        source_branch_id: { type: string, format: uuid }
+        number: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        target_branch: { type: string }
+        status: { type: string, enum: [open, draft, merged, closed] }
+        review_status: { type: string, enum: [pending, approved, changes_requested] }
+    BuildInput:
+      type: object
+      properties:
+        repository_id: { type: string, format: uuid }
+        commit_sha: { type: string }
+        branch: { type: string }
+        provider: { type: string }
+        external_id: { type: string }
+        number: { type: string }
+        status: { type: string, enum: [queued, running, success, failure, cancelled, timed_out] }
+        logs_url: { type: string }
+    DeploymentInput:
+      type: object
+      required: [environment_id, build_id]
+      properties:
+        environment_id: { type: string, format: uuid }
+        build_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        status: { type: string }
+        health_status: { type: string, enum: [unknown, healthy, degraded, unhealthy] }
+        version: { type: string }
+        argo_app: { type: string }
+        argo_revision: { type: string }
+    HealthCheckInput:
+      type: object
+      required: [status]
+      properties:
+        url: { type: string }
+        status: { type: string, enum: [unknown, healthy, degraded, unhealthy] }
+        http_status: { type: integer }
+        latency_ms: { type: integer }
+        details: { type: object }
+    ProjectSettings:
+      type: object
+      properties:
+        merge_policy:
+          type: object
+          properties:
+            require_linked_work_item: { type: boolean }
+            require_approved_review: { type: boolean }
+            require_passing_checks: { type: boolean }
+        auto_rollback: { type: boolean }
+        auto_deploy_on_build: { type: boolean }
+        auto_deploy_environment: { type: string }
+        require_health_check: { type: boolean }
+    Traceability:
+      type: object
+      properties:
+        rows: { type: array, items: { type: object } }
+        gaps:
+          type: array
+          items: { type: string }
+        revision: { type: integer }
+    ArgoNotification:
+      type: object
+      properties:
+        app:
+          type: object
+          properties:
+            metadata:
+              type: object
+              properties:
+                name: { type: string }
+                labels: { type: object }
+            status:
+              type: object
+              properties:
+                sync:
+                  type: object
+                  properties:
+                    status: { type: string }
+                    revision: { type: string }
+                health:
+                  type: object
+                  properties:
+                    status: { type: string }
+                operationState:
+                  type: object
+                  properties:
+                    finishedAt: { type: string }

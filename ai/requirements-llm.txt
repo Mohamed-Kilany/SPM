@@ -1,0 +1,5 @@
+# Optional CPU-only local GGUF model support. Enable with:
+#   docker compose build --build-arg AI_LLM=1 ai_service
+# and set SPM_AI_MODEL_PATH to a GGUF file mounted into the container.
+# The default image is fully offline and uses the extractive RAG engine.
+llama-cpp-python==0.3.2

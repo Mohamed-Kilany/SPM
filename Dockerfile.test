@@ -1,0 +1,76 @@
+# Multi-stage test runner image for the SPM platform CI gate.
+#
+# Stage 1: Go — builds the binary and runs all Go tests (unit + integration).
+# Stage 2: Node — runs the TypeScript/Vue vitest suite.
+# Stage 3: Final — combines exit codes; exits non-zero if either suite fails.
+
+# ── Go test stage ────────────────────────────────────────────────────────────
+FROM golang:1.27-alpine AS go_test
+
+WORKDIR /app
+
+# Cache module downloads
+COPY api/go.mod api/go.sum ./api/
+RUN cd api && go mod download
+
+# Copy full source
+COPY api/ ./api/
+
+# Run unit tests first (no stack needed).
+# Integration tests require env vars and are run as a second pass when the
+# full stack is up (controlled by the test_runner service below).
+RUN cd api && go vet ./... \
+    && go test ./... -count=1 -timeout 120s \
+    && echo "GO_UNIT_TESTS=PASS" > /go_unit_result.txt \
+    || (echo "GO_UNIT_TESTS=FAIL" > /go_unit_result.txt && cat /go_unit_result.txt && exit 1)
+
+# Build the binary so we can confirm it compiles end-to-end.
+RUN cd api && CGO_ENABLED=0 go build -o /spm-api ./cmd/api
+
+# ── Node test stage ──────────────────────────────────────────────────────────
+FROM node:24-alpine AS node_test
+
+WORKDIR /app/ui
+
+COPY ui/package.json ui/package-lock.json* ./
+RUN npm ci --prefer-offline 2>/dev/null || npm install
+
+COPY ui/ ./
+
+RUN npm run typecheck \
+    && npx vitest run --reporter=verbose 2>&1 \
+    && npm run build \
+    && echo "NODE_UNIT_TESTS=PASS" > /node_unit_result.txt \
+    || (echo "NODE_UNIT_TESTS=FAIL" > /node_unit_result.txt && cat /node_unit_result.txt && exit 1)
+
+# ── Integration test runner ──────────────────────────────────────────────────
+# This stage is what docker-compose.test.yml runs as the `test_runner` service.
+# The COPY instructions below force Docker to execute the Go unit-test and
+# frontend typecheck/Vitest stages, so the final image represents the complete
+# quality gate rather than integration tests alone.
+FROM golang:1.27-alpine AS integration_runner
+
+RUN apk add --no-cache curl
+
+COPY --from=go_test /go_unit_result.txt /test-results/go_unit_result.txt
+COPY --from=node_test /node_unit_result.txt /test-results/node_unit_result.txt
+RUN cat /test-results/go_unit_result.txt /test-results/node_unit_result.txt
+
+WORKDIR /app
+
+COPY api/go.mod api/go.sum ./api/
+RUN cd api && go mod download
+
+COPY api/ ./api/
+
+# Compile the integration test binary during the image build. Compiling with
+# the integration tag is memory-hungry; doing it here keeps the constrained
+# runtime container (256 MB) from being OOM-killed before the tests start.
+RUN cd api && CGO_ENABLED=0 go test -tags integration -c \
+        -o /integration.test ./tests/integration/...
+
+# Default command: run the precompiled integration tests.
+# Environment variables are injected by docker-compose.test.yml.
+CMD /integration.test -test.v -test.count=1 -test.timeout=300s \
+    && echo "INTEGRATION_TESTS=PASS" \
+    || (echo "INTEGRATION_TESTS=FAIL" && exit 1)
