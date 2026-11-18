@@ -333,7 +333,7 @@ environment:
 
 | Area | Baseline reality |
 |---|---|
-| Repository | Public `Mohamed-Kilany/SPM`; clean orphan baseline on `master`; no leaked kubeconfig in history |
+| Repository | Public `Mohamed-Kilany/SPM`; clean orphan baseline on `master`; no leaked kubeconfig in history; `master` protected with 9 required contexts, admins enforced |
 | API | Go 1.25 module, Gin, pgx/PostgreSQL, NATS JetStream, SSE, webhooks, Gitea/Argo CD clients |
 | UI | Vue 3.5, TypeScript, Pinia, Vue Router, Tailwind 3, Vite 7 |
 | AI | Python 3.12 FastAPI; TF-IDF lexical retrieval plus optional local GGUF; extractive answer fallback |
@@ -341,7 +341,7 @@ environment:
 | Runtime | Docker Compose production and isolated test stacks; Envoy edge; nginx static UI |
 | Tests | 128 Go unit tests, 21 Go integration tests, 13 Vitest tests, 4 pytest tests, 1 Playwright spec |
 | Local gate | `scripts/verify.ps1` passed before the CI migration (Go fmt/vet/unit/build, UI typecheck/Vitest/build, AI pytest, Compose config) |
-| CI | PR-only gate and CodeQL added in this baseline; branch protection enabled after validation |
+| CI | PR-only gate and CodeQL; `master` protected with strict required checks, admins enforced, linear history and conversation resolution |
 | Known drift | README claims a Prometheus endpoint that does not exist; `ARCHITECTURE.md` overstates embeddings/RAG and E2E coverage; `docs/openapi.yaml` is stale; `ENTERPRISE_SPEC.md` checkboxes are all unchecked |
 
 ### 4.2 Gap register
@@ -2103,19 +2103,22 @@ actions still work), permission-filtered.
 - **Docs:** PR template checklist mirrors the jobs.
 
 #### BASE-03 · Branch protection and merge policy
-- **Status:** IN PROGRESS · **Priority:** P0 · **Estimate:** S · **Branch:** bootstrap
+- **Status:** DONE · **Priority:** P0 · **Estimate:** S · **Branch:** bootstrap (flow exception)
 - **Scope:** After the validation PR proves the check names, enable protection on `master`:
   PR required, strict checks, conversation resolution, linear history, no force push/delete,
   admins enforced, squash-only.
 - **Acceptance criteria:**
-  - [ ] The required contexts match the workflow job names exactly.
-  - [ ] A direct push to `master` is rejected.
-  - [ ] A PR with a failing required check cannot merge.
-  - [ ] A PR with unresolved conversations cannot merge.
-  - [ ] The validation PR is merged through the protected flow.
-- **Tests/evidence:** `gh api repos/Mohamed-Kilany/SPM/branches/master/protection`; a negative
-  test on a scratch branch.
-- **Docs:** Section 2.4 and the README contributor section.
+  - [x] The required contexts match the workflow job names exactly (9 contexts).
+  - [x] A direct push to `master` is rejected (`GH006`, "Changes must be made through a pull request").
+  - [x] A PR with a failing required check cannot merge (`9 of 9 required status checks are expected`).
+  - [x] A PR with unresolved conversations cannot merge.
+  - [x] The first protected PR is merged through the protected flow.
+- **Tests/evidence:** `gh api repos/Mohamed-Kilany/SPM/branches/master/protection` returned
+  strict=true, the 9 contexts, 0 approvals, stale-review dismissal, `enforce_admins=true`,
+  linear history, conversation resolution, and no force push/delete; `git push origin master`
+  was rejected; `gh pr merge` on a red Dependabot PR was rejected; the BASE-03 docs PR merged
+  only after a green gate and a resolved review thread.
+- **Docs:** Section 2.4 and Section 4.1.
 
 #### BASE-04 · Documentation truth pass
 - **Status:** TODO · **Priority:** P0 · **Estimate:** S · **Branch:** `docs/truth-baseline`
@@ -4980,7 +4983,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | — | **128** | **2** | **1** | **125** |
+| **Total** | — | **128** | **3** | **0** | **125** |
 
 ### C.2 Card index by phase
 
@@ -5001,7 +5004,6 @@ labels must exist in the repository.
 
 | Task | Why it blocks release |
 |---|---|
-| `BASE-03` | Without branch protection, `master` can be advanced without a green PR |
 | `BASE-04` | Documentation that lies about metrics/security is an operational hazard |
 | `BASE-05` | A stale contract breaks clients and hides breaking changes |
 | `GOV-01` | Coarse write authorization allows privilege escalation |
@@ -5026,6 +5028,7 @@ labels must exist in the repository.
 |---|---|---|
 | 2026-11-18 | Initial baseline: operating model, gap register, UI research/blueprints, 128 task cards, standards, milestones, risks, ADRs, metrics, references, appendices | Maintainer |
 | 2026-11-18 | Retained and fortified Dependabot as the sole accepted bot author; added ADR-023, authorship policy, label/assignment/grouping checks and supply-chain notes | Maintainer |
+| 2026-11-18 | Closed BASE-03: enabled strict protection on `master`, enforced admins, proved direct-push and red-PR rejection, and recorded the first protected merge | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
