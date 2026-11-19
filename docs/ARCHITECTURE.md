@@ -108,8 +108,8 @@ The AI service is a stateless Python FastAPI application:
 The pull-request-only workflow in [`.github/workflows/pr-gate.yml`](../.github/workflows/pr-gate.yml)
 runs on every non-draft PR targeting `master`:
 
-- Go: `gofmt` check, `go vet ./...`, `go test ./... -race`, static binary build.
-- UI: `vue-tsc --noEmit`, Vitest unit tests, Vite production build.
+- Go: `gofmt` check, `go vet ./...`, OpenAPI contract check, `go test ./... -race`, static binary build.
+- UI: OpenAPI lint with Redocly, `vue-tsc --noEmit`, Vitest unit tests, Vite production build.
 - AI: `pytest` for the FastAPI service.
 - Compose: `docker compose config` for the production and isolated test stacks.
 - Images: Docker build of the API, UI and AI images.
@@ -117,7 +117,25 @@ runs on every non-draft PR targeting `master`:
 
 A separate CodeQL workflow scans on pull requests. All listed contexts are required on `master`.
 
-### 9.2 Not in the required gate
+### 9.2 API contract
+
+`docs/openapi.yaml` is generated from `api/internal/server.Routes()`, which is checked
+against the real Gin registration by `TestRoutesMatchRegistration`. Three additional checks
+prevent drift:
+
+- `TestOpenAPIContractMatchesRouter` requires an exact method/path match in both directions.
+- `TestOpenAPIOperationsAreComplete` requires auth metadata, security, success and error
+  responses, path parameters and request bodies.
+- `TestUIClientPathsExist` requires every path used by `ui/src/api/client.ts` to exist in the
+  contract.
+
+The Go job runs `go run ./cmd/openapi -check`; the UI job runs
+`npx @redocly/cli lint docs/openapi.yaml`. Regenerate with `scripts/openapi.ps1` (or
+`cd api && go run ./cmd/openapi -write`). The generator is deterministic and preserves the
+hand-maintained schemas under `components` while removing unreachable components. The versioning
+and deprecation policy is in [`API.md`](API.md).
+
+### 9.3 Not in the required gate
 
 These exist but run locally or manually today:
 
@@ -128,7 +146,7 @@ These exist but run locally or manually today:
 
 No document should claim these run on every PR until the workflows are added and required.
 
-### 9.3 Phase-completion target
+### 9.4 Phase-completion target
 
 A phase is complete only when its Docker build, automated API/UI tests and required E2E/integration
 coverage are green. Until `QAT-02` and `QAT-03` land, phase checkboxes in

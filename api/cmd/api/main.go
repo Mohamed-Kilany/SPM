@@ -24,6 +24,7 @@ import (
 	"spm-platform/api/internal/observability"
 	"spm-platform/api/internal/project"
 	"spm-platform/api/internal/search"
+	"spm-platform/api/internal/server"
 	"spm-platform/api/internal/snapshot"
 	"spm-platform/api/internal/sse"
 	"spm-platform/api/internal/ticket"
@@ -95,8 +96,6 @@ func main() {
 	}
 	defer sseManager.Close()
 
-	streamAuth := sse.StreamAuthMiddleware(ticketStore, eventsClient.UserInvalidation())
-
 	cdManager := cdengine.New(eventsClient)
 	watchdog := cdengine.NewWatchdog(eventsClient)
 	argoClient := cdengine.NewArgoClient()
@@ -118,135 +117,22 @@ func main() {
 		observability.SecurityHeaders(), observability.RateLimit(600, time.Minute))
 	_ = r.SetTrustedProxies(nil)
 
-	health := func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	deps := server.Handlers{
+		Events:           eventsClient,
+		Auth:             authHandler,
+		Project:          projectHandler,
+		Ticket:           ticketHandler,
+		Workspace:        workspaceHandler,
+		Search:           searchHandler,
+		GiteaWebhook:     giteaWebhook,
+		ArgoWebhook:      argoWebhook,
+		GenericWebhook:   genericWebhook,
+		SSEManager:       sseManager,
+		TicketStore:      ticketStore,
+		Pool:             pool,
+		UserInvalidation: eventsClient.UserInvalidation(),
 	}
-	ready := func(c *gin.Context) {
-		checkCtx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-		defer cancel()
-		if err := pool.Ping(checkCtx); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "postgres": err.Error()})
-			return
-		}
-		if !eventsClient.Conn().IsConnected() {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "nats": "disconnected"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
-	}
-	r.GET("/health", ready)
-	r.GET("/health/live", health)
-	r.GET("/health/ready", ready)
-
-	r.POST("/api/v1/auth/login", observability.RateLimit(30, time.Minute), authHandler.Login)
-	r.POST("/api/v1/webhooks/gitea", giteaWebhook.Handle)
-	r.POST("/api/v1/webhooks/argocd", argoWebhook.Handle)
-	r.POST("/api/v1/webhooks/git/:provider", genericWebhook.HandleGit)
-	r.POST("/api/v1/webhooks/ci/:provider", genericWebhook.HandleCI)
-	r.POST("/api/v1/webhooks/cd/:provider", genericWebhook.HandleCD)
-
-	jwt := auth.Middleware(eventsClient.UserInvalidation())
-	v1 := r.Group("/api/v1", jwt)
-	{
-		v1.GET("/auth/me", authHandler.Me)
-		v1.PATCH("/auth/me", authHandler.UpdateMe)
-		v1.POST("/auth/password", authHandler.ChangePassword)
-		v1.POST("/auth/stream-ticket", authHandler.StreamTicket)
-		v1.GET("/users", authHandler.Directory)
-		v1.GET("/search", searchHandler.Search)
-
-		admin := v1.Group("/admin", auth.RequireRole(auth.RoleAdmin))
-		{
-			admin.GET("/users", authHandler.AdminListUsers)
-			admin.POST("/users", authHandler.AdminCreateUser)
-			admin.PATCH("/users/:userId", authHandler.AdminUpdateUser)
-		}
-
-		v1.GET("/projects", projectHandler.List)
-		v1.POST("/projects", auth.RequireRole(auth.RoleAdmin, auth.RoleMember), projectHandler.Create)
-		v1.GET("/projects/:id", auth.RequireProjectReadDB(pool), projectHandler.Get)
-		v1.GET("/projects/:id/workspace", auth.RequireProjectReadDB(pool), workspaceHandler.GetWorkspace)
-		v1.GET("/projects/:id/activity", auth.RequireProjectReadDB(pool), workspaceHandler.GetActivity)
-		v1.GET("/projects/:id/traceability", auth.RequireProjectReadDB(pool), workspaceHandler.GetTraceability)
-		v1.GET("/projects/:id/reports", auth.RequireProjectReadDB(pool), workspaceHandler.GetReports)
-		v1.GET("/projects/:id/reports/export", auth.RequireProjectReadDB(pool), workspaceHandler.ExportReport)
-		v1.GET("/projects/:id/release-readiness", auth.RequireProjectReadDB(pool), workspaceHandler.GetReleaseReadiness)
-		v1.GET("/projects/:id/ai/search", auth.RequireProjectReadDB(pool), workspaceHandler.AISearch)
-		v1.POST("/projects/:id/ai/ask", auth.RequireProjectReadDB(pool), workspaceHandler.AIAsk)
-		v1.GET("/projects/:id/ai/insights", auth.RequireProjectReadDB(pool), workspaceHandler.AIInsights)
-		v1.GET("/projects/:id/settings", auth.RequireProjectReadDB(pool), workspaceHandler.GetSettings)
-		v1.GET("/projects/:id/members", auth.RequireProjectReadDB(pool), workspaceHandler.ListMembers)
-		v1.GET("/projects/:id/repositories/:repoId/tree", auth.RequireProjectReadDB(pool), workspaceHandler.GetRepositoryTree)
-		v1.GET("/projects/:id/repositories/:repoId/blob", auth.RequireProjectReadDB(pool), workspaceHandler.GetRepositoryFile)
-		v1.GET("/projects/:id/repositories/:repoId/commits", auth.RequireProjectReadDB(pool), workspaceHandler.GetRepositoryCommits)
-		v1.GET("/projects/:id/repositories/:repoId/branches", auth.RequireProjectReadDB(pool), workspaceHandler.GetRepositoryBranches)
-		v1.GET("/projects/:id/pull-requests/:prId/files", auth.RequireProjectReadDB(pool), workspaceHandler.GetPullRequestFiles)
-
-		projectAdmin := v1.Group("/projects/:id", auth.RequireProjectAdminDB(pool))
-		{
-			projectAdmin.PATCH("", workspaceHandler.UpdateProject)
-			projectAdmin.PUT("/settings", workspaceHandler.UpdateSettings)
-			projectAdmin.POST("/members", workspaceHandler.AddMember)
-			projectAdmin.PATCH("/members/:userId", workspaceHandler.UpdateMember)
-			projectAdmin.DELETE("/members/:userId", workspaceHandler.RemoveMember)
-		}
-
-		writes := v1.Group("/projects/:id", auth.RequireProjectWriteDB(pool))
-		{
-			writes.POST("/tickets", ticketHandler.Create)
-			writes.PUT("/tickets/:tid", ticketHandler.Update)
-			writes.PATCH("/tickets/:tid/state", ticketHandler.ChangeState)
-			writes.DELETE("/tickets/:tid", ticketHandler.Delete)
-
-			// Planning
-			writes.POST("/prds", workspaceHandler.CreatePRD)
-			writes.PUT("/prds/:prdId", workspaceHandler.UpdatePRD)
-			writes.DELETE("/prds/:prdId", workspaceHandler.DeletePRD)
-			writes.POST("/epics", workspaceHandler.CreateEpic)
-			writes.PUT("/epics/:epicId", workspaceHandler.UpdateEpic)
-			writes.DELETE("/epics/:epicId", workspaceHandler.DeleteEpic)
-			writes.POST("/features", workspaceHandler.CreateFeature)
-			writes.PUT("/features/:featureId", workspaceHandler.UpdateFeature)
-			writes.DELETE("/features/:featureId", workspaceHandler.DeleteFeature)
-			writes.POST("/work-items", workspaceHandler.CreateWorkItem)
-			writes.PUT("/work-items/:itemId", workspaceHandler.UpdateWorkItem)
-			writes.PATCH("/work-items/:itemId/status", workspaceHandler.ChangeWorkItemStatus)
-			writes.DELETE("/work-items/:itemId", workspaceHandler.DeleteWorkItem)
-			writes.POST("/sprints", workspaceHandler.CreateSprint)
-			writes.PUT("/sprints/:sprintId", workspaceHandler.UpdateSprint)
-			writes.POST("/releases", workspaceHandler.CreateRelease)
-			writes.PUT("/releases/:releaseId", workspaceHandler.UpdateRelease)
-
-			// Test management
-			writes.POST("/test-cases", workspaceHandler.CreateTestCase)
-			writes.PUT("/test-cases/:caseId", workspaceHandler.UpdateTestCase)
-			writes.DELETE("/test-cases/:caseId", workspaceHandler.DeleteTestCase)
-			writes.POST("/test-runs", workspaceHandler.CreateTestRun)
-			writes.POST("/test-runs/import", workspaceHandler.ImportTestRun)
-			writes.PATCH("/test-runs/:runId/results/:resultId", workspaceHandler.PatchTestResult)
-			writes.PATCH("/test-runs/:runId/results/:resultId/steps/:stepResultId", workspaceHandler.PatchTestStepResult)
-			writes.POST("/test-runs/:runId/results/:resultId/bug", workspaceHandler.CreateBugFromResult)
-
-			// Git and delivery
-			writes.POST("/repositories", workspaceHandler.CreateRepository)
-			writes.POST("/repositories/:repoId/provision", workspaceHandler.ProvisionRepository)
-			writes.POST("/branches", workspaceHandler.CreateBranch)
-			writes.POST("/pull-requests", workspaceHandler.CreatePullRequest)
-			writes.PUT("/pull-requests/:prId", workspaceHandler.UpdatePullRequest)
-			writes.POST("/pull-requests/:prId/merge", workspaceHandler.MergePullRequest)
-			writes.POST("/environments", workspaceHandler.CreateEnvironment)
-			// Builds, deployments, health checks and rollbacks are read-only
-			// projections of Gitea Actions and Argo CD. They are never edited
-			// through the SPM API.
-			writes.POST("/links", workspaceHandler.CreateLink)
-			writes.DELETE("/links/:linkId", workspaceHandler.DeleteLink)
-		}
-	}
-
-	stream := r.Group("/api/v1", streamAuth, auth.RequireProjectReadDB(pool))
-	{
-		stream.GET("/projects/:id/stream", sseManager.Stream)
-	}
+	server.Register(r, deps)
 
 	srv := &http.Server{
 		Addr:              ":" + port,

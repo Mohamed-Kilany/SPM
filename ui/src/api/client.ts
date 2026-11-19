@@ -741,68 +741,10 @@ export const api = {
     )
   },
 
-  async createBuild(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/builds`, {
-      method: 'POST',
-      body: payload,
-    })
-  },
-
-  async updateBuild(
-    projectId: string,
-    buildId: string,
-    payload: unknown,
-  ): Promise<{ id: string; status: string }> {
-    return request<{ id: string; status: string }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/builds/${encodeURIComponent(buildId)}`,
-      { method: 'PUT', body: payload },
-    )
-  },
-
   async createEnvironment(projectId: string, payload: unknown): Promise<{ id: string }> {
     return request<{ id: string }>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/environments`,
       { method: 'POST', body: payload },
-    )
-  },
-
-  async createDeployment(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/deployments`,
-      { method: 'POST', body: payload },
-    )
-  },
-
-  async updateDeployment(
-    projectId: string,
-    deploymentId: string,
-    payload: unknown,
-  ): Promise<{ id: string; status: string }> {
-    return request<{ id: string; status: string }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/deployments/${encodeURIComponent(deploymentId)}`,
-      { method: 'PUT', body: payload },
-    )
-  },
-
-  async createHealthCheck(
-    projectId: string,
-    deploymentId: string,
-    payload: unknown,
-  ): Promise<{ id: string; deployment_status?: string }> {
-    return request<{ id: string; deployment_status?: string }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/deployments/${encodeURIComponent(deploymentId)}/health-checks`,
-      { method: 'POST', body: payload },
-    )
-  },
-
-  async rollbackDeployment(
-    projectId: string,
-    deploymentId: string,
-    reason: string,
-  ): Promise<{ id: string; rollback_of: string }> {
-    return request<{ id: string; rollback_of: string }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/deployments/${encodeURIComponent(deploymentId)}/rollback`,
-      { method: 'POST', body: { reason } },
     )
   },
 

@@ -62,11 +62,24 @@ The required pull-request gate (`.github/workflows/pr-gate.yml`) runs:
 | Area | Checks |
 |---|---|
 | Go | `gofmt`, `go vet`, `go test ./... -race`, static build |
+| API contract | route inventory matches `docs/openapi.yaml`; Redocly lint |
 | UI | `vue-tsc --noEmit`, Vitest, Vite production build |
 | AI | `pytest` for the FastAPI service |
 | Compose | `docker compose config` for the production and test stacks |
 | Images | Docker build of the API, UI and AI images |
 | Security | dependency review and CodeQL for Go, JavaScript/TypeScript and Python |
+
+The API contract is generated from the canonical route inventory in
+[`api/internal/server`](api/internal/server) and cannot drift silently:
+`api/internal/server/contract_test.go` checks route coverage, operation fields and
+UI-client path parity, `go run ./cmd/openapi -check` fails on an out-of-date
+document, and Redocly validates the schema. Regenerate after changing a route:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/openapi.ps1
+```
+
+See [docs/API.md](docs/API.md) for the source-of-truth map and the versioning policy.
 
 The gate does **not** currently run the Go integration suite (`api/tests/integration`, build tag
 `integration`) or Playwright end-to-end tests (`ui/e2e`). Both run locally and are tracked as
@@ -80,6 +93,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
 
 # Include running-stack health checks
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -CheckStack
+
+# Regenerate or verify the OpenAPI contract
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/openapi.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/openapi.ps1 -Check
 
 # Isolated integration stack
 docker compose -f docker-compose.test.yml up --build --exit-code-from test_runner

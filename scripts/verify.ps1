@@ -51,6 +51,10 @@ Invoke-Step 'Go formatting' $apiRoot {
     }
 }
 
+Invoke-Step 'OpenAPI contract drift' $apiRoot {
+    & go run ./cmd/openapi -check
+}
+
 Invoke-Step 'Docker Go gate (vet, tests, build)' $repoRoot {
     & docker build --target go_test -f Dockerfile.test -t spm-go-test .
 }

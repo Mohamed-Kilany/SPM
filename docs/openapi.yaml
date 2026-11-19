@@ -1,818 +1,2316 @@
-# =============================================================================
-# STALE CONTRACT - DO NOT TREAT THIS FILE AS AUTHORITATIVE.
+# SPM Platform API contract.
 #
-# This document was written against an earlier router and does not list every
-# registered route (for example /auth/me, /auth/password, /auth/stream-ticket,
-# /users, /search, /admin/users, project members, AI and repository browse
-# routes). Regeneration and CI drift enforcement are planned in BASE-05:
-# https://github.com/Mohamed-Kilany/SPM/blob/master/TASKS.md
-# =============================================================================
+# Route coverage is enforced by api/internal/server tests. Regenerate with:
+#   cd api && go run ./cmd/openapi -write
+# Validate without writing with:
+#   cd api && go run ./cmd/openapi -check
+
 openapi: 3.1.0
 info:
   title: SPM Platform API
-  version: 1.0.0
-  description: |
+  version: 2.0.0
+  description: |-
     Offline-first software delivery platform API. The normalized workspace
     aggregate is the source of truth for SDLC/STLC artifacts. Mutations emit a
     `workspace.changed` event and bump the project SSE revision.
 
-    STALE: this contract is not generated from the router and is missing
-    routes. It will be regenerated and enforced in CI by BASE-05; until then
-    the Go router in `api/cmd/api/main.go` is the source of truth.
+    This contract is generated from the Go router by `api/cmd/openapi` and
+    checked by the pull-request gate. Do not edit generated operations by hand;
+    update the route metadata in `api/internal/server` instead.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
 servers:
   - url: http://localhost:8080
     description: Local Compose stack
 security:
   - bearerAuth: []
 tags:
+  - name: AI
+    description: Retrieval, answers and delivery insights derived from authorized project context.
+  - name: Admin
+    description: User administration and global role management.
   - name: Auth
-  - name: Projects
-  - name: Workspace
-  - name: Planning
-  - name: Work items
-  - name: Tests
+    description: Authentication, profile updates and single-use stream tickets.
+  - name: Code
+    description: Repositories, branches, pull requests and review evidence.
   - name: Delivery
+    description: Environments, artifact links and delivery configuration.
+  - name: Planning
+    description: PRDs, epics, features, work items, sprints, releases and tickets.
+  - name: Projects
+    description: Project lifecycle, settings and membership.
   - name: Reports
+    description: Reports, exports and release readiness.
+  - name: Search
+    description: JQL-style cross-artifact search.
+  - name: System
+    description: Liveness and readiness probes.
+  - name: Tests
+    description: Test cases, runs, results and bug creation.
   - name: Webhooks
+    description: Inbound Gitea, Argo CD and generic delivery events.
 paths:
-  /health/live:
+  /api/v1/admin/users:
     get:
-      security: []
-      tags: [Projects]
-      summary: Liveness probe
+      tags: ["Admin"]
+      summary: "List users"
+      operationId: get_api_v1_admin_users
+      x-spm-auth: admin
+      security:
+        - bearerAuth: []
       responses:
-        '200': { description: Process is alive }
-  /health/ready:
-    get:
-      security: []
-      tags: [Projects]
-      summary: Readiness probe
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: ["Admin"]
+      summary: "Create a user"
+      operationId: post_api_v1_admin_users
+      x-spm-auth: admin
+      security:
+        - bearerAuth: []
       responses:
-        '200': { description: PostgreSQL and NATS are ready }
-        '503': { description: A dependency is unavailable }
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserInput'
+  /api/v1/admin/users/{userId}:
+    patch:
+      tags: ["Admin"]
+      summary: "Update a user"
+      operationId: patch_api_v1_admin_users_userId
+      x-spm-auth: admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserInput'
+      parameters:
+        - name: "userId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/auth/login:
     post:
+      tags: ["Auth"]
+      summary: "Sign in"
+      operationId: post_api_v1_auth_login
+      x-spm-auth: public
       security: []
-      tags: [Auth]
-      summary: Exchange local credentials for a JWT
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [username, password]
-              properties:
-                username: { type: string }
-                password: { type: string, format: password }
+              $ref: '#/components/schemas/LoginInput'
+  /api/v1/auth/me:
+    get:
+      tags: ["Auth"]
+      summary: "Get the current user"
+      operationId: get_api_v1_auth_me
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: JWT issued
+          description: OK
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  token: { type: string }
-                  user: { $ref: '#/components/schemas/User' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+                $ref: '#/components/schemas/User'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    patch:
+      tags: ["Auth"]
+      summary: "Update the current profile"
+      operationId: patch_api_v1_auth_me
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateInput'
+  /api/v1/auth/password:
+    post:
+      tags: ["Auth"]
+      summary: "Change the current password"
+      operationId: post_api_v1_auth_password
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordInput'
+  /api/v1/auth/stream-ticket:
+    post:
+      tags: ["Auth"]
+      summary: "Issue a stream ticket"
+      operationId: post_api_v1_auth_stream_ticket
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/projects:
     get:
-      tags: [Projects]
-      summary: List projects with normalized delivery counters
+      tags: ["Projects"]
+      summary: "List projects"
+      operationId: get_api_v1_projects
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: Projects visible to the caller
+          description: OK
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/ProjectSummary' }
+                $ref: '#/components/schemas/ProjectSummary'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
     post:
-      tags: [Projects]
-      summary: Create a project and provision its repository and environments
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              properties:
-                name: { type: string, maxLength: 255 }
-                description: { type: string }
+      tags: ["Projects"]
+      summary: "Create a project"
+      operationId: post_api_v1_projects
+      x-spm-auth: member
+      security:
+        - bearerAuth: []
       responses:
         '201':
-          description: Project created
+          description: Created
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id: { type: string, format: uuid }
-                  name: { type: string }
-                  warnings:
-                    type: array
-                    items: { type: string }
-        '400': { $ref: '#/components/responses/BadRequest' }
-  /api/v1/projects/{projectId}/workspace:
+                $ref: '#/components/schemas/ProjectSummary'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectInput'
+  /api/v1/projects/{id}:
     get:
-      tags: [Workspace]
-      summary: Load the complete linked workspace aggregate
-      parameters:
-        - $ref: '#/components/parameters/ProjectId'
+      tags: ["Projects"]
+      summary: "Get a project"
+      operationId: get_api_v1_projects_id
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: Workspace aggregate
+          description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Workspace' }
-        '404': { $ref: '#/components/responses/NotFound' }
-  /api/v1/projects/{projectId}/stream:
-    get:
-      tags: [Workspace]
-      summary: Server-sent events stream
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
       parameters:
-        - $ref: '#/components/parameters/ProjectId'
-        - name: ticket
-          in: query
+        - name: "id"
+          in: path
           required: true
-          schema: { type: string }
+          schema: {type: string}
+    patch:
+      tags: ["Projects"]
+      summary: "Update a project"
+      operationId: patch_api_v1_projects_id
+      x-spm-auth: project-admin
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: text/event-stream of workspace.changed and legacy events
-  /api/v1/projects/{projectId}/prds:
-    post:
-      tags: [Planning]
-      summary: Create a PRD
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PRDInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/prds/{prdId}:
-    put:
-      tags: [Planning]
-      summary: Update a PRD
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/PrdId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PRDInput' }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-    delete:
-      tags: [Planning]
-      summary: Delete a PRD when it has no children
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/PrdId' }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/epics:
-    post:
-      tags: [Planning]
-      summary: Create an epic under a PRD
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/EpicInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/features:
-    post:
-      tags: [Planning]
-      summary: Create a feature under an epic
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/FeatureInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/work-items:
-    post:
-      tags: [Work items]
-      summary: Create a story, task, subtask or bug
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WorkItemInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-        '422': { $ref: '#/components/responses/TraceabilityError' }
-  /api/v1/projects/{projectId}/work-items/{itemId}:
-    put:
-      tags: [Work items]
-      summary: Update a work item
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/ItemId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WorkItemInput' }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-    delete:
-      tags: [Work items]
-      summary: Delete a work item and its children
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/ItemId' }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/work-items/{itemId}/status:
-    patch:
-      tags: [Work items]
-      summary: Apply a guarded workflow transition
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/ItemId' }
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [status]
-              properties:
-                status: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-        '422': { description: Transition is not allowed }
-  /api/v1/projects/{projectId}/test-cases:
-    post:
-      tags: [Tests]
-      summary: Create a test case with ordered steps and a feature link
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TestCaseInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/test-runs:
-    post:
-      tags: [Tests]
-      summary: Start a test run
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/TestRunInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/test-runs/{runId}/results/{resultId}:
-    patch:
-      tags: [Tests]
-      summary: Record a test result
+              $ref: '#/components/schemas/ProjectUpdateInput'
       parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/RunId' }
-        - { $ref: '#/components/parameters/ResultId' }
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/activity:
+    get:
+      tags: ["Projects"]
+      summary: "List project activity"
+      operationId: get_api_v1_projects_id_activity
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ai/ask:
+    post:
+      tags: ["AI"]
+      summary: "Ask a question"
+      operationId: post_api_v1_projects_id_ai_ask
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                status: { type: string, enum: [not_run, passed, failed, blocked, skipped] }
-                actual_result: { type: string }
-                evidence_url: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}:
-    patch:
-      tags: [Tests]
-      summary: Record a step result
+              $ref: '#/components/schemas/AIAskInput'
       parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/RunId' }
-        - { $ref: '#/components/parameters/ResultId' }
-        - { $ref: '#/components/parameters/StepResultId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                status: { type: string, enum: [not_run, passed, failed, blocked, skipped] }
-                actual_result: { type: string }
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ai/insights:
+    get:
+      tags: ["AI"]
+      summary: "Get AI insights"
+      operationId: get_api_v1_projects_id_ai_insights
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
       responses:
-        '200': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/test-runs/{runId}/results/{resultId}/bug:
-    post:
-      tags: [Tests]
-      summary: Raise a bug from a failed test result
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
       parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/RunId' }
-        - { $ref: '#/components/parameters/ResultId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [title]
-              properties:
-                title: { type: string }
-                severity: { type: string, enum: [blocker, critical, major, minor, trivial] }
-                description: { type: string }
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ai/search:
+    get:
+      tags: ["Search"]
+      summary: "Search with AI"
+      operationId: get_api_v1_projects_id_ai_search
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
       responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/test-runs/import:
-    post:
-      tags: [Tests]
-      summary: Import JUnit XML or normalized JSON test results
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
       parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - name: format
-          in: query
-          schema: { type: string, enum: [junit, json], default: junit }
-        - name: name
-          in: query
-          schema: { type: string }
-        - name: environment_id
-          in: query
-          schema: { type: string, format: uuid }
-        - name: build_id
-          in: query
-          schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content:
-          application/xml:
-            schema: { type: string }
-          application/json:
-            schema: { $ref: '#/components/schemas/TestImport' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/repositories:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/branches:
     post:
-      tags: [Delivery]
-      summary: Link a repository and receive its webhook token
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              properties:
-                provider: { type: string, default: generic }
-                name: { type: string }
-                url: { type: string }
-                default_branch: { type: string, default: main }
+      tags: ["Code"]
+      summary: "Create a branch"
+      operationId: post_api_v1_projects_id_branches
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
       responses:
         '201':
-          description: Repository linked
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/environments:
+    post:
+      tags: ["Delivery"]
+      summary: "Create an environment"
+      operationId: post_api_v1_projects_id_environments
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/epics:
+    post:
+      tags: ["Planning"]
+      summary: "Create epic"
+      operationId: post_api_v1_projects_id_epics
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EpicInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/epics/{epicId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete epic"
+      operationId: delete_api_v1_projects_id_epics_epicId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "epicId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update epic"
+      operationId: put_api_v1_projects_id_epics_epicId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EpicInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "epicId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/features:
+    post:
+      tags: ["Planning"]
+      summary: "Create feature"
+      operationId: post_api_v1_projects_id_features
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/features/{featureId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete feature"
+      operationId: delete_api_v1_projects_id_features_featureId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "featureId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update feature"
+      operationId: put_api_v1_projects_id_features_featureId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "featureId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/links:
+    post:
+      tags: ["Delivery"]
+      summary: "Create a link"
+      operationId: post_api_v1_projects_id_links
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/links/{linkId}:
+    delete:
+      tags: ["Delivery"]
+      summary: "Delete a link"
+      operationId: delete_api_v1_projects_id_links_linkId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "linkId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/members:
+    get:
+      tags: ["Projects"]
+      summary: "List project members"
+      operationId: get_api_v1_projects_id_members
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id: { type: string, format: uuid }
-                  webhook_token: { type: string }
-  /api/v1/projects/{projectId}/branches:
-    post:
-      tags: [Delivery]
-      summary: Link a branch to a work item
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/BranchInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/pull-requests:
-    post:
-      tags: [Delivery]
-      summary: Create a pull request linked to a work item
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PullRequestInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/pull-requests/{prId}:
-    put:
-      tags: [Delivery]
-      summary: Update or merge a pull request; merge policy is server-enforced
+                $ref: '#/components/schemas/Member'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
       parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/PrId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                title: { type: string }
-                status: { type: string, enum: [open, draft, merged, closed] }
-                review_status: { type: string, enum: [pending, approved, changes_requested] }
-                merge_commit_sha: { type: string }
-                target_branch: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-        '422': { description: Merge policy blocked the merge }
-  /api/v1/projects/{projectId}/builds:
-    post:
-      tags: [Delivery]
-      summary: Record a build
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/BuildInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/builds/{buildId}:
-    put:
-      tags: [Delivery]
-      summary: Update a build status
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/BuildId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status: { type: string, enum: [queued, running, success, failure, cancelled, timed_out] }
-                logs_url: { type: string }
-                external_id: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/environments:
-    post:
-      tags: [Delivery]
-      summary: Create an environment
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              properties:
-                name: { type: string }
-                type: { type: string, enum: [development, staging, production, custom] }
-                url: { type: string }
-                health_check_url: { type: string }
-                position: { type: integer }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/deployments:
-    post:
-      tags: [Delivery]
-      summary: Start an Argo CD or generic deployment
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/DeploymentInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/deployments/{deploymentId}:
-    put:
-      tags: [Delivery]
-      summary: Update deployment or Argo CD status
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/DeploymentId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                status: { type: string }
-                health_status: { type: string, enum: [unknown, healthy, degraded, unhealthy] }
-                version: { type: string }
-                argo_app: { type: string }
-                argo_revision: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/deployments/{deploymentId}/health-checks:
-    post:
-      tags: [Delivery]
-      summary: Record a deployment health check
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/DeploymentId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/HealthCheckInput' }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/deployments/{deploymentId}/rollback:
-    post:
-      tags: [Delivery]
-      summary: Roll back to the previous deployment
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - { $ref: '#/components/parameters/DeploymentId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                reason: { type: string }
-      responses:
-        '201': { $ref: '#/components/responses/Created' }
-  /api/v1/projects/{projectId}/traceability:
-    get:
-      tags: [Reports]
-      summary: Feature-level traceability matrix and gap register
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      responses:
-        '200':
-          description: Matrix and gaps
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Traceability' }
-  /api/v1/projects/{projectId}/reports:
-    get:
-      tags: [Reports]
-      summary: Delivery confidence, coverage, trends and release readiness
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      responses:
-        '200':
-          description: Project report
-          content:
-            application/json:
-              schema: { type: object }
-  /api/v1/projects/{projectId}/release-readiness:
-    get:
-      tags: [Reports]
-      summary: Release gates
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      responses:
-        '200':
-          description: Release readiness
-          content:
-            application/json:
-              schema: { type: object }
-  /api/v1/projects/{projectId}/reports/export:
-    get:
-      tags: [Reports]
-      summary: Export a report as CSV or JSON
-      parameters:
-        - { $ref: '#/components/parameters/ProjectId' }
-        - name: type
-          in: query
-          schema: { type: string, enum: [summary, coverage, traceability, test-results, release-readiness] }
-        - name: format
-          in: query
-          schema: { type: string, enum: [csv, json], default: csv }
-      responses:
-        '200':
-          description: Report download
-          content:
-            text/csv: { schema: { type: string } }
-            application/json: { schema: { type: object } }
-  /api/v1/projects/{projectId}/settings:
-    get:
-      tags: [Delivery]
-      summary: Read merge policy and automation settings
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      responses:
-        '200':
-          description: Settings
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProjectSettings' }
-    put:
-      tags: [Delivery]
-      summary: Update merge policy and automation settings
-      parameters: [{ $ref: '#/components/parameters/ProjectId' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ProjectSettings' }
-      responses:
-        '200':
-          description: Updated settings
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProjectSettings' }
-  /api/v1/webhooks/gitea:
-    post:
-      security: []
-      tags: [Webhooks]
-      summary: Gitea HMAC webhook
-      parameters:
-        - name: X-Gitea-Signature
-          in: header
+        - name: "id"
+          in: path
           required: true
-          schema: { type: string }
-        - name: X-Gitea-Event
-          in: header
-          required: true
-          schema: { type: string }
+          schema: {type: string}
+    post:
+      tags: ["Projects"]
+      summary: "Add a project member"
+      operationId: post_api_v1_projects_id_members
+      x-spm-auth: project-admin
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object }
+            schema:
+              $ref: '#/components/schemas/MemberInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/members/{userId}:
+    delete:
+      tags: ["Projects"]
+      summary: "Remove a project member"
+      operationId: delete_api_v1_projects_id_members_userId
+      x-spm-auth: project-admin
+      security:
+        - bearerAuth: []
       responses:
-        '200': { description: Accepted or ignored }
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "userId"
+          in: path
+          required: true
+          schema: {type: string}
+    patch:
+      tags: ["Projects"]
+      summary: "Update a project member"
+      operationId: patch_api_v1_projects_id_members_userId
+      x-spm-auth: project-admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "userId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/prds:
+    post:
+      tags: ["Planning"]
+      summary: "Create prd"
+      operationId: post_api_v1_projects_id_prds
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PRDInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/prds/{prdId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete prd"
+      operationId: delete_api_v1_projects_id_prds_prdId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "prdId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update prd"
+      operationId: put_api_v1_projects_id_prds_prdId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PRDInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "prdId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/pull-requests:
+    post:
+      tags: ["Code"]
+      summary: "Create a pull request"
+      operationId: post_api_v1_projects_id_pull_requests
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullRequestInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/pull-requests/{prId}:
+    put:
+      tags: ["Code"]
+      summary: "Update a pull request"
+      operationId: put_api_v1_projects_id_pull_requests_prId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullRequestInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "prId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/pull-requests/{prId}/files:
+    get:
+      tags: ["Code"]
+      summary: "Get file"
+      operationId: get_api_v1_projects_id_pull_requests_prId_files
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "prId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/pull-requests/{prId}/merge:
+    post:
+      tags: ["Code"]
+      summary: "Merge a pull request"
+      operationId: post_api_v1_projects_id_pull_requests_prId_merge
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergeInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "prId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/release-readiness:
+    get:
+      tags: ["Reports"]
+      summary: "Get release readiness"
+      operationId: get_api_v1_projects_id_release_readiness
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/releases:
+    post:
+      tags: ["Planning"]
+      summary: "Create release"
+      operationId: post_api_v1_projects_id_releases
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/releases/{releaseId}:
+    put:
+      tags: ["Planning"]
+      summary: "Update release"
+      operationId: put_api_v1_projects_id_releases_releaseId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "releaseId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/reports:
+    get:
+      tags: ["Reports"]
+      summary: "Get project reports"
+      operationId: get_api_v1_projects_id_reports
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/reports/export:
+    get:
+      tags: ["Reports"]
+      summary: "Export a report"
+      operationId: get_api_v1_projects_id_reports_export
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/repositories:
+    post:
+      tags: ["Code"]
+      summary: "Create a repository"
+      operationId: post_api_v1_projects_id_repositories
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/repositories/{repoId}/blob:
+    get:
+      tags: ["Code"]
+      summary: "Get blob"
+      operationId: get_api_v1_projects_id_repositories_repoId_blob
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "repoId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/repositories/{repoId}/branches:
+    get:
+      tags: ["Code"]
+      summary: "Get branch"
+      operationId: get_api_v1_projects_id_repositories_repoId_branches
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "repoId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/repositories/{repoId}/commits:
+    get:
+      tags: ["Code"]
+      summary: "Get commit"
+      operationId: get_api_v1_projects_id_repositories_repoId_commits
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "repoId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/repositories/{repoId}/provision:
+    post:
+      tags: ["Code"]
+      summary: "Provision a repository"
+      operationId: post_api_v1_projects_id_repositories_repoId_provision
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "repoId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/repositories/{repoId}/tree:
+    get:
+      tags: ["Code"]
+      summary: "Get tree"
+      operationId: get_api_v1_projects_id_repositories_repoId_tree
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "repoId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/settings:
+    get:
+      tags: ["Projects"]
+      summary: "Get project settings"
+      operationId: get_api_v1_projects_id_settings
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSettings'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Projects"]
+      summary: "Update project settings"
+      operationId: put_api_v1_projects_id_settings
+      x-spm-auth: project-admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSettings'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSettings'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/sprints:
+    post:
+      tags: ["Planning"]
+      summary: "Create sprint"
+      operationId: post_api_v1_projects_id_sprints
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SprintInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/sprints/{sprintId}:
+    put:
+      tags: ["Planning"]
+      summary: "Update sprint"
+      operationId: put_api_v1_projects_id_sprints_sprintId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SprintInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sprintId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/stream:
+    get:
+      tags: ["Projects"]
+      summary: "Stream project events"
+      operationId: get_api_v1_projects_id_stream
+      x-spm-auth: sse-ticket
+      security:
+        - bearerAuth: []
+        - streamTicket: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-cases:
+    post:
+      tags: ["Tests"]
+      summary: "Create a test case"
+      operationId: post_api_v1_projects_id_test_cases
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestCaseInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-cases/{caseId}:
+    delete:
+      tags: ["Tests"]
+      summary: "Delete test case"
+      operationId: delete_api_v1_projects_id_test_cases_caseId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "caseId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Tests"]
+      summary: "Update test case"
+      operationId: put_api_v1_projects_id_test_cases_caseId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestCaseInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "caseId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-runs:
+    post:
+      tags: ["Tests"]
+      summary: "Create a test run"
+      operationId: post_api_v1_projects_id_test_runs
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestRunInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-runs/import:
+    post:
+      tags: ["Tests"]
+      summary: "Import test results"
+      operationId: post_api_v1_projects_id_test_runs_import
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestImport'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}:
+    patch:
+      tags: ["Tests"]
+      summary: "Update result"
+      operationId: patch_api_v1_projects_id_test_runs_runId_results_resultId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestResultInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "runId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "resultId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}/bug:
+    post:
+      tags: ["Tests"]
+      summary: "Create bug"
+      operationId: post_api_v1_projects_id_test_runs_runId_results_resultId_bug
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BugFromResultInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "runId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "resultId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}:
+    patch:
+      tags: ["Tests"]
+      summary: "Update step"
+      operationId: patch_api_v1_projects_id_test_runs_runId_results_resultId_steps_stepResultId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestStepResultInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "runId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "resultId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "stepResultId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/tickets:
+    post:
+      tags: ["Planning"]
+      summary: "Create a ticket"
+      operationId: post_api_v1_projects_id_tickets
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/tickets/{tid}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete ticket"
+      operationId: delete_api_v1_projects_id_tickets_tid
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "tid"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update ticket"
+      operationId: put_api_v1_projects_id_tickets_tid
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "tid"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/tickets/{tid}/state:
+    patch:
+      tags: ["Planning"]
+      summary: "Update state"
+      operationId: patch_api_v1_projects_id_tickets_tid_state
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "tid"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/traceability:
+    get:
+      tags: ["Projects"]
+      summary: "Get traceability"
+      operationId: get_api_v1_projects_id_traceability
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Traceability'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items:
+    post:
+      tags: ["Planning"]
+      summary: "Create work item"
+      operationId: post_api_v1_projects_id_work_items
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkItemInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete work item"
+      operationId: delete_api_v1_projects_id_work_items_itemId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update work item"
+      operationId: put_api_v1_projects_id_work_items_itemId
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkItemInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/status:
+    patch:
+      tags: ["Planning"]
+      summary: "Update statu"
+      operationId: patch_api_v1_projects_id_work_items_itemId_status
+      x-spm-auth: project-write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/workspace:
+    get:
+      tags: ["Projects"]
+      summary: "Get the project workspace"
+      operationId: get_api_v1_projects_id_workspace
+      x-spm-auth: project-read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/search:
+    get:
+      tags: ["Search"]
+      summary: "Search artifacts"
+      operationId: get_api_v1_search
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/users:
+    get:
+      tags: ["Auth"]
+      summary: "List directory users"
+      operationId: get_api_v1_users
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/webhooks/argocd:
     post:
+      tags: ["Webhooks"]
+      summary: "Receive an Argo CD webhook"
+      operationId: post_api_v1_webhooks_argocd
+      x-spm-auth: public
       security: []
-      tags: [Webhooks]
-      summary: Argo CD notification webhook
-      parameters:
-        - name: Authorization
-          in: header
-          required: true
-          schema: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ArgoNotification' }
-      responses:
-        '200': { description: Deployment synchronized }
-  /api/v1/webhooks/git/{provider}:
-    post:
-      security: []
-      tags: [Webhooks]
-      summary: Generic Git provider webhook
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema: { type: string }
-        - name: X-SPM-Webhook-Token
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object }
-      responses:
-        '200': { description: Accepted or ignored }
-  /api/v1/webhooks/ci/{provider}:
-    post:
-      security: []
-      tags: [Webhooks]
-      summary: Generic CI provider webhook
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema: { type: string }
-        - name: X-SPM-Webhook-Token
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object }
-      responses:
-        '200': { description: Build synchronized }
+            schema:
+              $ref: '#/components/schemas/WebhookPayload'
   /api/v1/webhooks/cd/{provider}:
     post:
+      tags: ["Webhooks"]
+      summary: "Receive a CD provider webhook"
+      operationId: post_api_v1_webhooks_cd_provider
+      x-spm-auth: public
       security: []
-      tags: [Webhooks]
-      summary: Generic CD provider webhook
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema: { type: string }
-        - name: X-SPM-Webhook-Token
-          in: header
-          required: true
-          schema: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object }
+            schema:
+              $ref: '#/components/schemas/WebhookPayload'
+      parameters:
+        - name: "provider"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/webhooks/ci/{provider}:
+    post:
+      tags: ["Webhooks"]
+      summary: "Receive a CI provider webhook"
+      operationId: post_api_v1_webhooks_ci_provider
+      x-spm-auth: public
+      security: []
       responses:
-        '200': { description: Deployment synchronized }
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookPayload'
+      parameters:
+        - name: "provider"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/webhooks/git/{provider}:
+    post:
+      tags: ["Webhooks"]
+      summary: "Receive a Git provider webhook"
+      operationId: post_api_v1_webhooks_git_provider
+      x-spm-auth: public
+      security: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookPayload'
+      parameters:
+        - name: "provider"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/webhooks/gitea:
+    post:
+      tags: ["Webhooks"]
+      summary: "Receive a Gitea webhook"
+      operationId: post_api_v1_webhooks_gitea
+      x-spm-auth: public
+      security: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookPayload'
+  /health:
+    get:
+      tags: ["System"]
+      summary: "Health probe"
+      operationId: get_health
+      x-spm-auth: public
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /health/live:
+    get:
+      tags: ["System"]
+      summary: "Liveness probe"
+      operationId: get_health_live
+      x-spm-auth: public
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /health/ready:
+    get:
+      tags: ["System"]
+      summary: "Readiness probe"
+      operationId: get_health_ready
+      x-spm-auth: public
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+        '500': {$ref: '#/components/responses/InternalError'}
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-  parameters:
-    ProjectId:
-      name: projectId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    PrdId:
-      name: prdId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    ItemId:
-      name: itemId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    PrId:
-      name: prId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    BuildId:
-      name: buildId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    DeploymentId:
-      name: deploymentId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    RunId:
-      name: runId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    ResultId:
-      name: resultId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    StepResultId:
-      name: stepResultId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
+    streamTicket:
+      type: apiKey
+      in: query
+      name: ticket
+      description: Single-use ticket issued by POST /api/v1/auth/stream-ticket.
   responses:
-    Created:
-      description: Mutation accepted
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              id: { type: string, format: uuid }
     BadRequest:
       description: Invalid request
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: {$ref: '#/components/schemas/Error'}
     Unauthorized:
       description: Authentication required
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: {$ref: '#/components/schemas/Error'}
     NotFound:
       description: Not found
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
-    TraceabilityError:
-      description: A required traceability link is missing
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: "The caller is authenticated but not authorized"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: "The resource already exists or conflicts with current state"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: "Rate limit exceeded"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: "Unexpected server error"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: "The request is valid but violates a business rule"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
     Error:
       type: object
@@ -820,228 +2318,341 @@ components:
         error:
           type: object
           properties:
-            code: { type: string }
-            message: { type: string }
-            request_id: { type: string }
+            code: {type: string}
+            message: {type: string}
+            request_id: {type: string}
     User:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        username: { type: string }
-        role: { type: string }
+        id: {type: string, format: uuid}
+        username: {type: string}
+        role: {type: string}
     ProjectSummary:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        name: { type: string }
-        key_prefix: { type: string }
-        work_item_count: { type: integer }
-        done_work_item_count: { type: integer }
-        test_case_count: { type: integer }
-        open_bug_count: { type: integer }
-        last_activity_at: { type: string, format: date-time }
+        id: {type: string, format: uuid}
+        name: {type: string}
+        key_prefix: {type: string}
+        work_item_count: {type: integer}
+        done_work_item_count: {type: integer}
+        test_case_count: {type: integer}
+        open_bug_count: {type: integer}
+        last_activity_at: {type: string, format: date-time}
     Workspace:
       type: object
       description: Complete aggregate. See ui/src/types/workspace.ts for the typed client contract.
       properties:
-        project: { type: object }
-        prds: { type: array, items: { type: object } }
-        epics: { type: array, items: { type: object } }
-        features: { type: array, items: { type: object } }
-        work_items: { type: array, items: { type: object } }
-        test_cases: { type: array, items: { type: object } }
-        test_runs: { type: array, items: { type: object } }
-        repositories: { type: array, items: { type: object } }
-        branches: { type: array, items: { type: object } }
-        pull_requests: { type: array, items: { type: object } }
-        builds: { type: array, items: { type: object } }
-        environments: { type: array, items: { type: object } }
-        deployments: { type: array, items: { type: object } }
-        health_checks: { type: array, items: { type: object } }
-        activity: { type: array, items: { type: object } }
-        revision: { type: integer }
+        project: {type: object}
+        prds: {type: array, items: {type: object}}
+        epics: {type: array, items: {type: object}}
+        features: {type: array, items: {type: object}}
+        work_items: {type: array, items: {type: object}}
+        test_cases: {type: array, items: {type: object}}
+        test_runs: {type: array, items: {type: object}}
+        repositories: {type: array, items: {type: object}}
+        branches: {type: array, items: {type: object}}
+        pull_requests: {type: array, items: {type: object}}
+        builds: {type: array, items: {type: object}}
+        environments: {type: array, items: {type: object}}
+        deployments: {type: array, items: {type: object}}
+        health_checks: {type: array, items: {type: object}}
+        activity: {type: array, items: {type: object}}
+        revision: {type: integer}
     PRDInput:
       type: object
       required: [title]
       properties:
-        title: { type: string }
-        summary: { type: string }
-        content: { type: string }
-        status: { type: string }
+        title: {type: string}
+        summary: {type: string}
+        content: {type: string}
+        status: {type: string}
     EpicInput:
       type: object
       required: [prd_id, title]
       properties:
-        prd_id: { type: string, format: uuid }
-        title: { type: string }
-        description: { type: string }
-        status: { type: string }
+        prd_id: {type: string, format: uuid}
+        title: {type: string}
+        description: {type: string}
+        status: {type: string}
     FeatureInput:
       type: object
       required: [epic_id, title]
       properties:
-        epic_id: { type: string, format: uuid }
-        title: { type: string }
-        description: { type: string }
-        status: { type: string }
+        epic_id: {type: string, format: uuid}
+        title: {type: string}
+        description: {type: string}
+        status: {type: string}
     WorkItemInput:
       type: object
       required: [type, title]
       properties:
-        type: { type: string, enum: [story, task, subtask, bug] }
-        title: { type: string }
-        description: { type: string }
-        feature_id: { type: string, format: uuid }
-        parent_id: { type: string, format: uuid }
-        status: { type: string }
-        priority: { type: string }
-        severity: { type: string }
-        estimate_points: { type: number }
-        sprint_id: { type: string, format: uuid }
-        release_id: { type: string, format: uuid }
-        environment_id: { type: string, format: uuid }
+        type: {type: string, enum: [story, task, subtask, bug]}
+        title: {type: string}
+        description: {type: string}
+        feature_id: {type: string, format: uuid}
+        parent_id: {type: string, format: uuid}
+        status: {type: string}
+        priority: {type: string}
+        severity: {type: string}
+        estimate_points: {type: number}
+        sprint_id: {type: string, format: uuid}
+        release_id: {type: string, format: uuid}
+        environment_id: {type: string, format: uuid}
     TestCaseInput:
       type: object
       required: [title]
       properties:
-        feature_id: { type: string, format: uuid }
-        title: { type: string }
-        description: { type: string }
-        preconditions: { type: string }
-        priority: { type: string }
-        type: { type: string }
+        feature_id: {type: string, format: uuid}
+        title: {type: string}
+        description: {type: string}
+        preconditions: {type: string}
+        priority: {type: string}
+        type: {type: string}
         steps:
           type: array
           items:
             type: object
             properties:
-              action: { type: string }
-              expected_result: { type: string }
+              action: {type: string}
+              expected_result: {type: string}
     TestRunInput:
       type: object
       required: [name, case_ids]
       properties:
-        name: { type: string }
-        environment_id: { type: string, format: uuid }
-        build_id: { type: string, format: uuid }
-        release_id: { type: string, format: uuid }
-        case_ids: { type: array, items: { type: string, format: uuid } }
+        name: {type: string}
+        environment_id: {type: string, format: uuid}
+        build_id: {type: string, format: uuid}
+        release_id: {type: string, format: uuid}
+        case_ids: {type: array, items: {type: string, format: uuid}}
     TestImport:
       type: object
       required: [cases]
       properties:
-        name: { type: string }
+        name: {type: string}
         cases:
           type: array
           items:
             type: object
             properties:
-              name: { type: string }
-              classname: { type: string }
-              status: { type: string, enum: [passed, failed, blocked, skipped] }
-              duration_ms: { type: integer }
-              failure: { type: string }
+              name: {type: string}
+              classname: {type: string}
+              status: {type: string, enum: [passed, failed, blocked, skipped]}
+              duration_ms: {type: integer}
+              failure: {type: string}
               steps:
                 type: array
-                items: { type: object }
+                items: {type: object}
     BranchInput:
       type: object
       required: [repository_id, work_item_id, name]
       properties:
-        repository_id: { type: string, format: uuid }
-        work_item_id: { type: string, format: uuid }
-        name: { type: string }
-        head_commit_sha: { type: string }
+        repository_id: {type: string, format: uuid}
+        work_item_id: {type: string, format: uuid}
+        name: {type: string}
+        head_commit_sha: {type: string}
     PullRequestInput:
       type: object
       required: [repository_id, work_item_id, number, title]
       properties:
-        repository_id: { type: string, format: uuid }
-        work_item_id: { type: string, format: uuid }
-        source_branch_id: { type: string, format: uuid }
-        number: { type: integer }
-        title: { type: string }
-        description: { type: string }
-        target_branch: { type: string }
-        status: { type: string, enum: [open, draft, merged, closed] }
-        review_status: { type: string, enum: [pending, approved, changes_requested] }
-    BuildInput:
-      type: object
-      properties:
-        repository_id: { type: string, format: uuid }
-        commit_sha: { type: string }
-        branch: { type: string }
-        provider: { type: string }
-        external_id: { type: string }
-        number: { type: string }
-        status: { type: string, enum: [queued, running, success, failure, cancelled, timed_out] }
-        logs_url: { type: string }
-    DeploymentInput:
-      type: object
-      required: [environment_id, build_id]
-      properties:
-        environment_id: { type: string, format: uuid }
-        build_id: { type: string, format: uuid }
-        release_id: { type: string, format: uuid }
-        status: { type: string }
-        health_status: { type: string, enum: [unknown, healthy, degraded, unhealthy] }
-        version: { type: string }
-        argo_app: { type: string }
-        argo_revision: { type: string }
-    HealthCheckInput:
-      type: object
-      required: [status]
-      properties:
-        url: { type: string }
-        status: { type: string, enum: [unknown, healthy, degraded, unhealthy] }
-        http_status: { type: integer }
-        latency_ms: { type: integer }
-        details: { type: object }
+        repository_id: {type: string, format: uuid}
+        work_item_id: {type: string, format: uuid}
+        source_branch_id: {type: string, format: uuid}
+        number: {type: integer}
+        title: {type: string}
+        description: {type: string}
+        target_branch: {type: string}
+        status: {type: string, enum: [open, draft, merged, closed]}
+        review_status: {type: string, enum: [pending, approved, changes_requested]}
     ProjectSettings:
       type: object
       properties:
         merge_policy:
           type: object
           properties:
-            require_linked_work_item: { type: boolean }
-            require_approved_review: { type: boolean }
-            require_passing_checks: { type: boolean }
-        auto_rollback: { type: boolean }
-        auto_deploy_on_build: { type: boolean }
-        auto_deploy_environment: { type: string }
-        require_health_check: { type: boolean }
+            require_linked_work_item: {type: boolean}
+            require_approved_review: {type: boolean}
+            require_passing_checks: {type: boolean}
+        auto_rollback: {type: boolean}
+        auto_deploy_on_build: {type: boolean}
+        auto_deploy_environment: {type: string}
+        require_health_check: {type: boolean}
     Traceability:
       type: object
       properties:
-        rows: { type: array, items: { type: object } }
+        rows: {type: array, items: {type: object}}
         gaps:
           type: array
-          items: { type: string }
-        revision: { type: integer }
-    ArgoNotification:
+          items: {type: string}
+        revision: {type: integer}
+    AIAskInput:
+      type: object
+      required: [question]
+      properties:
+        question: {type: string, maxLength: 4000}
+    AdminUserInput:
       type: object
       properties:
-        app:
-          type: object
-          properties:
-            metadata:
-              type: object
-              properties:
-                name: { type: string }
-                labels: { type: object }
-            status:
-              type: object
-              properties:
-                sync:
-                  type: object
-                  properties:
-                    status: { type: string }
-                    revision: { type: string }
-                health:
-                  type: object
-                  properties:
-                    status: { type: string }
-                operationState:
-                  type: object
-                  properties:
-                    finishedAt: { type: string }
+        username: {type: string, maxLength: 100}
+        email: {type: string, format: email, maxLength: 255}
+        display_name: {type: string, maxLength: 255}
+        avatar_url: {type: string, maxLength: 2048}
+        role: {type: string, enum: [admin, member, viewer]}
+        is_active: {type: boolean}
+        password: {type: string, format: password, minLength: 10, maxLength: 128}
+    BugFromResultInput:
+      type: object
+      required: [title, priority]
+      properties:
+        title: {type: string}
+        description: {type: string}
+        severity: {type: [string, "null"]}
+        priority: {type: string}
+        assignee_id: {type: [string, "null"], format: uuid}
+        reproduction_steps: {type: string}
+        expected_result: {type: string}
+        actual_result: {type: string}
+        step_result_id: {type: [string, "null"], format: uuid}
+    ChangePasswordInput:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: {type: string, format: password}
+        new_password: {type: string, format: password, minLength: 10, maxLength: 128}
+    EnvironmentInput:
+      type: object
+      required: [name, type]
+      properties:
+        name: {type: string}
+        type: {type: string, enum: [development, staging, production]}
+        url: {type: string, maxLength: 2048}
+    LinkInput:
+      type: object
+      required: [source_type, source_id, target_type, target_id]
+      properties:
+        source_type: {type: string}
+        source_id: {type: string, format: uuid}
+        target_type: {type: string}
+        target_id: {type: string, format: uuid}
+        link_type: {type: string}
+    LoginResponse:
+      type: object
+      properties:
+        token: {type: string}
+        expires_in: {type: integer}
+        user:
+          $ref: '#/components/schemas/User'
+    Member:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        username: {type: string}
+        email: {type: string}
+        role: {type: string}
+    MemberInput:
+      type: object
+      required: [user_id, role]
+      properties:
+        user_id: {type: string, format: uuid}
+        role: {type: string, enum: [owner, maintainer, developer, tester, viewer]}
+    MergeInput:
+      type: object
+      properties:
+        commit_message: {type: string}
+        strategy: {type: string, enum: [merge, squash, rebase]}
+    ProfileUpdateInput:
+      type: object
+      properties:
+        display_name: {type: string, maxLength: 255}
+        email: {type: string, format: email, maxLength: 255}
+        avatar_url: {type: string, maxLength: 2048}
+    ProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 200}
+        description: {type: string}
+    ProjectUpdateInput:
+      type: object
+      properties:
+        name: {type: string, maxLength: 200}
+        description: {type: string}
+        key_prefix: {type: string, maxLength: 12}
+        default_branch: {type: string}
+        status: {type: string}
+    ReleaseInput:
+      type: object
+      required: [name, version]
+      properties:
+        name: {type: string}
+        version: {type: string}
+        status: {type: string}
+        planned_at: {type: [string, "null"], format: date-time}
+        notes: {type: string}
+    RepositoryInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        provider: {type: string, enum: [gitea, github, gitlab, bitbucket]}
+        default_branch: {type: string}
+        description: {type: string}
+    SearchResponse:
+      type: object
+      properties:
+        work_items: {type: array, items: {type: object}}
+        features: {type: array, items: {type: object}}
+        test_cases: {type: array, items: {type: object}}
+        projects: {type: array, items: {type: object}}
+        total: {type: integer}
+    SprintInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        goal: {type: string}
+        status: {type: string}
+        start_date: {type: [string, "null"], format: date-time}
+        end_date: {type: [string, "null"], format: date-time}
+        capacity: {type: [number, "null"]}
+    StateInput:
+      type: object
+      required: [state]
+      properties:
+        state: {type: string}
+    StatusInput:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string}
+    TestResultInput:
+      type: object
+      properties:
+        status: {type: string}
+        actual_result: {type: string}
+        duration_ms: {type: integer}
+        notes: {type: string}
+    TestStepResultInput:
+      type: object
+      properties:
+        status: {type: string}
+        actual_result: {type: string}
+        evidence_url: {type: string, maxLength: 2048}
+    TicketInput:
+      type: object
+      required: [title]
+      properties:
+        title: {type: string}
+        description: {type: string}
+        state: {type: string}
+        assignee_id: {type: [string, "null"], format: uuid}
+        priority: {type: string}
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string}
+        password: {type: string, format: password}
+    WebhookPayload:
+      type: object
+      additionalProperties: true
+      description: Provider-specific webhook payload. Authentication uses the provider signature or token.
