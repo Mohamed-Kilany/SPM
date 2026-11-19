@@ -4,7 +4,11 @@ SPM is an offline-first, enterprise software delivery and test management platfo
 
 The platform is designed for private networks and air-gapped installations. It has no SaaS dependency and no runtime telemetry.
 
-## Enterprise v2 direction
+> **Last verified:** 2026-11-19 against `master` at [`666108f`](https://github.com/Mohamed-Kilany/SPM/commit/666108f).
+> Evidence: [PR gate](.github/workflows/pr-gate.yml), [CodeQL](.github/workflows/codeql.yml),
+> [delivery plan](TASKS.md).
+
+## Enterprise v2 target surface
 
 The current work is a v2 redesign. The target surface includes:
 
@@ -15,8 +19,11 @@ The current work is a v2 redesign. The target surface includes:
 - Automated Gitea Actions and Argo CD delivery evidence.
 - JQL-style search, saved filters and linked artifacts.
 - Donut, bar, line and burn-up/burn-down analytics.
-- A Python CPU-only semantic search and RAG service.
-- Docker-built UI and Docker-only verification.
+- A Python CPU-only retrieval and answer service: TF-IDF/cosine by default, with an optional local GGUF model; embeddings are tracked as `AI-01`.
+- A Docker-built UI image and a Docker Compose stack, with image builds in the pull-request gate.
+
+This is the target surface, not a claim that every item is complete. [TASKS.md](TASKS.md) is the
+card-level delivery source of truth.
 
 See [docs/ENTERPRISE_SPEC.md](docs/ENTERPRISE_SPEC.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -50,8 +57,28 @@ The production UI is built by `ui/Dockerfile`. Host `ui/dist` is not mounted int
 
 ## Verification
 
+The required pull-request gate (`.github/workflows/pr-gate.yml`) runs:
+
+| Area | Checks |
+|---|---|
+| Go | `gofmt`, `go vet`, `go test ./... -race`, static build |
+| UI | `vue-tsc --noEmit`, Vitest, Vite production build |
+| AI | `pytest` for the FastAPI service |
+| Compose | `docker compose config` for the production and test stacks |
+| Images | Docker build of the API, UI and AI images |
+| Security | dependency review and CodeQL for Go, JavaScript/TypeScript and Python |
+
+The gate does **not** currently run the Go integration suite (`api/tests/integration`, build tag
+`integration`) or Playwright end-to-end tests (`ui/e2e`). Both run locally and are tracked as
+`QAT-02` and `QAT-03` in [TASKS.md](TASKS.md).
+
+Local commands (require a local Docker engine):
+
 ```powershell
-# Full backend/frontend/stack gate
+# Full backend/frontend/AI/Compose gate
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
+
+# Include running-stack health checks
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -CheckStack
 
 # Isolated integration stack
@@ -78,10 +105,13 @@ docker-compose.test.yml  Isolated test stack
 
 - Backup/restore: `scripts/backup.ps1`, `scripts/restore.ps1`.
 - Load test: `scripts/loadtest.ps1`.
-- Air-gapped image mirroring: `scripts/mirror-images.ps1`.
+- Air-gapped image mirroring: `scripts/mirror-images.ps1` (a verified runbook is `OPS-02`).
 - Health: `/health/live`, `/health/ready`, `/health`.
 - Metrics: not yet exposed. Tracked as `OBS-01` in `TASKS.md`; there is no Prometheus endpoint today.
 
 ## Status
 
-Enterprise v2 is under active implementation. The specification tracks completed and pending phases; no phase is marked complete until it is Docker-built and tested.
+Enterprise v2 is under active implementation. The verification table above describes exactly what
+the required gate proves today. Checked items in [docs/ENTERPRISE_SPEC.md](docs/ENTERPRISE_SPEC.md)
+have code and test evidence; a checked item is not a completed phase. [TASKS.md](TASKS.md) is the
+single source of truth for delivery status.

@@ -2121,20 +2121,22 @@ actions still work), permission-filtered.
 - **Docs:** Section 2.4 and Section 4.1.
 
 #### BASE-04 · Documentation truth pass
-- **Status:** TODO · **Priority:** P0 · **Estimate:** S · **Branch:** `docs/truth-baseline`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** S · **Branch:** `docs/truth-baseline`
 - **Depends on:** BASE-03
 - **Scope:** Correct every false or stale claim in `README.md`, `docs/ARCHITECTURE.md`,
   `docs/ENTERPRISE_SPEC.md` and `docs/openapi.yaml`. Add "Last verified" dates and evidence
   links. Mark only work that the PR gate actually proves.
 - **Out of scope:** Implementing the missing features.
 - **Acceptance criteria:**
-  - [ ] README no longer claims a Prometheus endpoint; it links `OBS-01`.
-  - [ ] ARCHITECTURE describes TF-IDF + optional GGUF, not embeddings, until `AI-01` lands.
-  - [ ] ARCHITECTURE states exactly what CI runs (unit, not integration/E2E) and links the
+  - [x] README no longer claims a Prometheus endpoint; it links `OBS-01`.
+  - [x] ARCHITECTURE describes TF-IDF + optional GGUF, not embeddings, until `AI-01` lands.
+  - [x] ARCHITECTURE states exactly what CI runs (unit, not integration/E2E) and links the
     tasks that close the gap.
-  - [ ] ENTERPRISE_SPEC checkboxes reflect verified evidence only.
-  - [ ] OpenAPI is either regenerated or clearly marked as stale with a link to `BASE-05`.
-- **Tests/evidence:** link checker; manual read-through; no claim without a code/test/CI link.
+  - [x] ENTERPRISE_SPEC checkboxes reflect verified evidence only.
+  - [x] OpenAPI is either regenerated or clearly marked as stale with a link to `BASE-05`.
+- **Tests/evidence:** The four documents now carry a "Last verified" date and links to the
+  workflow, service code and tests that support the claims; relative links resolve; the docs-only
+  PR passed all 9 required contexts before merge.
 - **Docs/telemetry:** This card is documentation-only; no runtime change.
 
 #### BASE-05 · OpenAPI contract pipeline
@@ -4973,7 +4975,7 @@ labels must exist in the repository.
 
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
-| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 2 | 1 | 6 |
+| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 4 | 0 | 5 |
 | 1 — Identity, authorization, audit | `GOV` | 12 | 0 | 0 | 12 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
@@ -4983,7 +4985,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | — | **128** | **3** | **0** | **125** |
+| **Total** | — | **128** | **4** | **0** | **124** |
 
 ### C.2 Card index by phase
 
@@ -5004,7 +5006,6 @@ labels must exist in the repository.
 
 | Task | Why it blocks release |
 |---|---|
-| `BASE-04` | Documentation that lies about metrics/security is an operational hazard |
 | `BASE-05` | A stale contract breaks clients and hides breaking changes |
 | `GOV-01` | Coarse write authorization allows privilege escalation |
 | `GOV-02` | Removed members retain read access until token expiry |
@@ -5029,6 +5030,8 @@ labels must exist in the repository.
 | 2026-11-18 | Initial baseline: operating model, gap register, UI research/blueprints, 128 task cards, standards, milestones, risks, ADRs, metrics, references, appendices | Maintainer |
 | 2026-11-18 | Retained and fortified Dependabot as the sole accepted bot author; added ADR-023, authorship policy, label/assignment/grouping checks and supply-chain notes | Maintainer |
 | 2026-11-18 | Closed BASE-03: enabled strict protection on `master`, enforced admins, proved direct-push and red-PR rejection, and recorded the first protected merge | Maintainer |
+| 2026-11-19 | Closed BASE-04: corrected README, architecture, enterprise spec and OpenAPI claims; added verified-evidence dates and links; marked OpenAPI stale pending BASE-05 | Maintainer |
+| 2026-11-19 | Resolved the last Dependabot alert with a scoped `minimatch` ^11.0.9 override (BASE-06 slice); the default branch now has 0 open Dependabot alerts | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
