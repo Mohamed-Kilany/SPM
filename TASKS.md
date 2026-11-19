@@ -2194,17 +2194,26 @@ actions still work), permission-filtered.
   GitHub surfaces it in the Security tab; `BASE-07` extends it with community files.
 
 #### BASE-07 · Repository community and security files
-- **Status:** TODO · **Priority:** P2 · **Estimate:** S · **Branch:** `docs/community-files`
+- **Status:** DONE · **Priority:** P2 · **Estimate:** S · **Branch:** `docs/community-files`
 - **Scope:** Extend the `SECURITY.md` created by `BASE-06` if any disclosure gap remains, and add
-  `CONTRIBUTING.md` (branch/PR rules from this document), issue templates (bug, feature,
-  security), support policy and code of conduct.
+  `CONTRIBUTING.md` (branch/PR rules from this document), issue forms (bug, feature), support
+  policy and code of conduct. A public security issue form is intentionally replaced by the
+  GitHub private-advisory contact link, because a public template would contradict the
+  disclosure policy.
 - **Acceptance criteria:**
-  - [ ] SECURITY.md explains private reporting and does not ask for public exploits.
-  - [ ] CONTRIBUTING.md links this plan and the PR template.
-  - [ ] Issue templates request reproduction, expected/actual, environment and logs.
-  - [ ] No template encourages pasting secrets or customer data.
-- **Tests/evidence:** GitHub renders the templates; links resolve.
-- **Docs/telemetry:** Documentation only.
+  - [x] SECURITY.md explains private reporting and does not ask for public exploits.
+  - [x] CONTRIBUTING.md links this plan, the PR template, the verification commands and the
+    contract workflow.
+  - [x] Issue forms request reproduction, expected/actual behavior, environment and sanitized
+    logs.
+  - [x] No template encourages pasting secrets or customer data; each form contains a warning
+    and a private-reporting redirect.
+- **Tests/evidence:** All issue-form YAML parses; referenced labels (`bug`, `type/feature`) exist;
+  GitHub private vulnerability reporting returns `enabled: true`; relative links resolve in the
+  branch; `config.yml` disables blank issues and points to private advisories. Rendered forms are
+  served only from `master`, so the post-merge render check is recorded in the activity log.
+- **Docs/telemetry:** Root `CONTRIBUTING.md`, `SUPPORT.md`, `CODE_OF_CONDUCT.md`,
+  `.github/ISSUE_TEMPLATE/*`; `SECURITY.md` cross-links.
 
 #### BASE-08 · Environment, release and versioning model
 - **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `docs/release-model`
@@ -4794,8 +4803,12 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `.github/workflows/pr-gate.yml` | Required PR checks | Maintainer | Active |
 | `.github/workflows/codeql.yml` | Security analysis | Maintainer | Active |
 | `.github/pull_request_template.md` | PR evidence contract | Maintainer | Active |
+| `.github/ISSUE_TEMPLATE/` | Bug and feature forms, private security contact | Maintainer | Active (`BASE-07`) |
+| `CONTRIBUTING.md` | Branch, PR, commit and verification rules | Maintainer | Active (`BASE-07`) |
+| `SUPPORT.md` | Support scope and response expectations | Maintainer | Active (`BASE-07`) |
+| `CODE_OF_CONDUCT.md` | Community standards and enforcement | Maintainer | Active (`BASE-07`) |
 | `.github/dependabot.yml` | Dependency and security update automation (`ADR-023`) | Maintainer | Active |
-| `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`), extended by `BASE-07` |
+| `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`); community links added by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Planned (`GOV-04`) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Planned (`GOV-01`) |
@@ -4995,7 +5008,7 @@ labels must exist in the repository.
 
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
-| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 6 | 0 | 3 |
+| 0 - Baseline, truth and delivery gate | `BASE` | 9 | 7 | 0 | 2 |
 | 1 — Identity, authorization, audit | `GOV` | 12 | 0 | 0 | 12 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
@@ -5005,7 +5018,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | — | **128** | **6** | **0** | **122** |
+| **Total** | - | **128** | **7** | **0** | **121** |
 
 ### C.2 Card index by phase
 
@@ -5053,6 +5066,7 @@ labels must exist in the repository.
 | 2026-11-19 | Resolved the last Dependabot alert with a scoped `minimatch` ^11.0.9 override (BASE-06 slice); the default branch now has 0 open Dependabot alerts | Maintainer |
 | 2026-11-19 | Closed BASE-05: moved route registration into `internal/server`, generated the 81-route OpenAPI contract, added route/operation/UI-parity tests, wired drift and Redocly checks into the existing gate, and documented versioning in `docs/API.md` | Maintainer |
 | 2026-11-19 | Closed BASE-06 baseline: upgraded Go to 1.27.4 and `x/net` to v0.60.0, made govulncheck/npm audit/pip-audit blocking, added Syft SBOM and Trivy evidence to the Images job, and published `SECURITY.md` with the exception register and image-signing handoff to `OPS-07` | Maintainer |
+| 2026-11-19 | Closed BASE-07: added `CONTRIBUTING.md`, `SUPPORT.md`, `CODE_OF_CONDUCT.md`, bug and feature issue forms, and a private-advisory issue contact link; disabled blank issues and cross-linked the policy set from `SECURITY.md`. The public security template was replaced by private reporting so no issue form can solicit exploit details | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
