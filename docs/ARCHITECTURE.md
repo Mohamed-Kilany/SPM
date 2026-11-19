@@ -108,16 +108,28 @@ The AI service is a stateless Python FastAPI application:
 The pull-request-only workflow in [`.github/workflows/pr-gate.yml`](../.github/workflows/pr-gate.yml)
 runs on every non-draft PR targeting `master`:
 
-- Go: `gofmt` check, `go vet ./...`, OpenAPI contract check, `go test ./... -race`, static binary build.
-- UI: OpenAPI lint with Redocly, `vue-tsc --noEmit`, Vitest unit tests, Vite production build.
-- AI: `pytest` for the FastAPI service.
+- Go: `go mod verify`, `gofmt` check, `go vet ./...`, `govulncheck`, OpenAPI contract check,
+  `go test ./... -race`, static binary build.
+- UI: `npm audit --audit-level=high`, OpenAPI lint with Redocly, `vue-tsc --noEmit`, Vitest unit
+  tests, Vite production build.
+- AI: `pip-audit` against the pinned requirements, `pytest` for the FastAPI service.
 - Compose: `docker compose config` for the production and isolated test stacks.
-- Images: Docker build of the API, UI and AI images.
+- Images: Docker build, Syft SBOM generation and Trivy HIGH/CRITICAL scan of the API, UI and AI
+  images.
 - Security: dependency review; CodeQL for Go, JavaScript/TypeScript and Python.
 
 A separate CodeQL workflow scans on pull requests. All listed contexts are required on `master`.
 
-### 9.2 API contract
+### 9.2 Supply chain
+
+The Images job publishes three SPDX SBOMs and three SARIF scan reports as the
+`supply-chain-evidence` artifact on every pull request. SBOM generation and scanning failures
+fail the required context; scan findings are advisory until the image baseline is clean. The
+promotion rule, exception register, disclosure policy and the image-signing gap are documented
+in [`SECURITY.md`](../SECURITY.md). Dependency vulnerabilities are blocking today:
+`govulncheck`, `npm audit --audit-level=high` and `pip-audit` all run with a clean baseline.
+
+### 9.3 API contract
 
 `docs/openapi.yaml` is generated from `api/internal/server.Routes()`, which is checked
 against the real Gin registration by `TestRoutesMatchRegistration`. Three additional checks
@@ -135,7 +147,7 @@ The Go job runs `go run ./cmd/openapi -check`; the UI job runs
 hand-maintained schemas under `components` while removing unreachable components. The versioning
 and deprecation policy is in [`API.md`](API.md).
 
-### 9.3 Not in the required gate
+### 9.4 Not in the required gate
 
 These exist but run locally or manually today:
 
@@ -146,7 +158,7 @@ These exist but run locally or manually today:
 
 No document should claim these run on every PR until the workflows are added and required.
 
-### 9.4 Phase-completion target
+### 9.5 Phase-completion target
 
 A phase is complete only when its Docker build, automated API/UI tests and required E2E/integration
 coverage are green. Until `QAT-02` and `QAT-03` land, phase checkboxes in

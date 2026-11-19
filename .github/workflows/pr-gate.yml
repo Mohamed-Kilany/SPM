@@ -42,6 +42,9 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      - name: Verify module checksums
+        run: go mod verify
+
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l internal cmd)"
@@ -53,6 +56,11 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # Reachable-vulnerability scan. The baseline is clean, so findings block.
+      # Bump the pinned version with Dependabot or deliberately in a PR.
+      - name: Scan for reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 
       - name: Check the OpenAPI contract
         run: go run ./cmd/openapi -check
@@ -83,6 +91,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      # Moderate dev-only advisories are tracked in SECURITY.md. High and
+      # critical findings fail the lockfile audit.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
       - name: Lint the OpenAPI contract
         working-directory: .
@@ -119,6 +132,11 @@ jobs:
 
       - name: Install test dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements-test.txt
+
+      - name: Audit Python dependencies
+        run: |
+          python -m pip install --quiet pip-audit==2.10.1
+          python -m pip_audit -r requirements-test.txt --progress-spinner off
 
       - name: Run the AI service tests
         run: python -m pytest -q
@@ -160,7 +178,8 @@ jobs:
           context: .
           file: ./Dockerfile.api
           push: false
-          load: false
+          load: true
+          tags: spm-api:ci
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
@@ -170,7 +189,8 @@ jobs:
           context: ./ui
           file: ./ui/Dockerfile
           push: false
-          load: false
+          load: true
+          tags: spm-ui:ci
           cache-from: type=gha,scope=ui
           cache-to: type=gha,mode=max,scope=ui
 
@@ -180,9 +200,84 @@ jobs:
           context: .
           file: ./ai/Dockerfile
           push: false
-          load: false
+          load: true
+          tags: spm-ai:ci
           cache-from: type=gha,scope=ai
           cache-to: type=gha,mode=max,scope=ai
+
+      # Supply-chain evidence. SBOM generation is required; HIGH/CRITICAL image
+      # findings are advisory (exit-code 0) until the baseline is clean, then the
+      # policy in SECURITY.md promotes this step to blocking.
+      - name: Generate the API SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: spm-api:ci
+          format: spdx-json
+          output-file: sbom-api.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the UI SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: spm-ui:ci
+          format: spdx-json
+          output-file: sbom-ui.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the AI SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: spm-ai:ci
+          format: spdx-json
+          output-file: sbom-ai.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Scan the API image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: spm-api:ci
+          format: sarif
+          output: trivy-api.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Scan the UI image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: spm-ui:ci
+          format: sarif
+          output: trivy-ui.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Scan the AI image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: spm-ai:ci
+          format: sarif
+          output: trivy-ai.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Upload supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supply-chain-evidence
+          path: |
+            sbom-*.spdx.json
+            trivy-*.sarif
+          if-no-files-found: warn
+          retention-days: 30
 
   dependency-review:
     name: "Security: dependency review"

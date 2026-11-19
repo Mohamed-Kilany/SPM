@@ -61,13 +61,18 @@ The required pull-request gate (`.github/workflows/pr-gate.yml`) runs:
 
 | Area | Checks |
 |---|---|
-| Go | `gofmt`, `go vet`, `go test ./... -race`, static build |
+| Go | `go mod verify`, `gofmt`, `go vet`, `govulncheck`, `go test ./... -race`, static build |
 | API contract | route inventory matches `docs/openapi.yaml`; Redocly lint |
-| UI | `vue-tsc --noEmit`, Vitest, Vite production build |
-| AI | `pytest` for the FastAPI service |
+| UI | `npm audit --audit-level=high`, `vue-tsc --noEmit`, Vitest, Vite production build |
+| AI | `pip-audit`, `pytest` for the FastAPI service |
 | Compose | `docker compose config` for the production and test stacks |
-| Images | Docker build of the API, UI and AI images |
-| Security | dependency review and CodeQL for Go, JavaScript/TypeScript and Python |
+| Images | Docker build, Syft SPDX SBOM and Trivy HIGH/CRITICAL scan of the API, UI and AI images |
+| Security | dependency review, CodeQL, Dependabot alerts and secret scanning with push protection |
+
+The Images job publishes `supply-chain-evidence` (three SBOMs and three SARIF reports) for every
+pull request. SBOM generation and scanning are required, but scan findings are advisory until
+the image baseline is clean; the promotion rule, exception register and disclosure policy are in
+[SECURITY.md](SECURITY.md). `scripts/supply-chain.ps1` runs the dependency checks locally.
 
 The API contract is generated from the canonical route inventory in
 [`api/internal/server`](api/internal/server) and cannot drift silently:
@@ -85,7 +90,7 @@ The gate does **not** currently run the Go integration suite (`api/tests/integra
 `integration`) or Playwright end-to-end tests (`ui/e2e`). Both run locally and are tracked as
 `QAT-02` and `QAT-03` in [TASKS.md](TASKS.md).
 
-Local commands (require a local Docker engine):
+Local commands (the full gate and E2E require a local Docker engine):
 
 ```powershell
 # Full backend/frontend/AI/Compose gate
@@ -93,6 +98,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1
 
 # Include running-stack health checks
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -CheckStack
+
+# Dependency vulnerability checks (no Docker required)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/supply-chain.ps1
 
 # Regenerate or verify the OpenAPI contract
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/openapi.ps1
@@ -112,6 +120,7 @@ npm run test:e2e
 api/                 Go API, migrations, domain services
 ui/                  Vue 3 SPA, Dockerfile, Playwright E2E
 docs/                Enterprise specification and architecture
+SECURITY.md          Disclosure, supply-chain and exception policy
 scripts/             Verification, backup, restore, load and mirroring tools
 envoy/ nginx/        Edge and static-serving configuration
 docker-compose.yaml  Production stack
