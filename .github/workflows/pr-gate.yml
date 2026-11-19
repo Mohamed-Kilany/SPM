@@ -236,7 +236,7 @@ jobs:
           upload-release-assets: false
 
       - name: Scan the API image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: spm-api:ci
           format: sarif
@@ -247,7 +247,7 @@ jobs:
           exit-code: "0"
 
       - name: Scan the UI image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: spm-ui:ci
           format: sarif
@@ -258,7 +258,7 @@ jobs:
           exit-code: "0"
 
       - name: Scan the AI image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: spm-ai:ci
           format: sarif
