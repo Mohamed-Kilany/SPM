@@ -54,6 +54,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Check the OpenAPI contract
+        run: go run ./cmd/openapi -check
+
       - name: Test with the race detector
         run: go test ./... -count=1 -race -timeout=180s
 
@@ -80,6 +83,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Lint the OpenAPI contract
+        working-directory: .
+        run: npx --yes @redocly/cli@2.0.8 lint docs/openapi.yaml
 
       - name: Typecheck
         run: npm run typecheck

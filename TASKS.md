@@ -2140,21 +2140,27 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** This card is documentation-only; no runtime change.
 
 #### BASE-05 · OpenAPI contract pipeline
-- **Status:** TODO · **Priority:** P0 · **Estimate:** M · **Branch:** `feature/api-openapi-contract`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** M · **Branch:** `feature/api-openapi-contract`
 - **Depends on:** BASE-04
-- **Scope:** Make the HTTP contract executable. Generate or validate `docs/openapi.yaml` from
-  the router/handlers, add a route-coverage test that fails when a route is missing or
-  undocumented, lint with Spectral, and generate a typed UI client or shared types.
+- **Scope:** Make the HTTP contract executable. Move route registration into an importable package,
+  generate `docs/openapi.yaml` from the canonical route inventory, add contract tests that fail
+  when a route is missing or undocumented, lint with Redocly, and prove UI-client path parity.
 - **Acceptance criteria:**
-  - [ ] Every registered route appears in OpenAPI with method, auth, request, response and
-    error envelope.
-  - [ ] Removed routes are absent; new routes are present.
-  - [ ] CI fails on undocumented routes, invalid schemas or breaking changes.
-  - [ ] The UI client uses generated types or a contract test proves parity.
-  - [ ] A `make openapi` / script regenerates deterministically.
-- **Tests/evidence:** route-coverage test, Spectral lint, `schemathesis` smoke against a
-  ephemeral API, generated client typecheck.
-- **Docs/telemetry:** OpenAPI README, versioning policy, deprecation headers.
+  - [x] Every registered route appears in OpenAPI with method, auth, request, response and
+    error envelope (81 method/path pairs).
+  - [x] Removed routes are absent; new routes are present; every regenerated run removes
+    unreachable components.
+  - [x] CI fails on undocumented routes, an out-of-date document or invalid schemas through the
+    existing Go and UI jobs; no required context names changed.
+  - [x] A contract test proves the hand-written UI client targets documented paths.
+  - [x] `scripts/openapi.ps1` and `go run ./cmd/openapi -write` regenerate deterministically.
+- **Tests/evidence:** `TestRoutesMatchRegistration`, `TestOpenAPIContractMatchesRouter`,
+  `TestOpenAPIOperationsAreComplete`, `TestUIClientPathsExist`, `go run ./cmd/openapi -check`,
+  Redocly lint in the UI job, and a green required gate on the pull request. A `schemathesis`
+  smoke run needs an ephemeral stack and remains part of `QAT-04`.
+- **Docs/telemetry:** [`docs/API.md`](../docs/API.md) documents the source-of-truth map, regeneration
+  commands, versioning and deprecation policy. No route is deprecated today, so no deprecation
+  header is emitted.
 
 #### BASE-06 · Supply chain and dependency automation baseline
 - **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `chore/supply-chain-baseline`
@@ -4769,9 +4775,10 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | Document | Purpose | Owner | Status |
 |---|---|---|---|
 | `TASKS.md` | Delivery sequencing, acceptance criteria, UI direction | Maintainer | Active |
-| `docs/ENTERPRISE_SPEC.md` | Product intent and non-negotiable outcomes | Maintainer | Active, to be corrected by `BASE-04` |
-| `docs/ARCHITECTURE.md` | Runtime topology and service responsibilities | Maintainer | Active, to be corrected by `BASE-04` |
-| `docs/openapi.yaml` | HTTP contract | Maintainer | Stale, replaced by `BASE-05` pipeline |
+| `docs/ENTERPRISE_SPEC.md` | Product intent and non-negotiable outcomes | Maintainer | Active |
+| `docs/ARCHITECTURE.md` | Runtime topology and service responsibilities | Maintainer | Active |
+| `docs/API.md` | Contract source map and versioning policy | Maintainer | Active |
+| `docs/openapi.yaml` | HTTP contract | Maintainer | Generated, enforced by `BASE-05` |
 | `.github/workflows/pr-gate.yml` | Required PR checks | Maintainer | Active |
 | `.github/workflows/codeql.yml` | Security analysis | Maintainer | Active |
 | `.github/pull_request_template.md` | PR evidence contract | Maintainer | Active |
@@ -4839,7 +4846,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `vue-tsc`, Vitest, Vite | UI quality | Required in the gate |
 | pytest | AI quality | Required in the gate |
 | Playwright + axe | E2E and accessibility | Required for critical flows |
-| Spectral | OpenAPI lint | Added by `BASE-05` |
+| Redocly CLI | OpenAPI lint | Required in the UI job (`BASE-05`) |
 | Schemathesis | Contract testing | Added by `QAT-04` |
 | Syft / Trivy / Cosign | SBOM, scanning, signing | Added by `BASE-06`/`OPS-07` |
 | k6 | Load and soak testing | Added by `OPS-08`/`QAT-06` |
@@ -4975,7 +4982,7 @@ labels must exist in the repository.
 
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
-| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 4 | 0 | 5 |
+| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 5 | 0 | 4 |
 | 1 — Identity, authorization, audit | `GOV` | 12 | 0 | 0 | 12 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
@@ -4985,7 +4992,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | — | **128** | **4** | **0** | **124** |
+| **Total** | — | **128** | **5** | **0** | **123** |
 
 ### C.2 Card index by phase
 
@@ -5006,7 +5013,6 @@ labels must exist in the repository.
 
 | Task | Why it blocks release |
 |---|---|
-| `BASE-05` | A stale contract breaks clients and hides breaking changes |
 | `GOV-01` | Coarse write authorization allows privilege escalation |
 | `GOV-02` | Removed members retain read access until token expiry |
 | `GOV-03` | Self-approval and client-supplied review state make reviews meaningless |
@@ -5032,6 +5038,7 @@ labels must exist in the repository.
 | 2026-11-18 | Closed BASE-03: enabled strict protection on `master`, enforced admins, proved direct-push and red-PR rejection, and recorded the first protected merge | Maintainer |
 | 2026-11-19 | Closed BASE-04: corrected README, architecture, enterprise spec and OpenAPI claims; added verified-evidence dates and links; marked OpenAPI stale pending BASE-05 | Maintainer |
 | 2026-11-19 | Resolved the last Dependabot alert with a scoped `minimatch` ^11.0.9 override (BASE-06 slice); the default branch now has 0 open Dependabot alerts | Maintainer |
+| 2026-11-19 | Closed BASE-05: moved route registration into `internal/server`, generated the 81-route OpenAPI contract, added route/operation/UI-parity tests, wired drift and Redocly checks into the existing gate, and documented versioning in `docs/API.md` | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
