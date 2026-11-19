@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible defect in the API, UI, AI service, scripts or documentation.
+title: "[Bug]: "
+labels:
+  - "bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not include secrets, tokens, passwords, `.env` content,
+        customer data or private repository names. Redact logs before pasting them.
+
+        For a suspected security vulnerability, stop here and follow
+        [SECURITY.md](https://github.com/Mohamed-Kilany/SPM/blob/master/SECURITY.md) instead of
+        opening a public issue.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability; those are reported privately.
+          required: true
+        - label: I removed secrets, tokens and customer data from everything below.
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the defect.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, commands or clicks that trigger the defect.
+      placeholder: |
+        1. Start the stack with ...
+        2. Open ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact error message or a sanitized screenshot.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Fill in what you know; leave the rest empty.
+      value: |
+        - Commit or version:
+        - Deployment: local Compose / test stack / other
+        - Operating system:
+        - Browser (for UI issues):
+        - Go / Node / Python version (for build issues):
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Paste only the relevant lines. Remove tokens, cookies, connection strings and repository names.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Workarounds, related tasks from `TASKS.md`, or anything else that helps.
+    validations:
+      required: false

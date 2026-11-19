@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Mohamed-Kilany/SPM/security/advisories/new
+    about: Report privately through a GitHub security advisory. Never open a public issue for a vulnerability.
+  - name: Delivery plan and task status
+    url: https://github.com/Mohamed-Kilany/SPM/blob/master/TASKS.md
+    about: Check the task index and acceptance criteria before proposing new work.
+  - name: Contribution rules
+    url: https://github.com/Mohamed-Kilany/SPM/blob/master/CONTRIBUTING.md
+    about: Branch naming, pull-request rules and the local verification commands.

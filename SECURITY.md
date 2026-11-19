@@ -18,6 +18,10 @@ We will acknowledge a report within **2 business days**, provide an initial asse
 **5 business days**, and coordinate disclosure after a fix is available. These are response
 targets, not contractual SLAs.
 
+For non-security help, see [`SUPPORT.md`](SUPPORT.md). For branch, commit and pull-request
+rules, see [`CONTRIBUTING.md`](CONTRIBUTING.md). Conduct reports follow
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) and are also private.
+
 ## Supported versions
 
 The project is pre-release: there are no published release tags yet. `master` is the only

@@ -1,0 +1,72 @@
+name: Feature request
+description: Propose a capability, improvement or documentation change.
+title: "[Feature]: "
+labels:
+  - "type/feature"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals should map to a task in [`TASKS.md`](https://github.com/Mohamed-Kilany/SPM/blob/master/TASKS.md)
+        or explain why a new task is needed. Check the plan before filing to avoid duplicates.
+
+        Do not include secrets, tokens, customer data or private repository names.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and `TASKS.md` for the same proposal.
+          required: true
+        - label: This is not a security vulnerability; those are reported privately.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard, missing or unsafe today? Describe the user and the workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest change that solves the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, including doing nothing, and why they are worse.
+    validations:
+      required: false
+  - type: input
+    id: task
+    attributes:
+      label: Related task
+      description: Task ID from `TASKS.md`, if one exists (for example `GOV-01`).
+      placeholder: GOV-01
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and acceptance criteria
+      description: How will we know the change is complete and correct?
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Primary area
+      options:
+        - API
+        - UI
+        - AI
+        - Operations and deployment
+        - Security and access
+        - Documentation
+        - Tooling and CI
+    validations:
+      required: true
