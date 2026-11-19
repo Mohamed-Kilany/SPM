@@ -1,5 +1,9 @@
 # SPM Platform — Enterprise Architecture
 
+> **Last verified:** 2026-11-19 against `master` at [`666108f`](https://github.com/Mohamed-Kilany/SPM/commit/666108f).
+> Evidence: [PR gate](../.github/workflows/pr-gate.yml), [CodeQL](../.github/workflows/codeql.yml),
+> service code and tests under [`api/`](../api), [`ui/`](../ui) and [`ai/`](../ai).
+
 ## 1. Runtime topology
 
 ```
@@ -31,7 +35,7 @@ All services run in Docker Compose. The production UI image is built from `ui/Do
 | `gitea` | Offline Git provider, pull requests and Actions |
 | `act_runner` | Gitea Actions runner |
 | `argocd` | GitOps deployment and health reconciliation |
-| `ai_service` | CPU-only embeddings, semantic search and RAG |
+| `ai_service` | CPU-only TF-IDF retrieval, extractive answers, optional local GGUF generation |
 
 ## 3. Domain model
 
@@ -64,12 +68,19 @@ Project writes resolve the membership from the database on every request so role
 
 The AI service is a stateless Python FastAPI application:
 
-- CPU-only embedding model for semantic retrieval.
-- CPU-only small instruction model for RAG answers.
-- API backend assembles authorized project context and sends it to the AI service.
-- The AI service never reads PostgreSQL directly.
-- Models are baked into the image or mounted from a mirrored model volume for air-gapped installs.
-- If the model is unavailable, deterministic lexical retrieval and template recommendations keep the feature usable.
+- The default retrieval engine is TF-IDF/cosine over the context supplied by the API. It is
+  deterministic, CPU-only and requires no model download.
+- The default answer engine is extractive: it selects and cites sentences from the supplied
+  artifacts. `/insights` produces deterministic delivery-risk and coverage findings.
+- No embedding model is shipped or downloaded today. Embedding-based retrieval is tracked as
+  `AI-01` in [`TASKS.md`](../TASKS.md).
+- An optional local GGUF model can generate answers through `llama-cpp-python`. It is enabled only
+  when `SPM_AI_MODEL_PATH` points to a mounted model, runs with `n_gpu_layers=0`, and falls back to
+  the extractive engine if the model is missing or fails.
+- The API backend assembles authorized project context and sends it to the AI service.
+- The AI service never reads PostgreSQL directly and makes no external network calls.
+- For air-gapped installs, an optional GGUF file is mirrored and mounted; it is not baked into the
+  default image.
 
 ## 7. Security
 
@@ -92,11 +103,34 @@ The AI service is a stateless Python FastAPI application:
 
 ## 9. Verification
 
-Every phase requires:
+### 9.1 Required pull-request gate
 
-- `docker compose build` and healthy containers.
-- Go formatting, vet, unit tests and integration tests.
-- Vue typecheck, Vitest and production image build.
-- Playwright E2E with axe WCAG 2.1 A/AA checks.
-- No external requests, browser errors or console errors.
-- SSE-driven state updates without manual refresh.
+The pull-request-only workflow in [`.github/workflows/pr-gate.yml`](../.github/workflows/pr-gate.yml)
+runs on every non-draft PR targeting `master`:
+
+- Go: `gofmt` check, `go vet ./...`, `go test ./... -race`, static binary build.
+- UI: `vue-tsc --noEmit`, Vitest unit tests, Vite production build.
+- AI: `pytest` for the FastAPI service.
+- Compose: `docker compose config` for the production and isolated test stacks.
+- Images: Docker build of the API, UI and AI images.
+- Security: dependency review; CodeQL for Go, JavaScript/TypeScript and Python.
+
+A separate CodeQL workflow scans on pull requests. All listed contexts are required on `master`.
+
+### 9.2 Not in the required gate
+
+These exist but run locally or manually today:
+
+- Go integration tests in `api/tests/integration` (build tag `integration`), including PostgreSQL,
+  NATS, Gitea and SSE scenarios. Tracked as `QAT-02`.
+- Playwright end-to-end tests in `ui/e2e`, including axe accessibility checks. Tracked as `QAT-03`.
+- Running-stack health checks from `scripts/verify.ps1 -CheckStack`.
+
+No document should claim these run on every PR until the workflows are added and required.
+
+### 9.3 Phase-completion target
+
+A phase is complete only when its Docker build, automated API/UI tests and required E2E/integration
+coverage are green. Until `QAT-02` and `QAT-03` land, phase checkboxes in
+[`ENTERPRISE_SPEC.md`](ENTERPRISE_SPEC.md) mark implemented slices with code/test evidence, not
+fully gated phases.

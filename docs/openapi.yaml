@@ -1,3 +1,12 @@
+# =============================================================================
+# STALE CONTRACT - DO NOT TREAT THIS FILE AS AUTHORITATIVE.
+#
+# This document was written against an earlier router and does not list every
+# registered route (for example /auth/me, /auth/password, /auth/stream-ticket,
+# /users, /search, /admin/users, project members, AI and repository browse
+# routes). Regeneration and CI drift enforcement are planned in BASE-05:
+# https://github.com/Mohamed-Kilany/SPM/blob/master/TASKS.md
+# =============================================================================
 openapi: 3.1.0
 info:
   title: SPM Platform API
@@ -6,6 +15,10 @@ info:
     Offline-first software delivery platform API. The normalized workspace
     aggregate is the source of truth for SDLC/STLC artifacts. Mutations emit a
     `workspace.changed` event and bump the project SSE revision.
+
+    STALE: this contract is not generated from the router and is missing
+    routes. It will be regenerated and enforced in CI by BASE-05; until then
+    the Go router in `api/cmd/api/main.go` is the source of truth.
 servers:
   - url: http://localhost:8080
     description: Local Compose stack
