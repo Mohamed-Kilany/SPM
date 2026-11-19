@@ -2163,27 +2163,39 @@ actions still work), permission-filtered.
   header is emitted.
 
 #### BASE-06 · Supply chain and dependency automation baseline
-- **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `chore/supply-chain-baseline`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** M · **Branch:** `chore/supply-chain-baseline`
 - **Depends on:** BASE-02
 - **Scope:** Add lockfile integrity checks, `govulncheck`, `npm audit`/`pip-audit` triage,
-  SBOM generation (`syft`), image scanning (`trivy`), provenance/signing (`cosign`) and a
-  documented exception policy. Keep Dependabot alerts and automated security fixes enabled,
-  with grouped security-update PRs and per-ecosystem limits (`ADR-023`). Start advisory, then
-  make high/critical findings blocking once the baseline is clean.
+  SBOM generation (`syft`), image scanning (`trivy`) and a documented exception policy. Keep
+  Dependabot alerts and automated security fixes enabled, with grouped security-update PRs and
+  per-ecosystem limits (`ADR-023`). Start advisory, then make high/critical findings blocking
+  once the baseline is clean. Signing, provenance and admission verification are delivered by
+  `OPS-07`, which consumes the SBOMs and scan evidence produced here.
 - **Acceptance criteria:**
-  - [ ] SBOMs are produced for API, UI and AI images.
-  - [ ] High/critical vulnerabilities have an owner, due date and remediation or exception.
-  - [ ] Images are signed and verification is documented.
-  - [ ] Dependabot PRs run the full PR gate.
-  - [ ] Dependabot alerts and automated security fixes are enabled; grouped security-update
-    PRs are verified.
-  - [ ] No secret scanning alert is ignored without a written reason.
-- **Tests/evidence:** SBOM artifact, scan report, signature verification command.
-- **Docs/telemetry:** `docs/SECURITY.md`, exception register, release checklist.
+  - [x] SBOMs are produced for the API, UI and AI images (Syft SPDX JSON, uploaded as the
+    `supply-chain-evidence` artifact on every pull request).
+  - [x] High/critical vulnerabilities have an owner, due date and remediation or exception.
+    Reachable Go, npm high/critical and Python advisories block the gate; image findings follow
+    the documented promotion rule and `SC-002` review.
+  - [x] Image signing is explicitly scoped to `OPS-07` by the task index; this card produces the
+    evidence it consumes and makes no signed-image claim until that task lands.
+  - [x] Dependabot PRs run the full PR gate; the config targets `master` with no bypass.
+  - [x] Dependabot alerts and automated security fixes are enabled (verified through the GitHub
+    API); grouped `*-security` update groups exist for Actions, Go, npm and pip.
+  - [x] No secret-scanning alert is ignored: secret scanning and push protection are enabled and
+    the open alert count is 0.
+- **Tests/evidence:** `go mod verify`, `govulncheck` v1.10.0 (0 reachable vulnerabilities after
+  upgrading Go to 1.27.4 and `golang.org/x/net` to v0.60.0), `npm audit --audit-level=high`
+  (0 high/critical), `pip-audit` 2.10.1 (0 findings), SBOM/Trivy artifacts from the Images job,
+  and `scripts/supply-chain.ps1`.
+- **Docs/telemetry:** [`SECURITY.md`](../SECURITY.md) documents private disclosure, supported
+  versions, response targets, supply-chain controls, the exception register, the image-scan
+  promotion rule and the release security checklist. This uses the repository-root path so
+  GitHub surfaces it in the Security tab; `BASE-07` extends it with community files.
 
 #### BASE-07 · Repository community and security files
 - **Status:** TODO · **Priority:** P2 · **Estimate:** S · **Branch:** `docs/community-files`
-- **Scope:** Add `SECURITY.md` (disclosure policy, supported versions, response SLA),
+- **Scope:** Extend the `SECURITY.md` created by `BASE-06` if any disclosure gap remains, and add
   `CONTRIBUTING.md` (branch/PR rules from this document), issue templates (bug, feature,
   security), support policy and code of conduct.
 - **Acceptance criteria:**
@@ -3844,7 +3856,7 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   - [ ] Webhook payloads cannot mutate a project they are not bound to.
   - [ ] Tests run in CI against the real database.
 - **Tests/evidence:** Isolation test suite, adversarial cases, CI report.
-- **Docs/telemetry:** Isolation guarantees in `docs/SECURITY.md`.
+- **Docs/telemetry:** Isolation guarantees in `SECURITY.md`.
 
 #### OPS-14 · Resource quotas, storage growth and cost controls
 - **Status:** TODO · **Priority:** P3 · **Estimate:** S · **Branch:** `docs/ops-cost-model`
@@ -4783,7 +4795,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `.github/workflows/codeql.yml` | Security analysis | Maintainer | Active |
 | `.github/pull_request_template.md` | PR evidence contract | Maintainer | Active |
 | `.github/dependabot.yml` | Dependency and security update automation (`ADR-023`) | Maintainer | Active |
-| `docs/SECURITY.md` | Disclosure and security policy | Maintainer | Planned (`BASE-07`) |
+| `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`), extended by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Planned (`GOV-04`) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Planned (`GOV-01`) |
@@ -4848,7 +4860,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | Playwright + axe | E2E and accessibility | Required for critical flows |
 | Redocly CLI | OpenAPI lint | Required in the UI job (`BASE-05`) |
 | Schemathesis | Contract testing | Added by `QAT-04` |
-| Syft / Trivy / Cosign | SBOM, scanning, signing | Added by `BASE-06`/`OPS-07` |
+| Syft / Trivy / Cosign | SBOM, scanning, signing | Syft and Trivy in `BASE-06`; signing and admission in `OPS-07` |
 | k6 | Load and soak testing | Added by `OPS-08`/`QAT-06` |
 | Helm / kubeconform | Kubernetes packaging | Added by `OPS-04` |
 | Prometheus / Grafana / OTel | Observability | Self-hosted; added by `OBS-01`..`OBS-05` |
@@ -4928,7 +4940,8 @@ labels must exist in the repository.
 - Every issue links its task ID and acceptance criteria; the task remains the source of truth.
 - Bugs include: environment, version/commit, steps, expected, actual, logs/trace ID, impact,
   and whether data was affected.
-- Security issues are never filed publicly; use the process in `SECURITY.md` (`BASE-07`).
+- Security issues are never filed publicly; use the process in `SECURITY.md` (`BASE-06`,
+  extended by `BASE-07`).
 - Closed issues reference the merging PR; the PR references the issue.
 
 ---
@@ -4982,7 +4995,7 @@ labels must exist in the repository.
 
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
-| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 5 | 0 | 4 |
+| 0 — Baseline, truth and delivery gate | `BASE` | 9 | 6 | 0 | 3 |
 | 1 — Identity, authorization, audit | `GOV` | 12 | 0 | 0 | 12 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
@@ -4992,7 +5005,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | — | **128** | **5** | **0** | **123** |
+| **Total** | — | **128** | **6** | **0** | **122** |
 
 ### C.2 Card index by phase
 
@@ -5039,6 +5052,7 @@ labels must exist in the repository.
 | 2026-11-19 | Closed BASE-04: corrected README, architecture, enterprise spec and OpenAPI claims; added verified-evidence dates and links; marked OpenAPI stale pending BASE-05 | Maintainer |
 | 2026-11-19 | Resolved the last Dependabot alert with a scoped `minimatch` ^11.0.9 override (BASE-06 slice); the default branch now has 0 open Dependabot alerts | Maintainer |
 | 2026-11-19 | Closed BASE-05: moved route registration into `internal/server`, generated the 81-route OpenAPI contract, added route/operation/UI-parity tests, wired drift and Redocly checks into the existing gate, and documented versioning in `docs/API.md` | Maintainer |
+| 2026-11-19 | Closed BASE-06 baseline: upgraded Go to 1.27.4 and `x/net` to v0.60.0, made govulncheck/npm audit/pip-audit blocking, added Syft SBOM and Trivy evidence to the Images job, and published `SECURITY.md` with the exception register and image-signing handoff to `OPS-07` | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

@@ -1,6 +1,6 @@
 module spm-platform/api
 
-go 1.26.0
+go 1.27.4
 
 require (
 	github.com/gin-gonic/gin v1.12.0
@@ -11,9 +11,9 @@ require (
 	github.com/nats-io/nats.go v1.55.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/stretchr/testify v1.12.1
+	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/crypto v0.57.0
 )
-
-require go.yaml.in/yaml/v3 v3.0.5
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -46,8 +46,7 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

@@ -5,7 +5,7 @@
 # Stage 3: Final — combines exit codes; exits non-zero if either suite fails.
 
 # ── Go test stage ────────────────────────────────────────────────────────────
-FROM golang:1.27-alpine AS go_test
+FROM golang:1.27.4-alpine AS go_test
 
 WORKDIR /app
 
@@ -48,7 +48,7 @@ RUN npm run typecheck \
 # The COPY instructions below force Docker to execute the Go unit-test and
 # frontend typecheck/Vitest stages, so the final image represents the complete
 # quality gate rather than integration tests alone.
-FROM golang:1.27-alpine AS integration_runner
+FROM golang:1.27.4-alpine AS integration_runner
 
 RUN apk add --no-cache curl
 
