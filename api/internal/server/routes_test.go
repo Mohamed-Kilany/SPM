@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"spm-platform/api/internal/auth"
 )
 
 var (
@@ -95,6 +98,146 @@ func TestRoutesHaveSupportedAuth(t *testing.T) {
 	}
 	if len(validated) == 0 {
 		t.Fatal("route inventory is empty")
+	}
+}
+
+// TestProjectRoutesDeclareCapability keeps the capability contract complete:
+// every project-scoped route names exactly one capability, and every mutating
+// route is capability-gated rather than falling back to the old coarse gate.
+func TestProjectRoutesDeclareCapability(t *testing.T) {
+	for _, route := range Routes() {
+		projectScoped := strings.Contains(route.Path, "/projects/:id")
+		if projectScoped {
+			if !auth.ValidCapability(route.Capability) {
+				t.Errorf("project route %s %s has invalid capability %q", route.Method, route.Path, route.Capability)
+			}
+			if route.Method != http.MethodGet && route.Capability == "" {
+				t.Errorf("mutating project route %s %s has no capability", route.Method, route.Path)
+			}
+			continue
+		}
+		if route.Capability != "" {
+			t.Errorf("non-project route %s %s declares capability %q", route.Method, route.Path, route.Capability)
+		}
+	}
+
+	// Every capability in the matrix is attached to at least one route, so a
+	// typo cannot silently create an unreachable capability.
+	used := map[auth.Capability]bool{}
+	for _, route := range Routes() {
+		if route.Capability != "" {
+			used[route.Capability] = true
+		}
+	}
+	for _, capability := range auth.AllCapabilities {
+		switch capability {
+		case auth.CapPRReview, auth.CapAuditRead, auth.CapDeliveryRollback:
+			// Review submission arrives with GOV-03, audit reads with GOV-04
+			// and rollback with the delivery write surface. The capabilities
+			// exist now so those follow-ups attach to the same matrix.
+			continue
+		}
+		if !used[capability] {
+			t.Errorf("capability %q is not attached to a route", capability)
+		}
+	}
+}
+
+// staticRoleResolver resolves every project membership to one role, so route
+// wiring can be exercised without PostgreSQL.
+type staticRoleResolver struct {
+	role   string
+	member bool
+}
+
+func (s staticRoleResolver) RoleForProject(context.Context, string, string) (string, bool, error) {
+	return s.role, s.member, nil
+}
+
+// capabilityRequest exercises one registered route with one token and resolver.
+func capabilityRequest(t *testing.T, route Route, role, globalRole string, member bool) int {
+	t.Helper()
+	const secret = "route-capability-test-secret"
+	t.Setenv("JWT_SECRET", secret)
+
+	token, err := auth.IssueToken("user-1", globalRole, nil, secret, 1)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Handle(route.Method, route.Path,
+		auth.Middleware(nil),
+		auth.RequireProjectCapabilityWithResolver(staticRoleResolver{role: role, member: member}, route.Capability),
+		func(c *gin.Context) { c.Status(http.StatusNoContent) },
+	)
+
+	req := httptest.NewRequest(route.Method, ginParam.ReplaceAllString(route.Path, "x"), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w.Code
+}
+
+// TestProjectRoutesEnforceMatrix walks every capability-gated route for every
+// project role. It proves the live middleware binding matches the canonical
+// matrix, not just the metadata table.
+func TestProjectRoutesEnforceMatrix(t *testing.T) {
+	for _, route := range Routes() {
+		if route.Capability == "" {
+			continue
+		}
+		for _, role := range auth.ProjectRoles {
+			want := http.StatusForbidden
+			if auth.RoleHasCapability(role, route.Capability) {
+				want = http.StatusNoContent
+			}
+			got := capabilityRequest(t, route, role, auth.RoleMember, true)
+			if got != want {
+				t.Errorf("%s %s as %s: status = %d, want %d (capability %s)",
+					route.Method, route.Path, role, got, want, route.Capability)
+			}
+		}
+	}
+}
+
+// TestProjectRoutesEnforceGlobalViewer proves a global viewer stays read-only
+// even when the membership row says owner.
+func TestProjectRoutesEnforceGlobalViewer(t *testing.T) {
+	readOnly := map[auth.Capability]bool{
+		auth.CapProjectRead:  true,
+		auth.CapCodeRead:     true,
+		auth.CapDeliveryRead: true,
+	}
+	for _, route := range Routes() {
+		if route.Capability == "" {
+			continue
+		}
+		want := http.StatusForbidden
+		if readOnly[route.Capability] {
+			want = http.StatusNoContent
+		}
+		got := capabilityRequest(t, route, auth.ProjectRoleOwner, auth.RoleViewer, true)
+		if got != want {
+			t.Errorf("%s %s as global viewer/owner: status = %d, want %d (capability %s)",
+				route.Method, route.Path, got, want, route.Capability)
+		}
+	}
+}
+
+// TestProjectRoutesAllowGlobalAdmin proves break-glass access is wired on every
+// project route, including when no membership row exists.
+func TestProjectRoutesAllowGlobalAdmin(t *testing.T) {
+	for _, route := range Routes() {
+		if route.Capability == "" {
+			continue
+		}
+		got := capabilityRequest(t, route, "", auth.RoleAdmin, false)
+		if got != http.StatusNoContent {
+			t.Errorf("%s %s as global admin: status = %d, want %d (capability %s)",
+				route.Method, route.Path, got, http.StatusNoContent, route.Capability)
+		}
 	}
 }
 

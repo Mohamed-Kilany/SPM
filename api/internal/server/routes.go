@@ -111,87 +111,92 @@ func Register(r *gin.Engine, h Handlers) {
 
 		v1.GET("/projects", h.Project.List)
 		v1.POST("/projects", auth.RequireRole(auth.RoleAdmin, auth.RoleMember), h.Project.Create)
-		v1.GET("/projects/:id", auth.RequireProjectReadDB(h.Pool), h.Project.Get)
-		v1.GET("/projects/:id/workspace", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetWorkspace)
-		v1.GET("/projects/:id/activity", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetActivity)
-		v1.GET("/projects/:id/traceability", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetTraceability)
-		v1.GET("/projects/:id/reports", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetReports)
-		v1.GET("/projects/:id/reports/export", auth.RequireProjectReadDB(h.Pool), h.Workspace.ExportReport)
-		v1.GET("/projects/:id/release-readiness", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetReleaseReadiness)
-		v1.GET("/projects/:id/ai/search", auth.RequireProjectReadDB(h.Pool), h.Workspace.AISearch)
-		v1.POST("/projects/:id/ai/ask", auth.RequireProjectReadDB(h.Pool), h.Workspace.AIAsk)
-		v1.GET("/projects/:id/ai/insights", auth.RequireProjectReadDB(h.Pool), h.Workspace.AIInsights)
-		v1.GET("/projects/:id/settings", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetSettings)
-		v1.GET("/projects/:id/members", auth.RequireProjectReadDB(h.Pool), h.Workspace.ListMembers)
-		v1.GET("/projects/:id/repositories/:repoId/tree", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetRepositoryTree)
-		v1.GET("/projects/:id/repositories/:repoId/blob", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetRepositoryFile)
-		v1.GET("/projects/:id/repositories/:repoId/commits", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetRepositoryCommits)
-		v1.GET("/projects/:id/repositories/:repoId/branches", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetRepositoryBranches)
-		v1.GET("/projects/:id/pull-requests/:prId/files", auth.RequireProjectReadDB(h.Pool), h.Workspace.GetPullRequestFiles)
 
-		projectAdmin := v1.Group("/projects/:id", auth.RequireProjectAdminDB(h.Pool))
-		{
-			projectAdmin.PATCH("", h.Workspace.UpdateProject)
-			projectAdmin.PUT("/settings", h.Workspace.UpdateSettings)
-			projectAdmin.POST("/members", h.Workspace.AddMember)
-			projectAdmin.PATCH("/members/:userId", h.Workspace.UpdateMember)
-			projectAdmin.DELETE("/members/:userId", h.Workspace.RemoveMember)
+		// Project routes declare one capability each. RequireProjectCapability
+		// resolves the membership from PostgreSQL on every request, so a role
+		// change or removal is effective immediately.
+		project := func(method, suffix string, capability auth.Capability, handler gin.HandlerFunc) {
+			v1.Handle(method, "/projects/:id"+suffix, auth.RequireProjectCapability(h.Pool, capability), handler)
 		}
 
-		writes := v1.Group("/projects/:id", auth.RequireProjectWriteDB(h.Pool))
-		{
-			writes.POST("/tickets", h.Ticket.Create)
-			writes.PUT("/tickets/:tid", h.Ticket.Update)
-			writes.PATCH("/tickets/:tid/state", h.Ticket.ChangeState)
-			writes.DELETE("/tickets/:tid", h.Ticket.Delete)
+		// Reads.
+		project(http.MethodGet, "", auth.CapProjectRead, h.Project.Get)
+		project(http.MethodGet, "/workspace", auth.CapProjectRead, h.Workspace.GetWorkspace)
+		project(http.MethodGet, "/activity", auth.CapProjectRead, h.Workspace.GetActivity)
+		project(http.MethodGet, "/traceability", auth.CapProjectRead, h.Workspace.GetTraceability)
+		project(http.MethodGet, "/reports", auth.CapProjectRead, h.Workspace.GetReports)
+		project(http.MethodGet, "/reports/export", auth.CapProjectRead, h.Workspace.ExportReport)
+		project(http.MethodGet, "/release-readiness", auth.CapDeliveryRead, h.Workspace.GetReleaseReadiness)
+		project(http.MethodGet, "/ai/search", auth.CapProjectRead, h.Workspace.AISearch)
+		project(http.MethodPost, "/ai/ask", auth.CapProjectRead, h.Workspace.AIAsk)
+		project(http.MethodGet, "/ai/insights", auth.CapProjectRead, h.Workspace.AIInsights)
+		project(http.MethodGet, "/settings", auth.CapProjectRead, h.Workspace.GetSettings)
+		project(http.MethodGet, "/members", auth.CapProjectRead, h.Workspace.ListMembers)
+		project(http.MethodGet, "/repositories/:repoId/tree", auth.CapCodeRead, h.Workspace.GetRepositoryTree)
+		project(http.MethodGet, "/repositories/:repoId/blob", auth.CapCodeRead, h.Workspace.GetRepositoryFile)
+		project(http.MethodGet, "/repositories/:repoId/commits", auth.CapCodeRead, h.Workspace.GetRepositoryCommits)
+		project(http.MethodGet, "/repositories/:repoId/branches", auth.CapCodeRead, h.Workspace.GetRepositoryBranches)
+		project(http.MethodGet, "/pull-requests/:prId/files", auth.CapCodeRead, h.Workspace.GetPullRequestFiles)
 
-			// Planning
-			writes.POST("/prds", h.Workspace.CreatePRD)
-			writes.PUT("/prds/:prdId", h.Workspace.UpdatePRD)
-			writes.DELETE("/prds/:prdId", h.Workspace.DeletePRD)
-			writes.POST("/epics", h.Workspace.CreateEpic)
-			writes.PUT("/epics/:epicId", h.Workspace.UpdateEpic)
-			writes.DELETE("/epics/:epicId", h.Workspace.DeleteEpic)
-			writes.POST("/features", h.Workspace.CreateFeature)
-			writes.PUT("/features/:featureId", h.Workspace.UpdateFeature)
-			writes.DELETE("/features/:featureId", h.Workspace.DeleteFeature)
-			writes.POST("/work-items", h.Workspace.CreateWorkItem)
-			writes.PUT("/work-items/:itemId", h.Workspace.UpdateWorkItem)
-			writes.PATCH("/work-items/:itemId/status", h.Workspace.ChangeWorkItemStatus)
-			writes.DELETE("/work-items/:itemId", h.Workspace.DeleteWorkItem)
-			writes.POST("/sprints", h.Workspace.CreateSprint)
-			writes.PUT("/sprints/:sprintId", h.Workspace.UpdateSprint)
-			writes.POST("/releases", h.Workspace.CreateRelease)
-			writes.PUT("/releases/:releaseId", h.Workspace.UpdateRelease)
+		// Project settings and membership.
+		project(http.MethodPatch, "", auth.CapSettingsWrite, h.Workspace.UpdateProject)
+		project(http.MethodPut, "/settings", auth.CapSettingsWrite, h.Workspace.UpdateSettings)
+		project(http.MethodPost, "/members", auth.CapMemberWrite, h.Workspace.AddMember)
+		project(http.MethodPatch, "/members/:userId", auth.CapMemberWrite, h.Workspace.UpdateMember)
+		project(http.MethodDelete, "/members/:userId", auth.CapMemberWrite, h.Workspace.RemoveMember)
 
-			// Test management
-			writes.POST("/test-cases", h.Workspace.CreateTestCase)
-			writes.PUT("/test-cases/:caseId", h.Workspace.UpdateTestCase)
-			writes.DELETE("/test-cases/:caseId", h.Workspace.DeleteTestCase)
-			writes.POST("/test-runs", h.Workspace.CreateTestRun)
-			writes.POST("/test-runs/import", h.Workspace.ImportTestRun)
-			writes.PATCH("/test-runs/:runId/results/:resultId", h.Workspace.PatchTestResult)
-			writes.PATCH("/test-runs/:runId/results/:resultId/steps/:stepResultId", h.Workspace.PatchTestStepResult)
-			writes.POST("/test-runs/:runId/results/:resultId/bug", h.Workspace.CreateBugFromResult)
+		// Work items. Testers hold work_item.write for defects and status
+		// changes; the ticket and work-item handlers enforce that restriction.
+		project(http.MethodPost, "/tickets", auth.CapWorkItemWrite, h.Ticket.Create)
+		project(http.MethodPut, "/tickets/:tid", auth.CapWorkItemWrite, h.Ticket.Update)
+		project(http.MethodPatch, "/tickets/:tid/state", auth.CapWorkItemWrite, h.Ticket.ChangeState)
+		project(http.MethodDelete, "/tickets/:tid", auth.CapWorkItemWrite, h.Ticket.Delete)
+		project(http.MethodPost, "/work-items", auth.CapWorkItemWrite, h.Workspace.CreateWorkItem)
+		project(http.MethodPut, "/work-items/:itemId", auth.CapWorkItemWrite, h.Workspace.UpdateWorkItem)
+		project(http.MethodPatch, "/work-items/:itemId/status", auth.CapWorkItemWrite, h.Workspace.ChangeWorkItemStatus)
+		project(http.MethodDelete, "/work-items/:itemId", auth.CapWorkItemWrite, h.Workspace.DeleteWorkItem)
 
-			// Git and delivery
-			writes.POST("/repositories", h.Workspace.CreateRepository)
-			writes.POST("/repositories/:repoId/provision", h.Workspace.ProvisionRepository)
-			writes.POST("/branches", h.Workspace.CreateBranch)
-			writes.POST("/pull-requests", h.Workspace.CreatePullRequest)
-			writes.PUT("/pull-requests/:prId", h.Workspace.UpdatePullRequest)
-			writes.POST("/pull-requests/:prId/merge", h.Workspace.MergePullRequest)
-			writes.POST("/environments", h.Workspace.CreateEnvironment)
-			// Builds, deployments, health checks and rollbacks are read-only
-			// projections of Gitea Actions and Argo CD. They are never edited
-			// through the SPM API.
-			writes.POST("/links", h.Workspace.CreateLink)
-			writes.DELETE("/links/:linkId", h.Workspace.DeleteLink)
-		}
+		// Planning.
+		project(http.MethodPost, "/prds", auth.CapPlanningWrite, h.Workspace.CreatePRD)
+		project(http.MethodPut, "/prds/:prdId", auth.CapPlanningWrite, h.Workspace.UpdatePRD)
+		project(http.MethodDelete, "/prds/:prdId", auth.CapPlanningWrite, h.Workspace.DeletePRD)
+		project(http.MethodPost, "/epics", auth.CapPlanningWrite, h.Workspace.CreateEpic)
+		project(http.MethodPut, "/epics/:epicId", auth.CapPlanningWrite, h.Workspace.UpdateEpic)
+		project(http.MethodDelete, "/epics/:epicId", auth.CapPlanningWrite, h.Workspace.DeleteEpic)
+		project(http.MethodPost, "/features", auth.CapPlanningWrite, h.Workspace.CreateFeature)
+		project(http.MethodPut, "/features/:featureId", auth.CapPlanningWrite, h.Workspace.UpdateFeature)
+		project(http.MethodDelete, "/features/:featureId", auth.CapPlanningWrite, h.Workspace.DeleteFeature)
+		project(http.MethodPost, "/sprints", auth.CapPlanningWrite, h.Workspace.CreateSprint)
+		project(http.MethodPut, "/sprints/:sprintId", auth.CapPlanningWrite, h.Workspace.UpdateSprint)
+		project(http.MethodPost, "/releases", auth.CapPlanningWrite, h.Workspace.CreateRelease)
+		project(http.MethodPut, "/releases/:releaseId", auth.CapPlanningWrite, h.Workspace.UpdateRelease)
+		project(http.MethodPost, "/links", auth.CapPlanningWrite, h.Workspace.CreateLink)
+		project(http.MethodDelete, "/links/:linkId", auth.CapPlanningWrite, h.Workspace.DeleteLink)
+
+		// Test management.
+		project(http.MethodPost, "/test-cases", auth.CapTestWrite, h.Workspace.CreateTestCase)
+		project(http.MethodPut, "/test-cases/:caseId", auth.CapTestWrite, h.Workspace.UpdateTestCase)
+		project(http.MethodDelete, "/test-cases/:caseId", auth.CapTestWrite, h.Workspace.DeleteTestCase)
+		project(http.MethodPost, "/test-runs", auth.CapTestWrite, h.Workspace.CreateTestRun)
+		project(http.MethodPost, "/test-runs/import", auth.CapTestWrite, h.Workspace.ImportTestRun)
+		project(http.MethodPatch, "/test-runs/:runId/results/:resultId", auth.CapTestWrite, h.Workspace.PatchTestResult)
+		project(http.MethodPatch, "/test-runs/:runId/results/:resultId/steps/:stepResultId", auth.CapTestWrite, h.Workspace.PatchTestStepResult)
+		project(http.MethodPost, "/test-runs/:runId/results/:resultId/bug", auth.CapTestWrite, h.Workspace.CreateBugFromResult)
+
+		// Git and delivery. Builds, deployments, health checks and rollbacks
+		// are read-only projections of Gitea Actions and Argo CD; they are
+		// never edited through the SPM API.
+		project(http.MethodPost, "/repositories", auth.CapCodeWrite, h.Workspace.CreateRepository)
+		project(http.MethodPost, "/repositories/:repoId/provision", auth.CapCodeWrite, h.Workspace.ProvisionRepository)
+		project(http.MethodPost, "/branches", auth.CapCodeWrite, h.Workspace.CreateBranch)
+		project(http.MethodPost, "/pull-requests", auth.CapCodeWrite, h.Workspace.CreatePullRequest)
+		project(http.MethodPut, "/pull-requests/:prId", auth.CapCodeWrite, h.Workspace.UpdatePullRequest)
+		project(http.MethodPost, "/pull-requests/:prId/merge", auth.CapPRMerge, h.Workspace.MergePullRequest)
+		project(http.MethodPost, "/environments", auth.CapDeliveryDeploy, h.Workspace.CreateEnvironment)
 	}
 
 	streamAuth := sse.StreamAuthMiddleware(h.TicketStore, h.UserInvalidation)
-	stream := r.Group("/api/v1", streamAuth, auth.RequireProjectReadDB(h.Pool))
+	stream := r.Group("/api/v1", streamAuth, auth.RequireProjectCapability(h.Pool, auth.CapProjectRead))
 	{
 		stream.GET("/projects/:id/stream", h.SSEManager.Stream)
 	}

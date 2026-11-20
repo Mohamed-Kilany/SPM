@@ -54,7 +54,15 @@ Two layers are mandatory:
 1. Global role from JWT (`admin`, `member`, `viewer`).
 2. Project role from PostgreSQL (`owner`, `maintainer`, `developer`, `tester`, `viewer`).
 
-Project writes resolve the membership from the database on every request so role changes take effect immediately. Global admins bypass project membership checks.
+Every project route declares one capability (`project.read`, `planning.write`,
+`work_item.write`, `test.write`, `code.read`, `code.write`, `pr.review`,
+`pr.merge`, `delivery.read`, `delivery.deploy`, `delivery.rollback`,
+`settings.write`, `member.write`, `audit.read`). `RequireProjectCapability`
+resolves the membership from PostgreSQL on every request, so role changes and
+removals take effect immediately. Global admins keep break-glass access and
+log each use. Global viewers remain read-only even when they hold a project
+role. The full matrix, tester restrictions and ownership rules are in
+[`AUTHZ.md`](AUTHZ.md).
 
 ## 5. Real-time model
 

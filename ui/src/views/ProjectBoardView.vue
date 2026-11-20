@@ -35,7 +35,7 @@ const stream = useProjectStream(toRef(props, 'id'), {
 
 const { isLoading, error, reconnect } = stream
 
-const canWrite = computed(() => auth.canWrite())
+const canWrite = computed(() => auth.canWrite(props.id))
 
 interface ColumnAccent {
   border: string

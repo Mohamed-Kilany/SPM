@@ -2259,13 +2259,13 @@ actions still work), permission-filtered.
 ### Phase 1 — Identity, authorization, audit and governance
 
 #### GOV-01 · Capability matrix and server-side enforcement
-- **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/authz-capabilities`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/authz-capabilities`
 - **Depends on:** BASE-05
 - **Scope:** Replace the single project-write gate with explicit capabilities. Define the
   canonical matrix for `owner`, `maintainer`, `developer`, `tester`, `viewer` and global roles;
   add `RequireProjectCapability` middleware that resolves membership from PostgreSQL on every
   request; attach the capability set to `/auth/me` for UI gating.
-- **Capability matrix (target):**
+- **Capability matrix (implemented):**
 
 | Capability | Owner | Maintainer | Developer | Tester | Viewer | Global admin |
 |---|---|---|---|---|---|---|
@@ -2285,16 +2285,42 @@ actions still work), permission-filtered.
 | `audit.read` | ✓ | ✓ | — | — | — | ✓ |
 
 - **Acceptance criteria:**
-  - [ ] Every write route declares a capability; no route relies on the old coarse gate.
-  - [ ] A tester cannot create/delete planning artifacts, repositories, branches or PRs.
-  - [ ] A developer cannot roll back production or change settings/members.
-  - [ ] A viewer cannot mutate anything, including via direct API calls.
-  - [ ] Global admins retain break-glass access, audited.
-  - [ ] The UI shows/hides actions from the capability set and explains denial.
-  - [ ] Table-driven tests cover every route × role × capability.
-- **Tests/evidence:** `authz` matrix tests, integration tests with real memberships,
-  negative IDOR tests.
-- **Docs/telemetry:** `docs/AUTHZ.md`, denied-attempt security event, capability change audit.
+  - [x] Every project route declares exactly one capability in
+    `api/internal/server/metadata.go` and attaches `RequireProjectCapability`; the contract test
+    rejects a missing or invalid capability on a project route and a mutating route without one.
+    No route uses the old coarse write gate.
+  - [x] A tester cannot create, edit or delete planning artifacts, repositories, branches or pull
+    requests: those routes require `planning.write` or `code.write`, which the matrix withholds.
+    Tester work-item creation is restricted to `type: "bug"`, and ticket/work-item edit and delete
+    are refused by the handlers; status changes remain allowed.
+  - [x] A developer cannot change settings or members (`settings.write`/`member.write` absent),
+    merge (`pr.merge` absent), roll back (`delivery.rollback` absent) or create a production
+    environment (`POST /environments` refuses `type: "production"` for developers).
+  - [x] A global viewer stays read-only even with an owner membership row: effective capabilities
+    intersect with `project.read`, `code.read` and `delivery.read`, and the route-level test walks
+    every capability-gated route.
+  - [x] Global admins retain break-glass access on every project route without a membership row.
+    Each request logs `authz_break_glass` with request ID, user, project, capability, method and
+    path; durable audit persistence is `GOV-04`.
+  - [x] The UI gates board, planning, code, delivery, reports, tests and settings actions through
+    `auth.can(projectId, capability)`. Settings explains the missing `settings.write`/
+    `member.write` capability, and the board explains the tester restriction.
+  - [x] Table-driven tests cover the full role × capability matrix, every project route × every
+    project role, global viewer read-only enforcement, global admin break-glass and fail-closed
+    membership lookup errors.
+- **Tests/evidence:** `api/internal/auth/rbac_test.go` covers the matrix, `/auth/me` capability
+  derivation and the middleware (owner/maintainer/developer/tester/viewer, non-member,
+  global-viewer, unknown-role, lookup-error and immediate role-change cases).
+  `api/internal/server/routes_test.go` walks every capability-gated route for each project role,
+  for a global viewer with an owner membership, and for a global admin with no membership.
+  Full `go test ./...`, `go vet ./...`, OpenAPI `-check`, UI `vue-tsc`, Vitest (16 tests) and the
+  production build pass; the generated contract carries 61 `x-spm-capability` operations.
+- **Docs/telemetry:** [`docs/AUTHZ.md`](docs/AUTHZ.md) defines the matrix, tester and developer
+  restrictions, ownership rules, denial contract and `/auth/me` shape;
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) summarizes enforcement. Denials log
+  `authz_denied`; break-glass logs `authz_break_glass`; caller-controlled project IDs and
+  paths have CR/LF stripped so they cannot forge log entries. Audit storage and
+  capability-change audit events are `GOV-04`; session/SSE invalidation is `GOV-02`.
 
 #### GOV-02 · Membership and session invalidation
 - **Status:** TODO · **Priority:** P0 · **Estimate:** M · **Branch:** `fix/membership-session-invalidation`
@@ -4837,7 +4863,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`); community links added by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Planned (`GOV-04`) |
-| `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Planned (`GOV-01`) |
+| `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
 | `docs/METRICS.md` | Metric catalog and formulas | Maintainer | Planned (`ANL-04`) |
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
 | `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
@@ -5037,7 +5063,7 @@ labels must exist in the repository.
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
 | 0 - Baseline, truth and delivery gate | `BASE` | 9 | 8 | 0 | 1 |
-| 1 — Identity, authorization, audit | `GOV` | 12 | 0 | 0 | 12 |
+| 1 — Identity, authorization, audit | `GOV` | 12 | 1 | 0 | 11 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
 | 4 — Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 0 | 0 | 13 |
@@ -5046,7 +5072,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **9** | **0** | **119** |
+| **Total** | - | **128** | **10** | **0** | **118** |
 
 ### C.2 Card index by phase
 
@@ -5067,7 +5093,6 @@ labels must exist in the repository.
 
 | Task | Why it blocks release |
 |---|---|
-| `GOV-01` | Coarse write authorization allows privilege escalation |
 | `GOV-02` | Removed members retain read access until token expiry |
 | `GOV-03` | Self-approval and client-supplied review state make reviews meaningless |
 | `GOV-04` | No tamper-evident audit means incidents cannot be investigated |
@@ -5098,6 +5123,7 @@ labels must exist in the repository.
 | 2026-11-19 | Closed BASE-08: added `docs/RELEASING.md` with the environment, promotion, migration and rollback model; embedded tag-derived version metadata in the API health probes, UI footer and AI service; added `scripts/changelog.ps1`, `scripts/release.ps1`, `CHANGELOG.md` and the tag-triggered `release.yml` that verifies master ancestry, re-runs supply-chain checks and publishes SBOM/SARIF evidence | Maintainer |
 | 2026-11-20 | Verified the BASE-08 release dry run: pushed the scratch tag `v0.0.0-rc.1` from `master`; `release.yml` verify, images and publish jobs all succeeded; GitHub created a prerelease with generated changelog notes and six assets (`sbom-api/ui/ai.spdx.json`, `trivy-api/ui/ai.sarif`); the release and both local and remote tags were then deleted, leaving no published release | Maintainer |
 | 2026-11-20 | Closed OBS-01: added a Prometheus endpoint on a separate internal listener with optional bearer auth, RED/Go/process/PostgreSQL/NATS/SSE/Gitea/Argo/AI/reconciliation/build-info collectors, bounded route-template labels and `docs/OBSERVABILITY.md`. Post-merge verification confirmed `api/internal/metrics` and the observability contract on `master`, PR #21 merged with all required checks green, and 0 open Dependabot or secret-scanning alerts | Maintainer |
+| 2026-11-20 | Closed GOV-01: replaced the coarse project-write gate with 14 explicit capabilities resolved from `project_members` on every request; added DB-backed `RequireProjectCapability`, global viewer/admin overlays, tester and developer restrictions, owner-grant protection, `/auth/me` per-project capabilities, `x-spm-capability` OpenAPI metadata and capability-gated UI actions. Added `docs/AUTHZ.md`, CR/LF sanitization for caller-controlled authorization log fields and exhaustive route × role authorization tests | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

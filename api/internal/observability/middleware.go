@@ -72,13 +72,19 @@ func AccessLog() gin.HandlerFunc {
 		} else if status >= 400 {
 			level = slog.LevelWarn
 		}
+		// Paths and forwarded client addresses are caller-controlled. Strip CR
+		// and LF so they cannot forge log entries (CWE-117).
+		safePath := strings.ReplaceAll(c.Request.URL.Path, "\n", "")
+		safePath = strings.ReplaceAll(safePath, "\r", "")
+		safeClientIP := strings.ReplaceAll(c.ClientIP(), "\n", "")
+		safeClientIP = strings.ReplaceAll(safeClientIP, "\r", "")
 		slog.Log(c.Request.Context(), level, "http_request",
 			"request_id", RequestIDFrom(c),
 			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
+			"path", safePath,
 			"status", status,
 			"latency_ms", time.Since(started).Milliseconds(),
-			"client_ip", c.ClientIP(),
+			"client_ip", safeClientIP,
 			"bytes", c.Writer.Size(),
 		)
 	}

@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api/client'
-import type { AuthUser } from '../types/project'
+import type { AuthUser, ProjectAccess } from '../types/project'
 import {
   clearStoredSession,
   getStoredToken,
@@ -56,6 +56,7 @@ function userFromClaims(claims: TokenClaims): AuthUser {
     avatar_url: '',
     role: claims.role ?? 'viewer',
     project_ids: claims.project_ids ?? [],
+    projects: [],
   }
 }
 
@@ -133,13 +134,36 @@ export const useAuthStore = defineStore('auth', () => {
     storeUser(next)
   }
 
+  function projectAccess(projectId: string): ProjectAccess | null {
+    return user.value?.projects?.find((project) => project.project_id === projectId) ?? null
+  }
+
+  function projectRole(projectId: string): string {
+    return projectAccess(projectId)?.role ?? ''
+  }
+
+  /**
+   * Checks a capability resolved by the API on /auth/me. Global admins keep
+   * break-glass access; everyone else must have the capability for this
+   * project, so a stale JWT project list cannot grant a write.
+   */
+  function can(projectId: string, capability: string): boolean {
+    if (!user.value) return false
+    if (user.value.role === 'admin') return true
+    return projectAccess(projectId)?.capabilities?.includes(capability) ?? false
+  }
+
   function hasProjectAccess(projectId: string): boolean {
     if (!user.value) return false
     if (user.value.role === 'admin') return true
+    if (user.value.projects) {
+      return user.value.projects.some((project) => project.project_id === projectId)
+    }
     return user.value.project_ids?.includes(projectId) ?? false
   }
 
-  function canWrite(): boolean {
+  function canWrite(projectId?: string): boolean {
+    if (projectId) return can(projectId, 'work_item.write')
     return user.value?.role === 'admin' || user.value?.role === 'member'
   }
 
@@ -165,6 +189,9 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     refreshUser,
     setUser,
+    projectAccess,
+    projectRole,
+    can,
     hasProjectAccess,
     canWrite,
     logout,

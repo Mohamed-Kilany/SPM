@@ -48,6 +48,14 @@ const releases = computed(() => store.releases)
 const workItems = computed(() => store.workItems)
 const healthChecks = computed(() => store.workspace?.health_checks ?? [])
 
+// Capability gate for every write action in the delivery room. Reads
+// (builds, deployments, health) are projections and always visible.
+const canManageSettings = computed(() => auth.can(store.projectId, 'settings.write'))
+const canPlan = computed(() => auth.can(store.projectId, 'planning.write'))
+const canWriteCode = computed(() => auth.can(store.projectId, 'code.write'))
+const canMerge = computed(() => auth.can(store.projectId, 'pr.merge'))
+const canDeploy = computed(() => auth.can(store.projectId, 'delivery.deploy'))
+
 const openPrs = computed(() => pullRequests.value.filter((pr) => pr.status === 'open').length)
 const successfulBuilds = computed(() => builds.value.filter((build) => build.status === 'success').length)
 const healthyEnvironments = computed(
@@ -148,6 +156,7 @@ const settingsForm = reactive<ProjectSettings>({
 })
 
 function openSettings(): void {
+  if (!canManageSettings.value) return
   const settings = store.project?.settings
   if (settings) {
     Object.assign(settingsForm, {
@@ -163,6 +172,7 @@ function openSettings(): void {
 }
 
 async function saveSettings(): Promise<void> {
+  if (!canManageSettings.value) return
   settingsBusy.value = true
   settingsError.value = ''
   try {
@@ -209,6 +219,7 @@ const repoError = ref('')
 const repoForm = reactive({ provider: 'gitea', name: '', url: '', default_branch: 'main', external_id: '' })
 
 function openRepo(): void {
+  if (!canWriteCode.value) return
   Object.assign(repoForm, {
     provider: 'gitea',
     name: store.project?.repo_name ?? '',
@@ -221,6 +232,7 @@ function openRepo(): void {
 }
 
 async function saveRepo(): Promise<void> {
+  if (!canWriteCode.value) return
   if (!repoForm.name.trim()) {
     repoError.value = 'A repository name is required.'
     return
@@ -248,6 +260,7 @@ const branchError = ref('')
 const branchForm = reactive({ repository_id: '', work_item_id: '', name: '' })
 
 function openBranch(): void {
+  if (!canWriteCode.value) return
   Object.assign(branchForm, {
     repository_id: repositories.value[0]?.id ?? '',
     work_item_id: workItems.value[0]?.id ?? '',
@@ -258,6 +271,7 @@ function openBranch(): void {
 }
 
 async function saveBranch(): Promise<void> {
+  if (!canWriteCode.value) return
   if (!branchForm.repository_id) {
     branchError.value = 'Link a repository first.'
     return
@@ -314,6 +328,7 @@ const availablePrBranches = computed(() =>
 )
 
 function openPr(): void {
+  if (!canWriteCode.value) return
   Object.assign(prForm, {
     repository_id: repositories.value[0]?.id ?? '',
     work_item_id: workItems.value[0]?.id ?? '',
@@ -327,6 +342,7 @@ function openPr(): void {
 }
 
 async function savePr(): Promise<void> {
+  if (!canWriteCode.value) return
   if (!prForm.repository_id) {
     prError.value = 'Link a repository first.'
     return
@@ -373,11 +389,13 @@ const mergeBusy = ref(false)
 const mergePrTarget = ref<PullRequest | null>(null)
 
 function openMerge(pr: PullRequest): void {
+  if (!canMerge.value) return
   mergePrTarget.value = pr
   mergeOpen.value = true
 }
 
 async function confirmMerge(): Promise<void> {
+  if (!canMerge.value) return
   const pr = mergePrTarget.value
   if (!pr || mergeBusy.value) return
   mergeBusy.value = true
@@ -414,6 +432,7 @@ const envForm = reactive({
 })
 
 function openEnvironment(): void {
+  if (!canDeploy.value) return
   Object.assign(envForm, {
     name: '',
     type: 'custom',
@@ -428,6 +447,7 @@ function openEnvironment(): void {
 }
 
 async function saveEnvironment(): Promise<void> {
+  if (!canDeploy.value) return
   if (!envForm.name.trim()) {
     envError.value = 'An environment name is required.'
     return
@@ -466,6 +486,7 @@ const releaseForm = reactive({
 })
 
 function openRelease(release?: Release): void {
+  if (!canPlan.value) return
   releaseEditingId.value = release?.id ?? null
   Object.assign(releaseForm, {
     name: release?.name ?? '',
@@ -479,6 +500,7 @@ function openRelease(release?: Release): void {
 }
 
 async function saveRelease(): Promise<void> {
+  if (!canPlan.value) return
   if (!releaseForm.name.trim() || !releaseForm.version.trim()) {
     releaseError.value = 'Release name and version are required.'
     return
@@ -516,16 +538,16 @@ async function saveRelease(): Promise<void> {
         <h2 class="text-lg font-semibold tracking-tight text-slate-900">Delivery control room</h2>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn-secondary" @click="openSettings">
+        <button v-if="canManageSettings" type="button" class="btn-secondary" @click="openSettings">
           <AppIcon name="lock" :size="15" /> Merge policy
         </button>
-        <button type="button" class="btn-secondary" @click="openRelease()">
+        <button v-if="canPlan" type="button" class="btn-secondary" @click="openRelease()">
           <AppIcon name="flag" :size="15" /> Release
         </button>
-        <button type="button" class="btn-secondary" @click="openBranch">
+        <button v-if="canWriteCode" type="button" class="btn-secondary" @click="openBranch">
           <AppIcon name="branch" :size="15" /> Branch
         </button>
-        <button type="button" class="btn-primary" @click="openPr">
+        <button v-if="canWriteCode" type="button" class="btn-primary" @click="openPr">
           <AppIcon name="plus" :size="15" /> Pull request
         </button>
       </div>
@@ -579,7 +601,7 @@ async function saveRelease(): Promise<void> {
         <div>
           <h3 class="text-sm font-semibold text-slate-900">Environment pipeline</h3>
         </div>
-        <button type="button" class="btn-ghost text-xs" @click="openEnvironment">
+        <button v-if="canDeploy" type="button" class="btn-ghost text-xs" @click="openEnvironment">
           <AppIcon name="plus" :size="13" /> Add environment
         </button>
       </div>
@@ -617,7 +639,13 @@ async function saveRelease(): Promise<void> {
         </article>
       </div>
       <div v-else class="p-5">
-        <EmptyState icon="server" compact title="No environments" action-label="Add environment" @action="openEnvironment" />
+        <EmptyState
+          icon="server"
+          compact
+          title="No environments"
+          :action-label="canDeploy ? 'Add environment' : ''"
+          @action="openEnvironment"
+        />
       </div>
     </section>
 
@@ -627,7 +655,7 @@ async function saveRelease(): Promise<void> {
           <div>
             <h3 class="text-sm font-semibold text-slate-900">Source control</h3>
           </div>
-          <div class="flex gap-1">
+          <div v-if="canWriteCode" class="flex gap-1">
             <button type="button" class="btn-ghost text-xs" @click="openRepo">
               <AppIcon name="plus" :size="13" /> Repository
             </button>
@@ -670,9 +698,10 @@ async function saveRelease(): Promise<void> {
           </div>
         </div>
         <div v-else class="px-5 py-8 text-center">
-          <button type="button" class="btn-secondary" @click="openBranch">
+          <button v-if="canWriteCode" type="button" class="btn-secondary" @click="openBranch">
             <AppIcon name="branch" :size="13" /> Link branch
           </button>
+          <p v-else class="text-xs text-slate-600">No branches linked yet.</p>
         </div>
       </section>
 
@@ -681,7 +710,7 @@ async function saveRelease(): Promise<void> {
           <div>
             <h3 class="text-sm font-semibold text-slate-900">Pull requests</h3>
           </div>
-          <button type="button" class="btn-ghost text-xs" @click="openPr"><AppIcon name="plus" :size="13" /> PR</button>
+          <button v-if="canWriteCode" type="button" class="btn-ghost text-xs" @click="openPr"><AppIcon name="plus" :size="13" /> PR</button>
         </div>
         <div v-if="pullRequests.length" class="max-h-[430px] divide-y divide-slate-100 overflow-y-auto">
           <div v-for="pr in pullRequests" :key="pr.id" :id="`pr-${pr.id}`" class="scroll-mt-24 px-5 py-3 transition-shadow">
@@ -697,7 +726,7 @@ async function saveRelease(): Promise<void> {
             <div class="mt-2 flex items-center justify-between">
               <span class="text-[10px] text-slate-600">{{ pr.author || 'Unassigned' }} - {{ pr.review_status }}</span>
               <button
-                v-if="pr.status === 'open'"
+                v-if="pr.status === 'open' && canMerge"
                 type="button"
                 class="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
                 @click="openMerge(pr)"
@@ -750,7 +779,7 @@ async function saveRelease(): Promise<void> {
           <div>
             <h3 class="text-sm font-semibold text-slate-900">Releases</h3>
           </div>
-          <button type="button" class="btn-ghost text-xs" @click="openRelease()"><AppIcon name="plus" :size="13" /> Release</button>
+          <button v-if="canPlan" type="button" class="btn-ghost text-xs" @click="openRelease()"><AppIcon name="plus" :size="13" /> Release</button>
         </div>
         <div v-if="releases.length" class="divide-y divide-slate-100">
           <div v-for="release in releases" :key="release.id" class="px-5 py-3">
@@ -764,7 +793,7 @@ async function saveRelease(): Promise<void> {
               <StatusPill :status="release.status" />
             </div>
             <div class="mt-2 flex justify-end">
-              <button type="button" class="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700" @click="openRelease(release)">Edit release</button>
+              <button v-if="canPlan" type="button" class="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700" @click="openRelease(release)">Edit release</button>
             </div>
           </div>
         </div>

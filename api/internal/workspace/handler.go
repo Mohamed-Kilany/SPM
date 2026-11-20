@@ -612,6 +612,10 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid work item type")
 		return
 	}
+	if auth.ProjectRoleFrom(c) == auth.ProjectRoleTester && req.Type != TypeBug {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Testers can create defects and change status; they cannot create other work items")
+		return
+	}
 	if req.Status == "" {
 		if req.Type == TypeBug {
 			req.Status = StatusNew
@@ -665,6 +669,10 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 func (h *Handler) UpdateWorkItem(c *gin.Context) {
 	projectID, ok := parseProjectID(c)
 	if !ok {
+		return
+	}
+	if auth.ProjectRoleFrom(c) == auth.ProjectRoleTester {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Testers can change work item status but cannot edit work item details")
 		return
 	}
 	itemID, ok := parseParamID(c, "itemId")
@@ -764,6 +772,10 @@ func (h *Handler) ChangeWorkItemStatus(c *gin.Context) {
 func (h *Handler) DeleteWorkItem(c *gin.Context) {
 	projectID, ok := parseProjectID(c)
 	if !ok {
+		return
+	}
+	if auth.ProjectRoleFrom(c) == auth.ProjectRoleTester {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Testers cannot delete work items")
 		return
 	}
 	itemID, ok := parseParamID(c, "itemId")

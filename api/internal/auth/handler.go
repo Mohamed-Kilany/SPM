@@ -32,15 +32,18 @@ type LoginResponse struct {
 	User      UserResponse `json:"user"`
 }
 
-// UserResponse is the safe public representation of a user.
+// UserResponse is the safe public representation of a user. Projects carries
+// the resolved project role and capability set so the UI can gate actions
+// without guessing from the global role.
 type UserResponse struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	Email       string   `json:"email"`
-	DisplayName string   `json:"display_name"`
-	AvatarURL   string   `json:"avatar_url"`
-	Role        string   `json:"role"`
-	ProjectIDs  []string `json:"project_ids"`
+	ID          string          `json:"id"`
+	Username    string          `json:"username"`
+	Email       string          `json:"email"`
+	DisplayName string          `json:"display_name"`
+	AvatarURL   string          `json:"avatar_url"`
+	Role        string          `json:"role"`
+	ProjectIDs  []string        `json:"project_ids"`
+	Projects    []ProjectAccess `json:"projects"`
 }
 
 // Handler holds the dependencies for auth HTTP handlers.
@@ -130,7 +133,7 @@ func (h *Handler) Login(c *gin.Context) {
 
 	_, _ = h.db.Exec(ctx, `UPDATE users SET last_login_at = NOW() WHERE id = $1`, userID)
 
-	projectIDs, err := h.projectIDs(ctx, userID)
+	projects, projectIDs, err := h.memberships(ctx, userID, role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse{
 			Error: errorBody{Code: "INTERNAL_ERROR", Message: "Failed to load project memberships"},
@@ -157,6 +160,7 @@ func (h *Handler) Login(c *gin.Context) {
 			AvatarURL:   avatarURL,
 			Role:        role,
 			ProjectIDs:  projectIDs,
+			Projects:    projects,
 		},
 	})
 }
@@ -196,7 +200,7 @@ func (h *Handler) Me(c *gin.Context) {
 		return
 	}
 
-	projectIDs, err := h.projectIDs(c.Request.Context(), userID)
+	projects, projectIDs, err := h.memberships(c.Request.Context(), userID, role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse{
 			Error: errorBody{Code: "INTERNAL_ERROR", Message: "Failed to load project memberships"},
@@ -212,6 +216,7 @@ func (h *Handler) Me(c *gin.Context) {
 		AvatarURL:   avatarURL,
 		Role:        role,
 		ProjectIDs:  projectIDs,
+		Projects:    projects,
 	})
 }
 
@@ -355,23 +360,32 @@ func (h *Handler) StreamTicket(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ticket": ticketID, "expires_in": 30})
 }
 
-func (h *Handler) projectIDs(ctx context.Context, userID string) ([]string, error) {
+func (h *Handler) memberships(ctx context.Context, userID, globalRole string) ([]ProjectAccess, []string, error) {
 	rows, err := h.db.Query(ctx,
-		`SELECT project_id FROM project_members WHERE user_id = $1 ORDER BY project_id`,
+		`SELECT project_id, role FROM project_members WHERE user_id = $1 ORDER BY project_id`,
 		userID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
+	projects := make([]ProjectAccess, 0)
 	projectIDs := make([]string, 0)
 	for rows.Next() {
-		var pid string
-		if err := rows.Scan(&pid); err != nil {
-			return nil, err
+		var projectID, role string
+		if err := rows.Scan(&projectID, &role); err != nil {
+			return nil, nil, err
 		}
-		projectIDs = append(projectIDs, pid)
+		projects = append(projects, ProjectAccess{
+			ProjectID:    projectID,
+			Role:         role,
+			Capabilities: EffectiveCapabilities(globalRole, role),
+		})
+		projectIDs = append(projectIDs, projectID)
 	}
-	return projectIDs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return projects, projectIDs, nil
 }

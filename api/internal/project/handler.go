@@ -449,13 +449,8 @@ func (h *Handler) Get(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "INVALID_ID", "Project ID is not a valid UUID")
 		return
 	}
-	claims, ok := auth.ClaimsFrom(c)
-	if !ok {
-		apiError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authentication claims")
-		return
-	}
-	if !auth.CanRead(claims, projectID.String()) {
-		apiError(c, http.StatusForbidden, "FORBIDDEN", "Insufficient permissions")
+	if !auth.HasProjectCapability(c, auth.CapProjectRead) {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "This action requires the project.read capability")
 		return
 	}
 

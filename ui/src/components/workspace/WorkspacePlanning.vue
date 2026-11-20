@@ -8,6 +8,7 @@ import StatusPill from './StatusPill.vue'
 import PriorityPill from './PriorityPill.vue'
 import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
+import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
 import { api } from '../../api/client'
 import { dateInputValue, statusLabel } from '../../lib/workspace'
@@ -15,8 +16,11 @@ import { formatDateTime, timeAgo } from '../../lib/format'
 import type { Epic, Feature, PRD } from '../../types/workspace'
 
 const store = useWorkspaceStore()
+const auth = useAuthStore()
 const toast = useToastStore()
 const router = useRouter()
+
+const canPlan = computed(() => auth.can(store.projectId, 'planning.write'))
 
 const selectedPrdId = ref<string>('all')
 const collapsedEpics = ref<Set<string>>(new Set())
@@ -147,6 +151,7 @@ const prdForm = reactive({
 })
 
 function openCreatePrd(): void {
+  if (!canPlan.value) return
   prdEditingId.value = null
   Object.assign(prdForm, {
     title: '',
@@ -161,6 +166,7 @@ function openCreatePrd(): void {
 }
 
 function openEditPrd(prd: PRD): void {
+  if (!canPlan.value) return
   prdEditingId.value = prd.id
   Object.assign(prdForm, {
     title: prd.title,
@@ -226,6 +232,7 @@ const epicForm = reactive({
 })
 
 function openCreateEpic(prdId = ''): void {
+  if (!canPlan.value) return
   epicEditingId.value = null
   Object.assign(epicForm, {
     prd_id: prdId,
@@ -243,6 +250,7 @@ function openCreateEpic(prdId = ''): void {
 }
 
 function openEditEpic(epic: Epic): void {
+  if (!canPlan.value) return
   epicEditingId.value = epic.id
   Object.assign(epicForm, {
     prd_id: epic.prd_id ?? '',
@@ -313,6 +321,7 @@ const featureForm = reactive({
 })
 
 function openCreateFeature(epicId = ''): void {
+  if (!canPlan.value) return
   featureEditingId.value = null
   Object.assign(featureForm, {
     epic_id: epicId || visibleEpics.value[0]?.id || epics.value[0]?.id || '',
@@ -330,6 +339,7 @@ function openCreateFeature(epicId = ''): void {
 }
 
 function openEditFeature(feature: Feature): void {
+  if (!canPlan.value) return
   featureEditingId.value = feature.id
   Object.assign(featureForm, {
     epic_id: feature.epic_id,
@@ -395,6 +405,7 @@ const deleteTarget = ref<DeleteTarget | null>(null)
 const deleteOpen = ref(false)
 
 function askDelete(type: DeleteTarget['type'], id: string, title: string): void {
+  if (!canPlan.value) return
   deleteTarget.value = { type, id, title }
   deleteOpen.value = true
 }
@@ -426,7 +437,7 @@ async function confirmDelete(): Promise<void> {
       <div>
         <h2 class="text-lg font-semibold tracking-tight text-slate-900">Product planning</h2>
       </div>
-      <div class="flex flex-wrap gap-2">
+      <div v-if="canPlan" class="flex flex-wrap gap-2">
         <button type="button" class="btn-secondary" @click="openCreatePrd">
           <AppIcon name="folder" :size="15" />
           New PRD
@@ -469,7 +480,7 @@ async function confirmDelete(): Promise<void> {
 
         <div v-if="!prds.length" class="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-center">
           <p class="text-xs font-medium text-slate-600">No PRD yet</p>
-          <button type="button" class="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700" @click="openCreatePrd">
+          <button v-if="canPlan" type="button" class="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700" @click="openCreatePrd">
             Create the first requirement
           </button>
         </div>
@@ -524,7 +535,7 @@ async function confirmDelete(): Promise<void> {
                 Owner {{ memberName(selectedPrd.owner_id) }} · Updated {{ formatDateTime(selectedPrd.updated_at) }}
               </p>
             </div>
-            <div class="flex gap-1">
+            <div v-if="canPlan" class="flex gap-1">
               <button type="button" class="btn-ghost" @click="openEditPrd(selectedPrd)">
                 <AppIcon name="edit" :size="14" /> Edit
               </button>
@@ -544,7 +555,7 @@ async function confirmDelete(): Promise<void> {
             >{{ selectedPrd.content }}</pre>
           </div>
           <div class="mt-4 flex flex-wrap gap-2">
-            <button type="button" class="btn-secondary" @click="openCreateEpic(selectedPrd.id)">
+            <button v-if="canPlan" type="button" class="btn-secondary" @click="openCreateEpic(selectedPrd.id)">
               <AppIcon name="plus" :size="14" /> Add epic
             </button>
             <span class="inline-flex items-center rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -560,7 +571,7 @@ async function confirmDelete(): Promise<void> {
               {{ visibleEpics.length }} epics · {{ features.filter((feature) => visibleEpics.some((epic) => epic.id === feature.epic_id)).length }} features
             </p>
           </div>
-          <button type="button" class="btn-ghost" @click="openCreateEpic(selectedPrdId === 'all' || selectedPrdId === 'unlinked' ? '' : selectedPrdId)">
+          <button v-if="canPlan" type="button" class="btn-ghost" @click="openCreateEpic(selectedPrdId === 'all' || selectedPrdId === 'unlinked' ? '' : selectedPrdId)">
             <AppIcon name="plus" :size="14" /> Epic
           </button>
         </div>
@@ -569,7 +580,7 @@ async function confirmDelete(): Promise<void> {
           v-if="!visibleEpics.length"
           icon="flag"
           title="No epics in this view"
-          :action-label="prds.length ? 'Create epic' : 'Create PRD'"
+          :action-label="canPlan ? (prds.length ? 'Create epic' : 'Create PRD') : ''"
           @action="prds.length ? openCreateEpic(selectedPrdId === 'all' ? '' : selectedPrdId) : openCreatePrd()"
         />
 
@@ -613,7 +624,7 @@ async function confirmDelete(): Promise<void> {
                   <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${epicProgress(epic.id)}%` }" />
                 </div>
               </div>
-              <div class="flex gap-0.5">
+              <div v-if="canPlan" class="flex gap-0.5">
                 <button type="button" class="btn-ghost px-2" title="Add feature" @click="openCreateFeature(epic.id)">
                   <AppIcon name="plus" :size="14" />
                 </button>
@@ -656,15 +667,15 @@ async function confirmDelete(): Promise<void> {
                 <button type="button" class="btn-ghost px-2 text-xs" @click="openBoardForFeature(feature.id)">
                   Board <AppIcon name="arrowRight" :size="12" />
                 </button>
-                <button type="button" class="btn-ghost px-2" title="Edit feature" @click="openEditFeature(feature)">
+                <button v-if="canPlan" type="button" class="btn-ghost px-2" title="Edit feature" @click="openEditFeature(feature)">
                   <AppIcon name="edit" :size="14" />
                 </button>
-                <button type="button" class="btn-ghost px-2 text-red-500 hover:bg-red-50" title="Delete feature" @click="askDelete('feature', feature.id, feature.title)">
+                <button v-if="canPlan" type="button" class="btn-ghost px-2 text-red-500 hover:bg-red-50" title="Delete feature" @click="askDelete('feature', feature.id, feature.title)">
                   <AppIcon name="trash" :size="14" />
                 </button>
               </div>
             </div>
-            <div v-if="!featuresForEpic(epic.id).length" class="px-5 py-5 text-center">
+            <div v-if="!featuresForEpic(epic.id).length && canPlan" class="px-5 py-5 text-center">
               <button type="button" class="btn-secondary" @click="openCreateFeature(epic.id)">
                 <AppIcon name="plus" :size="13" /> Add feature
               </button>

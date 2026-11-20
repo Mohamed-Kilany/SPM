@@ -7,6 +7,7 @@ import StatusPill from './StatusPill.vue'
 import PriorityPill from './PriorityPill.vue'
 import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
+import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
 import { api } from '../../api/client'
 import { percent, statusLabel } from '../../lib/workspace'
@@ -14,9 +15,12 @@ import { formatDateTime, timeAgo } from '../../lib/format'
 import type { TestCase, TestResult, TestRun, TestStep, TestStepResult } from '../../types/workspace'
 
 const store = useWorkspaceStore()
+const auth = useAuthStore()
 const toast = useToastStore()
 const route = useRoute()
 const router = useRouter()
+
+const canTest = computed(() => auth.can(store.projectId, 'test.write'))
 
 const caseSearch = ref('')
 const caseFeatureFilter = ref('')
@@ -181,6 +185,7 @@ function resetCaseForm(): void {
 }
 
 function openCreateCase(): void {
+  if (!canTest.value) return
   caseEditingId.value = null
   resetCaseForm()
   caseError.value = ''
@@ -188,6 +193,7 @@ function openCreateCase(): void {
 }
 
 function openEditCase(testCase: TestCase): void {
+  if (!canTest.value) return
   caseEditingId.value = testCase.id
   Object.assign(caseForm, {
     feature_id: testCase.feature_id ?? '',
@@ -221,6 +227,7 @@ function removeStep(index: number): void {
 }
 
 async function saveCase(): Promise<void> {
+  if (!canTest.value) return
   if (!caseForm.title.trim()) {
     caseError.value = 'A test case title is required.'
     return
@@ -290,6 +297,7 @@ const runForm = reactive({
 })
 
 function openCreateRun(): void {
+  if (!canTest.value) return
   const environments = store.workspace?.environments ?? []
   Object.assign(runForm, {
     name: `Regression · ${new Date().toISOString().slice(0, 10)}`,
@@ -316,6 +324,7 @@ function toggleCaseSelection(caseId: string): void {
 }
 
 async function saveRun(): Promise<void> {
+  if (!canTest.value) return
   if (!runForm.environment_id) {
     runError.value = 'A test run must link to an environment.'
     return
@@ -385,6 +394,7 @@ onMounted(applyDeepLink)
 watch(() => route.query, applyDeepLink)
 
 async function patchResult(result: TestResult, status: string): Promise<void> {
+  if (!canTest.value) return
   if (!selectedRun.value || resultBusy.value) return
   resultBusy.value = result.id
   try {
@@ -408,6 +418,7 @@ async function patchStep(
   stepResult: TestStepResult,
   status: string,
 ): Promise<void> {
+  if (!canTest.value) return
   if (!selectedRun.value || resultBusy.value) return
   resultBusy.value = stepResult.id
   try {
@@ -437,6 +448,7 @@ async function patchStep(
 // ---------------------------------------------------------------------------
 
 function openBug(result: TestResult, stepResult?: TestStepResult): void {
+  if (!canTest.value) return
   const testCase = caseById.value.get(result.test_case_id)
   const step = stepResult ? stepFor(stepResult) : undefined
   bugResultId.value = result.id
@@ -459,6 +471,7 @@ function openBug(result: TestResult, stepResult?: TestStepResult): void {
 }
 
 async function saveBug(): Promise<void> {
+  if (!canTest.value) return
   if (!selectedRun.value || !bugResultId.value) return
   if (!bugForm.title.trim()) {
     bugError.value = 'A bug title is required.'
@@ -501,11 +514,11 @@ async function saveBug(): Promise<void> {
         <h2 class="text-lg font-semibold tracking-tight text-slate-900">Test lab</h2>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn-secondary" :disabled="!features.length" @click="openCreateCase">
+        <button v-if="canTest" type="button" class="btn-secondary" :disabled="!features.length" @click="openCreateCase">
           <AppIcon name="flask" :size="15" />
           New test case
         </button>
-        <button type="button" class="btn-primary" :disabled="!testCases.length" @click="openCreateRun">
+        <button v-if="canTest" type="button" class="btn-primary" :disabled="!testCases.length" @click="openCreateRun">
           <AppIcon name="plus" :size="15" />
           New test run
         </button>
@@ -564,7 +577,7 @@ async function saveBug(): Promise<void> {
               icon="flask"
               compact
               title="No test cases"
-              :action-label="features.length ? 'Create test case' : ''"
+              :action-label="canTest && features.length ? 'Create test case' : ''"
               @action="openCreateCase"
             />
           </div>
@@ -578,7 +591,7 @@ async function saveBug(): Promise<void> {
               <div>
                 <h3 class="text-sm font-semibold text-slate-900">Test runs</h3>
               </div>
-              <button type="button" class="btn-ghost text-xs" :disabled="!testCases.length" @click="openCreateRun">
+              <button v-if="canTest" type="button" class="btn-ghost text-xs" :disabled="!testCases.length" @click="openCreateRun">
                 <AppIcon name="plus" :size="13" /> New run
               </button>
             </div>
@@ -634,7 +647,7 @@ async function saveBug(): Promise<void> {
               icon="activity"
               compact
               title="No test runs yet"
-              :action-label="testCases.length ? 'Start a test run' : ''"
+              :action-label="canTest && testCases.length ? 'Start a test run' : ''"
               @action="openCreateRun"
             />
           </div>
@@ -919,7 +932,7 @@ async function saveBug(): Promise<void> {
             <div class="flex items-center gap-2">
               <StatusPill :status="result.status" />
               <button
-                v-if="result.status === 'failed' || (result.step_results ?? []).some((step) => step.status === 'failed')"
+                v-if="canTest && (result.status === 'failed' || (result.step_results ?? []).some((step) => step.status === 'failed'))"
                 type="button"
                 class="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100"
                 @click="openBug(result)"
@@ -930,7 +943,7 @@ async function saveBug(): Promise<void> {
           </div>
 
           <div class="space-y-3 px-4 py-3">
-            <div class="flex flex-wrap gap-1.5">
+            <div v-if="canTest" class="flex flex-wrap gap-1.5">
               <button
                 v-for="status in ['passed', 'failed', 'blocked', 'skipped']"
                 :key="status"
@@ -949,6 +962,7 @@ async function saveBug(): Promise<void> {
             </div>
 
             <textarea
+              v-if="canTest"
               v-model="resultNotes[result.id]"
               rows="2"
               class="field-input text-xs"
@@ -968,7 +982,7 @@ async function saveBug(): Promise<void> {
                 <div class="flex items-center gap-1.5">
                   <StatusPill :status="stepResult.status" :dot="false" />
                   <button
-                    v-if="stepResult.status === 'failed'"
+                    v-if="canTest && stepResult.status === 'failed'"
                     type="button"
                     class="text-[10px] font-semibold text-red-600 hover:text-red-700"
                     @click="openBug(result, stepResult)"
@@ -977,7 +991,7 @@ async function saveBug(): Promise<void> {
                   </button>
                 </div>
               </div>
-              <div class="mt-2 flex flex-wrap gap-1">
+              <div v-if="canTest" class="mt-2 flex flex-wrap gap-1">
                 <button
                   v-for="status in ['passed', 'failed', 'blocked', 'skipped']"
                   :key="status"
@@ -994,7 +1008,7 @@ async function saveBug(): Promise<void> {
                   {{ statusLabel(status) }}
                 </button>
               </div>
-              <div class="mt-2 grid gap-2 sm:grid-cols-2">
+              <div v-if="canTest" class="mt-2 grid gap-2 sm:grid-cols-2">
                 <input v-model="stepNotes[stepResult.id]" class="field-input py-1.5 text-[11px]" placeholder="Actual result" />
                 <input v-model="stepEvidence[stepResult.id]" class="field-input py-1.5 text-[11px]" placeholder="Evidence URL (screenshot, log, recording)" />
               </div>

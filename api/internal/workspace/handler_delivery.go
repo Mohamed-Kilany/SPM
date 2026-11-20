@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/gitengine"
 )
 
@@ -615,6 +616,13 @@ func (h *Handler) CreateEnvironment(c *gin.Context) {
 	}
 	if !oneOf(req.Type, "development", "staging", "production", "custom") {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Environment type is not valid")
+		return
+	}
+	// Developers hold delivery.deploy for non-production environments only.
+	// There is no deployment or rollback write route yet, so environment
+	// creation is where production must be refused.
+	if req.Type == "production" && auth.ProjectRoleFrom(c) == auth.ProjectRoleDeveloper {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Developers can manage non-production environments only")
 		return
 	}
 	if req.DeployStrategy == "" {
