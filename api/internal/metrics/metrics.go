@@ -47,6 +47,13 @@ type Registry struct {
 	reconcileLastSuccess *prometheus.GaugeVec
 
 	authzInvalidations *prometheus.CounterVec
+
+	auditWrites            *prometheus.CounterVec
+	auditWriteDuration     prometheus.Histogram
+	auditChainValid        prometheus.Gauge
+	auditChainChecked      prometheus.Gauge
+	auditChainLastVerified prometheus.Gauge
+	auditPartitions        prometheus.Counter
 }
 
 var defaultRegistry atomic.Pointer[Registry]
@@ -117,6 +124,31 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_authz_invalidations_total",
 			Help: "Authorization invalidations published by scope and reason.",
 		}, []string{"scope", "reason"}),
+		auditWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "spm_audit_writes_total",
+			Help: "Audit log writes by outcome.",
+		}, []string{"outcome"}),
+		auditWriteDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "spm_audit_write_duration_seconds",
+			Help:    "Audit log write latency.",
+			Buckets: []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		}),
+		auditChainValid: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "spm_audit_chain_valid",
+			Help: "1 when the last audit chain verification passed, 0 otherwise.",
+		}),
+		auditChainChecked: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "spm_audit_chain_rows_checked",
+			Help: "Rows examined by the last audit chain verification.",
+		}),
+		auditChainLastVerified: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "spm_audit_chain_last_verified_timestamp_seconds",
+			Help: "Unix timestamp of the last audit chain verification.",
+		}),
+		auditPartitions: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "spm_audit_partitions_pruned_total",
+			Help: "Expired audit partitions removed by the audited retention job.",
+		}),
 	}
 
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -145,6 +177,12 @@ func New(info BuildInfo) *Registry {
 		metrics.reconcileDuration,
 		metrics.reconcileLastSuccess,
 		metrics.authzInvalidations,
+		metrics.auditWrites,
+		metrics.auditWriteDuration,
+		metrics.auditChainValid,
+		metrics.auditChainChecked,
+		metrics.auditChainLastVerified,
+		metrics.auditPartitions,
 	)
 	return metrics
 }
@@ -227,6 +265,48 @@ func (r *Registry) ObserveAuthzInvalidation(scope, reason string) {
 		return
 	}
 	r.authzInvalidations.WithLabelValues(scope, reason).Inc()
+}
+
+// ObserveAuditWrite records one audit persistence attempt.
+func (r *Registry) ObserveAuditWrite(elapsed time.Duration, err error) {
+	if r == nil {
+		return
+	}
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+	}
+	r.auditWrites.WithLabelValues(outcome).Inc()
+	r.auditWriteDuration.Observe(elapsed.Seconds())
+}
+
+// ObserveAuditVerification records the outcome of a chain verification.
+func (r *Registry) ObserveAuditVerification(ok bool) {
+	if r == nil {
+		return
+	}
+	value := 0.0
+	if ok {
+		value = 1
+	}
+	r.auditChainValid.Set(value)
+	r.auditChainLastVerified.SetToCurrentTime()
+}
+
+// ObserveAuditChecked records how many rows a verification examined.
+func (r *Registry) ObserveAuditChecked(rows int64) {
+	if r == nil {
+		return
+	}
+	r.auditChainChecked.Set(float64(rows))
+}
+
+// ObserveAuditPruned records the number of expired partitions dropped.
+func (r *Registry) ObserveAuditPruned(partitions int) {
+	if r == nil || partitions <= 0 {
+		return
+	}
+	r.auditPartitions.Add(float64(partitions))
 }
 
 // RegisterPool exports pgx pool saturation and acquire statistics.

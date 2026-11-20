@@ -10,6 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
+
+	"spm-platform/api/internal/audit"
+	"spm-platform/api/internal/models"
 )
 
 // AdminUser is the administrative view of a user.
@@ -125,6 +128,18 @@ func (h *Handler) AdminCreateUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, errorResponse{Error: errorBody{Code: "INTERNAL_ERROR", Message: "Failed to create user"}})
 		return
 	}
+	actorID, actorRole := "", ""
+	if claims, ok := ClaimsFrom(c); ok && claims != nil {
+		actorID, actorRole = claims.CanonicalUserID(), claims.Role
+	}
+	h.recordAuth(c, audit.Entry{
+		ActorID: actorID, ActorRole: actorRole, Action: "admin.user.create",
+		TargetType: "user", TargetID: id.String(), Result: "success",
+		After: map[string]any{
+			"username": req.Username, "email": req.Email,
+			"display_name": req.DisplayName, "role": req.Role,
+		},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": id.String()})
 }
 
@@ -158,8 +173,11 @@ func (h *Handler) AdminUpdateUser(c *gin.Context) {
 
 	var currentRole string
 	var currentActive bool
+	var currentEmail, currentDisplayName, currentAvatar string
 	if err := h.db.QueryRow(c.Request.Context(),
-		`SELECT role, is_active FROM users WHERE id = $1`, targetID).Scan(&currentRole, &currentActive); err != nil {
+		`SELECT role, is_active, email, COALESCE(display_name, ''), COALESCE(avatar_url, '')
+		 FROM users WHERE id = $1`, targetID,
+	).Scan(&currentRole, &currentActive, &currentEmail, &currentDisplayName, &currentAvatar); err != nil {
 		if err == pgx.ErrNoRows {
 			c.JSON(http.StatusNotFound, errorResponse{Error: errorBody{Code: "NOT_FOUND", Message: "User not found"}})
 			return
@@ -263,7 +281,40 @@ func (h *Handler) AdminUpdateUser(c *gin.Context) {
 	if (req.Password != nil || req.Role != nil || req.IsActive != nil) && h.invalidator != nil {
 		_ = h.invalidator.InvalidateUser(c.Request.Context(), targetID.String())
 	}
+	var nextEmail, nextDisplayName, nextAvatar string
+	if req.Email != nil || req.DisplayName != nil || req.AvatarURL != nil {
+		_ = h.db.QueryRow(c.Request.Context(),
+			`SELECT email, COALESCE(display_name, ''), COALESCE(avatar_url, '') FROM users WHERE id = $1`,
+			targetID).Scan(&nextEmail, &nextDisplayName, &nextAvatar)
+	} else {
+		nextEmail, nextDisplayName, nextAvatar = currentEmail, currentDisplayName, currentAvatar
+	}
+	before := map[string]any{
+		"email": currentEmail, "display_name": currentDisplayName,
+		"avatar_url": currentAvatar, "role": currentRole, "is_active": currentActive,
+	}
+	after := map[string]any{
+		"email": nextEmail, "display_name": nextDisplayName,
+		"avatar_url": nextAvatar, "role": nextRole, "is_active": nextActive,
+	}
+	if req.Password != nil {
+		// Record that the password rotated without ever storing its value.
+		after["password_changed"] = true
+	}
+	h.recordAuth(c, audit.Entry{
+		ActorID: actorID, ActorRole: claimsRole(claims), Action: "admin.user.update",
+		TargetType: "user", TargetID: targetID.String(), Result: "success",
+		Before: before, After: after,
+	})
 	c.JSON(http.StatusOK, gin.H{"id": targetID.String()})
+}
+
+// claimsRole returns the global role from optional claims for audit metadata.
+func claimsRole(claims *models.AuthClaims) string {
+	if claims == nil {
+		return ""
+	}
+	return claims.Role
 }
 
 // Directory handles GET /users?q= for authenticated member pickers.

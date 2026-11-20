@@ -2301,7 +2301,7 @@ actions still work), permission-filtered.
     every capability-gated route.
   - [x] Global admins retain break-glass access on every project route without a membership row.
     Each request logs `authz_break_glass` with request ID, user, project, capability, method and
-    path; durable audit persistence is `GOV-04`.
+    path; durable audit persistence is delivered by `GOV-04`.
   - [x] The UI gates board, planning, code, delivery, reports, tests and settings actions through
     `auth.can(projectId, capability)`. Settings explains the missing `settings.write`/
     `member.write` capability, and the board explains the tester restriction.
@@ -2320,7 +2320,7 @@ actions still work), permission-filtered.
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) summarizes enforcement. Denials log
   `authz_denied`; break-glass logs `authz_break_glass`; caller-controlled project IDs and
   paths have CR/LF stripped so they cannot forge log entries. Audit storage and
-  capability-change audit events are `GOV-04`; session/SSE invalidation is `GOV-02`.
+  capability-change audit events are delivered by `GOV-04`; session/SSE invalidation is `GOV-02`.
 
 #### GOV-02 · Membership and session invalidation
 - **Status:** DONE · **Priority:** P0 · **Estimate:** M · **Branch:** `fix/membership-session-invalidation`
@@ -2349,7 +2349,7 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** [`docs/AUTHZ.md`](docs/AUTHZ.md) defines the invalidation contract and
   [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) lists
   `spm_authz_invalidations_total{scope,reason}`. Membership add/update/remove writes an activity
-  event; durable append-only audit storage is `GOV-04`. Invalidation publish failures log
+  event; durable append-only audit storage is delivered by `GOV-04`. Invalidation publish failures log
   `authz_invalidation_failed` and remain best-effort because the database lookup is the
   enforcement point.
 
@@ -2372,22 +2372,55 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** `docs/CODE-REVIEW.md`, review audit events, review latency metric.
 
 #### GOV-04 · Append-only audit log service
-- **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/audit-log`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/audit-log`
 - **Depends on:** GOV-01
 - **Scope:** Add a global, tamper-evident audit log for security and privileged actions.
   Include actor, action, target, project, result, IP, user agent, request ID, before/after
   (redacted), and a hash chain. Deny update/delete at the database level. Add admin API and UI.
 - **Acceptance criteria:**
-  - [ ] Auth, admin, membership, settings, token, merge, deploy and rollback actions emit an
-    audit event.
-  - [ ] The table is append-only via trigger/permissions; update/delete fails.
-  - [ ] A verification job/endpoint detects a broken chain.
-  - [ ] Filters, cursor pagination, detail and CSV/JSON export work.
-  - [ ] Retention is configurable; expired partitions are dropped only by an audited job.
-  - [ ] Sensitive values are redacted before storage.
-- **Tests/evidence:** tamper test, chain verification test, retention job test, export test,
-  filter/pagination tests.
-- **Docs/telemetry:** `docs/AUDIT.md`, audit write latency metric, failed-write alert.
+  - [x] Auth, admin, membership, settings, token, merge, deploy and rollback actions emit an
+    audit event. Covered producers are `auth.login`, password change, stream-ticket issue,
+    admin user create/update, project create/update, settings, member add/update/remove,
+    repository/branch/pull-request create, pull-request merge, environment/deployment create,
+    deployment status/rollback and Argo CD observations. Exports and retention drops are also
+    recorded.
+  - [x] The table is append-only via trigger/permissions; update/delete fails.
+    `015_audit_log.sql` installs `audit_events_deny_mutation()` on every partition; it raises
+    `42501` for `UPDATE`, `DELETE` and `TRUNCATE` even for the table owner.
+  - [x] A verification job/endpoint detects a broken chain. `GET /api/v1/admin/audit/verify`
+    walks the retained log under an advisory lock, verifies
+    `sha256(prev_hash || '|' || payload)`, distinguishes `hash_mismatch`, `broken_link` and
+    `missing_anchor`, and reports the first bad event. The verifier runs as part of daily
+    maintenance and refreshes the chain gauges.
+  - [x] Filters, cursor pagination, detail and CSV/JSON export work. The admin API supports
+    `action` prefix, `actor_id`, `project_id`, `result`, `from`/`to`, `limit` and an opaque
+    keyset cursor; detail returns the stored before/after state; export caps at 50,000 rows and
+    neutralises spreadsheet formula injection.
+  - [x] Retention is configurable; expired partitions are dropped only by an audited job.
+    `AUDIT_RETENTION_DAYS` defaults to 365 and `0` disables pruning. `audit_prune()` only drops
+    whole months through `audit_drop_partition()`, which writes
+    `audit.retention.partition_dropped` and stores the dropped partition's last hash in
+    `audit_chain_anchors` so later verification still succeeds.
+  - [x] Sensitive values are redacted before storage. `audit.Redact` masks password, token,
+    secret, authorization, cookie, credential, API-key and session-ID keys recursively and
+    truncates oversized strings; password changes store `password_changed: true` only.
+- **Tests/evidence:** `api/internal/audit` covers recursive redaction, truncation, retention
+  parsing, CSV injection, cursor validation, valid/tampered/broken/anchored chains, filter
+  validation, disabled-logger safety, handler status codes and export headers.
+  `api/internal/server` proves the four admin routes are registered and present in the generated
+  OpenAPI contract; `api/internal/metrics` covers the audit write, chain and pruning series.
+  Migration `015_audit_log.sql` defines the partition registry, chain trigger and audited drop
+  path. Full `go build ./...`, `go vet ./...`, `go test ./... -count=1` and OpenAPI `-check`
+  pass; UI `typecheck`, `test` and `build` pass.
+- **Docs/telemetry:** [`docs/AUDIT.md`](docs/AUDIT.md) is the operational contract (schema,
+  chain, retention, redaction, event catalog, incident response).
+  `spm_audit_writes_total{outcome}`, `spm_audit_write_duration_seconds`,
+  `spm_audit_chain_valid`, `spm_audit_chain_rows_checked`,
+  `spm_audit_chain_last_verified_timestamp_seconds` and
+  `spm_audit_partitions_pruned_total` are exported on the internal `/metrics` listener and
+  documented in [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) with failed-write and broken-chain
+  alerts. Audit write failures log `audit_write_failed` and never roll back the business action.
+  Admin UI: `/admin/audit` with filters, pagination, detail, verify and export.
 
 #### GOV-05 · Admin action audit and step-up authentication
 - **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/admin-step-up`
@@ -3666,8 +3699,9 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   counters and nil-registry safety; `api/internal/sse` tests the connection gauge. The metric
   catalog and cardinality review are in `docs/OBSERVABILITY.md`.
 - **Docs/telemetry:** `docs/OBSERVABILITY.md`, `/metrics` collectors and the `spm_build_info`
-  gauge. Audit write-failure metrics are deferred to `GOV-04`, which introduces the audit
-  subsystem; exporting a counter that nothing increments would be a false claim.
+  gauge. Audit write-failure metrics arrive with the `GOV-04` audit subsystem as
+  `spm_audit_writes_total{outcome="failure"}`; exporting a counter that nothing increments would
+  be a false claim.
 
 #### OBS-02 · OpenTelemetry tracing
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/observability-tracing`
@@ -4877,7 +4911,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `.github/workflows/release.yml` | Tag-triggered release publishing and evidence | Maintainer | Active (`BASE-08`) |
 | `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`); community links added by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
-| `docs/AUDIT.md` | Audit model and retention | Maintainer | Planned (`GOV-04`) |
+| `docs/AUDIT.md` | Audit model and retention | Maintainer | Active (`GOV-04`) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
 | `docs/METRICS.md` | Metric catalog and formulas | Maintainer | Planned (`ANL-04`) |
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
@@ -5078,7 +5112,7 @@ labels must exist in the repository.
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
 | 0 - Baseline, truth and delivery gate | `BASE` | 9 | 8 | 0 | 1 |
-| 1 - Identity, authorization, audit | `GOV` | 12 | 2 | 0 | 10 |
+| 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
 | 4 — Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 0 | 0 | 13 |
@@ -5087,7 +5121,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **11** | **0** | **117** |
+| **Total** | - | **128** | **12** | **0** | **116** |
 
 ### C.2 Card index by phase
 
@@ -5109,7 +5143,6 @@ labels must exist in the repository.
 | Task | Why it blocks release |
 |---|---|
 | `GOV-03` | Self-approval and client-supplied review state make reviews meaningless |
-| `GOV-04` | No tamper-evident audit means incidents cannot be investigated |
 | `PLN-01` | Last-write-wins causes silent data loss |
 | `AI-02` | Without a persistent index, AI results are stale and unbounded |
 | `AI-03` | Without permission-aware retrieval, AI can leak cross-project data |
@@ -5139,6 +5172,7 @@ labels must exist in the repository.
 | 2026-11-20 | Closed OBS-01: added a Prometheus endpoint on a separate internal listener with optional bearer auth, RED/Go/process/PostgreSQL/NATS/SSE/Gitea/Argo/AI/reconciliation/build-info collectors, bounded route-template labels and `docs/OBSERVABILITY.md`. Post-merge verification confirmed `api/internal/metrics` and the observability contract on `master`, PR #21 merged with all required checks green, and 0 open Dependabot or secret-scanning alerts | Maintainer |
 | 2026-11-20 | Closed GOV-01: replaced the coarse project-write gate with 14 explicit capabilities resolved from `project_members` on every request; added DB-backed `RequireProjectCapability`, global viewer/admin overlays, tester and developer restrictions, owner-grant protection, `/auth/me` per-project capabilities, `x-spm-capability` OpenAPI metadata and capability-gated UI actions. Added `docs/AUTHZ.md`, CR/LF sanitization for caller-controlled authorization log fields and exhaustive route × role authorization tests | Maintainer |
 | 2026-11-20 | Closed GOV-02: archived projects now deny non-admin access through the per-request membership join and disappear from `/projects` and `/auth/me`; membership add/update/remove/ownership-transfer and admin role changes invalidate JWTs through the NATS-backed KV (one-second boundary covers same-second tokens) and publish `spm.authz.invalidation` so every replica evicts the affected SSE streams, including project-wide eviction on archive. Added `spm_authz_invalidations_total`, two-replica invalidation, eviction and archived-project tests, and updated `docs/AUTHZ.md`, `docs/OBSERVABILITY.md` and `docs/ARCHITECTURE.md` | Maintainer |
+| 2026-11-20 | Closed GOV-04: added a monthly-partitioned `audit_events` table whose database trigger owns the `sha256(prev_hash + '|' + payload)` chain and rejects update/delete/truncate; added a fail-open audit writer with recursive redaction, `AUDIT_RETENTION_DAYS`, audited whole-partition drops with chain anchors, admin list/detail/export/verify API and `/admin/audit` UI. Wired auth, admin, project, membership, settings, repository, branch, pull-request, environment, deployment and Argo CD producers; added audit write/chain/prune metrics with failure alerts and published `docs/AUDIT.md` | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

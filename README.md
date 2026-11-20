@@ -14,6 +14,8 @@ The current work is a v2 redesign. The target surface includes:
 
 - One persistent navigation shell with global and project sections.
 - User profiles, password changes, avatars, global roles and project roles.
+- Capability-based authorization and an append-only, hash-chained audit log with
+  admin search, export and chain verification.
 - Project settings and membership management that persist.
 - A Bitbucket-style Code workspace backed by Gitea.
 - Automated Gitea Actions and Argo CD delivery evidence.

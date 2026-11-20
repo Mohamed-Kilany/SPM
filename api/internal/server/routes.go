@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/observability"
@@ -57,6 +58,7 @@ type Handlers struct {
 	GenericWebhook   *webhook.GenericHandler
 	SSEManager       *sse.Manager
 	TicketStore      *auth.TicketStore
+	Audit            *audit.Handler
 	Pool             *pgxpool.Pool
 	UserInvalidation nats.KeyValue
 	BuildInfo        BuildInfo
@@ -107,6 +109,10 @@ func Register(r *gin.Engine, h Handlers) {
 			admin.GET("/users", h.Auth.AdminListUsers)
 			admin.POST("/users", h.Auth.AdminCreateUser)
 			admin.PATCH("/users/:userId", h.Auth.AdminUpdateUser)
+			admin.GET("/audit/events", h.Audit.List)
+			admin.GET("/audit/events/:auditId", h.Audit.Get)
+			admin.GET("/audit/export", h.Audit.Export)
+			admin.GET("/audit/verify", h.Audit.Verify)
 		}
 
 		v1.GET("/projects", h.Project.List)

@@ -24,6 +24,7 @@ const currentTab = computed(() => (route.query.tab as string | undefined) ?? 'ov
 const isProjects = computed(() => route.name === 'projects')
 const isSearch = computed(() => route.name === 'search')
 const isAdminUsers = computed(() => route.name === 'admin-users')
+const isAdminAudit = computed(() => route.name === 'admin-audit')
 const isProfile = computed(() => route.name === 'profile')
 const appVersion = displayVersion(import.meta.env.VITE_APP_VERSION)
 
@@ -147,6 +148,15 @@ function tabLink(tab: string) {
         >
           <AppIcon name="users" :size="18" :class="isAdminUsers ? 'text-indigo-600' : 'text-slate-600 group-hover:text-indigo-600'" />
           <span class="flex-1">Users &amp; roles</span>
+        </RouterLink>
+        <RouterLink
+          to="/admin/audit"
+          class="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          :class="isAdminAudit ? 'bg-indigo-50 text-indigo-700' : ''"
+          @click="close"
+        >
+          <AppIcon name="shield" :size="18" :class="isAdminAudit ? 'text-indigo-600' : 'text-slate-600 group-hover:text-indigo-600'" />
+          <span class="flex-1">Audit log</span>
         </RouterLink>
       </div>
 

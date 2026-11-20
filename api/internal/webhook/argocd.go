@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/cdengine"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/models"
@@ -29,6 +30,7 @@ type ArgoCDHandler struct {
 	events   *events.Client
 	watchdog *cdengine.Watchdog
 	token    string
+	audit    *audit.Logger
 }
 
 // NewArgoCDHandler creates an ArgoCDHandler.
@@ -37,6 +39,11 @@ func NewArgoCDHandler(db *pgxpool.Pool, store *Store, eventsClient *events.Clien
 		db: db, store: store, events: eventsClient, watchdog: watchdog,
 		token: os.Getenv("ARGOCD_WEBHOOK_TOKEN"),
 	}
+}
+
+// SetAuditLogger attaches the audit log for deployment observations.
+func (h *ArgoCDHandler) SetAuditLogger(logger *audit.Logger) {
+	h.audit = logger
 }
 
 // Handle handles POST /webhooks/argocd.
@@ -115,6 +122,11 @@ func (h *ArgoCDHandler) process(ctx context.Context, body []byte) error {
 	if appName == "" {
 		appName = project.AppName
 	}
+	// The app name is caller-controlled through the webhook payload. Strip CR
+	// and LF before logging so a forged event cannot create log entries
+	// (CWE-117).
+	safeAppName := strings.ReplaceAll(appName, "\n", "")
+	safeAppName = strings.ReplaceAll(safeAppName, "\r", "")
 
 	now := time.Now().UTC()
 	payloadMap := map[string]interface{}{
@@ -160,7 +172,25 @@ func (h *ArgoCDHandler) process(ctx context.Context, body []byte) error {
 		CommitSHA: notification.CommitSHA, Message: notification.Message,
 		Details: map[string]interface{}{"source": "argocd", "namespace": notification.App.Metadata.Namespace},
 	}); syncErr != nil && !errors.Is(syncErr, ErrProjectNotFound) {
-		log.Printf("webhook: normalized Argo CD sync failed for %s: %v", appName, syncErr)
+		log.Printf("webhook: normalized Argo CD sync failed for %s: %v", safeAppName, syncErr)
+	}
+	if h.audit != nil {
+		entry := audit.Entry{
+			ActorRole: "system", Action: "deployment.observed", TargetType: "project",
+			TargetID: project.ID.String(), ProjectID: project.ID.String(), Result: "success",
+			After: map[string]any{
+				"app_name": appName, "environment": notification.Environment,
+				"sync_status": syncStatus, "health_status": healthStatus,
+				"revision": notification.Revision, "commit_sha": notification.CommitSHA,
+			},
+		}
+		if strings.EqualFold(healthStatus, "Degraded") {
+			entry.Result = "failure"
+			entry.Reason = "argo_health_degraded"
+		}
+		if err := h.audit.Record(ctx, entry); err != nil {
+			log.Printf("webhook: audit deployment observation failed for %s: %v", safeAppName, err)
+		}
 	}
 	return nil
 }

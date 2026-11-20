@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"spm-platform/api/internal/audit"
 )
 
 // GetSettings returns the effective project settings. Projects created before
@@ -37,6 +39,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if strings.TrimSpace(req.AutoDeployEnv) == "" {
 		req.AutoDeployEnv = "staging"
 	}
+	var previous []byte
+	if err := h.store.DB().QueryRow(c.Request.Context(),
+		`SELECT settings FROM projects WHERE id = $1`, projectID).Scan(&previous); err != nil {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Project not found")
+		return
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Settings could not be serialized")
@@ -54,5 +62,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			"require_approved_review":  req.MergePolicy.RequireApprovedReview,
 			"require_passing_checks":   req.MergePolicy.RequirePassingChecks,
 		})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "project.settings.update", TargetType: "project", TargetID: projectID.String(),
+		Result: "success", Before: json.RawMessage(previous), After: req,
+	})
 	c.JSON(http.StatusOK, req)
 }

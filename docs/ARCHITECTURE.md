@@ -104,6 +104,9 @@ The AI service is a stateless Python FastAPI application:
 - Security headers at nginx and Envoy.
 - No telemetry, analytics or external fonts.
 - Secrets only from environment or secret stores.
+- An append-only, hash-chained audit log records authentication, admin, membership, settings,
+  code, delivery and deployment actions. PostgreSQL triggers reject update, delete and truncate
+  on every partition; the schema, retention and incident contract are in [`AUDIT.md`](AUDIT.md).
 
 ## 8. Docker and delivery
 
@@ -210,9 +213,10 @@ public API port never serves the endpoint, and the route is not part of `docs/op
 
 The collectors cover HTTP RED metrics, Go runtime and process state, PostgreSQL pool saturation,
 NATS connectivity and message counters, live SSE connections, Gitea/Argo CD dependency latency,
-AI latency and build/deployment reconciliation. HTTP metrics use Gin's route template, never the
-raw path, so resource identifiers cannot leak into labels or explode cardinality.
+AI latency, audit writes and chain verification, and build/deployment reconciliation. HTTP
+metrics use Gin's route template, never the raw path, so resource identifiers cannot leak into
+labels or explode cardinality.
 
 The metric catalog, naming rules, cardinality policy, example queries and deliberately deferred
 signals are in [`OBSERVABILITY.md`](OBSERVABILITY.md). Tracing, dashboards, SLOs and alert routing
-are `OBS-02`..`OBS-05`; audit-write metrics arrive with the audit subsystem in `GOV-04`.
+are `OBS-02`..`OBS-05`.

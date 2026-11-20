@@ -145,6 +145,10 @@ func TestNilRegistryIsSafe(t *testing.T) {
 	registry.ObserveDependency("gitea", http.MethodGet, "200", time.Millisecond)
 	registry.ObserveAI("/ask", time.Millisecond, nil)
 	registry.ObserveReconcile("argocd", time.Millisecond, errors.New("boom"))
+	registry.ObserveAuditWrite(time.Millisecond, nil)
+	registry.ObserveAuditVerification(true)
+	registry.ObserveAuditChecked(10)
+	registry.ObserveAuditPruned(1)
 	registry.RegisterPool(nil)
 	registry.RegisterNATS(nil)
 	registry.RegisterSSE(nil)
@@ -209,6 +213,38 @@ func TestAuthzInvalidationCounter(t *testing.T) {
 	}
 	if userTotal != 2 {
 		t.Fatalf("user/member_removed total = %v, want 2", userTotal)
+	}
+}
+
+func TestAuditMetrics(t *testing.T) {
+	registry := newTestRegistry()
+	registry.ObserveAuditWrite(10*time.Millisecond, nil)
+	registry.ObserveAuditWrite(20*time.Millisecond, errors.New("write failed"))
+	registry.ObserveAuditVerification(false)
+	registry.ObserveAuditChecked(42)
+	registry.ObserveAuditPruned(2)
+
+	writes := family(t, registry, "spm_audit_writes_total")
+	if len(writes.GetMetric()) != 2 {
+		t.Fatalf("audit write series = %d, want success and failure", len(writes.GetMetric()))
+	}
+	var success float64
+	for _, metric := range writes.GetMetric() {
+		if labelValue(metric, "outcome") == "success" {
+			success = metric.GetCounter().GetValue()
+		}
+	}
+	if success != 1 {
+		t.Fatalf("successful audit writes = %v, want 1", success)
+	}
+	if got := family(t, registry, "spm_audit_chain_valid").GetMetric()[0].GetGauge().GetValue(); got != 0 {
+		t.Errorf("chain valid gauge = %v, want 0", got)
+	}
+	if got := family(t, registry, "spm_audit_chain_rows_checked").GetMetric()[0].GetGauge().GetValue(); got != 42 {
+		t.Errorf("rows checked = %v, want 42", got)
+	}
+	if got := family(t, registry, "spm_audit_partitions_pruned_total").GetMetric()[0].GetCounter().GetValue(); got != 2 {
+		t.Errorf("partitions pruned = %v, want 2", got)
 	}
 }
 

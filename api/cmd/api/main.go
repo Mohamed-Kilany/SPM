@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spm-platform/api/internal/ai"
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/cdengine"
 	"spm-platform/api/internal/events"
@@ -85,6 +86,18 @@ func main() {
 	}
 	metricsRegistry.RegisterPool(pool)
 
+	auditLogger := audit.NewLogger(pool)
+	if err := auditLogger.EnsurePartitions(ctx, 3); err != nil {
+		log.Fatalf("audit: %v", err)
+	}
+	auditRetentionDays := audit.RetentionDaysFromEnv(os.Getenv("AUDIT_RETENTION_DAYS"))
+	if dropped, err := auditLogger.Prune(ctx, auditRetentionDays); err != nil {
+		log.Printf("audit: initial retention pass failed: %v", err)
+	} else if dropped > 0 {
+		log.Printf("audit: dropped %d expired partition(s)", dropped)
+	}
+	go auditLogger.RunMaintenance(ctx, auditRetentionDays)
+
 	eventsClient, err := events.New(natsURL, retentionDays)
 	if err != nil {
 		log.Fatalf("nats: %v", err)
@@ -97,11 +110,14 @@ func main() {
 
 	ticketStore := auth.NewTicketStore(ctx, 10*time.Second)
 	authHandler := auth.NewHandler(pool, ticketStore, eventsClient)
+	authHandler.SetAuditLogger(auditLogger)
 	projectHandler := project.NewHandler(pool, snapRepo, eventsClient, gitEngineClient)
+	projectHandler.SetAuditLogger(auditLogger)
 	ticketHandler := ticket.NewHandler(snapRepo, eventsClient, gitEngineClient, pool)
 	workspaceHandler := workspace.NewHandler(pool, eventsClient)
 	workspaceHandler.SetAIClient(ai.New())
 	workspaceHandler.SetGitClient(gitEngineClient)
+	workspaceHandler.SetAuditLogger(auditLogger)
 	searchHandler := search.NewHandler(pool)
 
 	sseManager := sse.NewManager(eventsClient.Conn(), pool)
@@ -117,6 +133,7 @@ func main() {
 	webhookStore := webhook.NewStore(pool)
 	giteaWebhook := webhook.NewGiteaHandler(pool, webhookStore, eventsClient, cdManager, watchdog)
 	argoWebhook := webhook.NewArgoCDHandler(pool, webhookStore, eventsClient, watchdog)
+	argoWebhook.SetAuditLogger(auditLogger)
 	genericWebhook := webhook.NewGenericHandler(pool, eventsClient)
 	deliverySyncer := webhook.NewDeliverySyncer(pool, eventsClient, gitEngineClient, argoClient)
 
@@ -144,6 +161,7 @@ func main() {
 		GenericWebhook:   genericWebhook,
 		SSEManager:       sseManager,
 		TicketStore:      ticketStore,
+		Audit:            audit.NewHandler(auditLogger),
 		Pool:             pool,
 		UserInvalidation: eventsClient.UserInvalidation(),
 		BuildInfo: server.BuildInfo{

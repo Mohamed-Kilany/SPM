@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spm-platform/api/internal/ai"
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/gitengine"
@@ -28,6 +29,7 @@ type Handler struct {
 	events *events.Client
 	ai     *ai.Client
 	git    *gitengine.Client
+	audit  *audit.Logger
 }
 
 // NewHandler creates a workspace handler.
@@ -43,6 +45,29 @@ func (h *Handler) SetAIClient(client *ai.Client) {
 // SetGitClient enables real branch, pull request and merge actions in Gitea.
 func (h *Handler) SetGitClient(client *gitengine.Client) {
 	h.git = client
+}
+
+// SetAuditLogger attaches the audit log to security-relevant workspace actions.
+func (h *Handler) SetAuditLogger(logger *audit.Logger) {
+	h.audit = logger
+}
+
+// recordAudit writes one audit event for the supplied project when a logger is
+// configured. Audit failures never fail the business request.
+func (h *Handler) recordAudit(c *gin.Context, projectID uuid.UUID, entry audit.Entry) {
+	if h.audit == nil {
+		return
+	}
+	if entry.ActorID == "" {
+		if claims, ok := auth.ClaimsFrom(c); ok && claims != nil {
+			entry.ActorID = claims.CanonicalUserID()
+			entry.ActorRole = claims.Role
+		}
+	}
+	if projectID != uuid.Nil {
+		entry.ProjectID = projectID.String()
+	}
+	h.audit.RecordRequest(c, entry)
 }
 
 type errorBody struct {

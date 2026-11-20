@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 )
 
@@ -109,6 +110,26 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 		h.invalidateProjectSessions(c.Request.Context(), projectID, "project_archived")
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project", &projectID, "updated", "Updated project settings", nil)
+	fields := map[string]any{}
+	if req.Name != nil {
+		fields["name"] = strings.TrimSpace(*req.Name)
+	}
+	if req.Description != nil {
+		fields["description"] = strings.TrimSpace(*req.Description)
+	}
+	if req.KeyPrefix != nil {
+		fields["key_prefix"] = strings.ToUpper(strings.TrimSpace(*req.KeyPrefix))
+	}
+	if req.DefaultBranch != nil {
+		fields["default_branch"] = strings.TrimSpace(*req.DefaultBranch)
+	}
+	if req.Status != nil {
+		fields["status"] = strings.ToLower(strings.TrimSpace(*req.Status))
+	}
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "project.update", TargetType: "project", TargetID: projectID.String(),
+		Result: "success", After: fields,
+	})
 	c.JSON(http.StatusOK, gin.H{"id": projectID})
 }
 
@@ -219,6 +240,10 @@ func (h *Handler) AddMember(c *gin.Context) {
 		h.invalidateMemberSessions(c.Request.Context(), demoted, projectID, "ownership_transferred")
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "added", "Added project member", map[string]interface{}{"role": role})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "project.member.add", TargetType: "user", TargetID: userID.String(),
+		Result: "success", After: map[string]any{"role": role, "ownership_transferred": len(demotedOwners) > 0},
+	})
 	c.JSON(http.StatusCreated, gin.H{"user_id": userID, "role": role})
 }
 
@@ -316,6 +341,11 @@ func (h *Handler) UpdateMember(c *gin.Context) {
 		h.invalidateMemberSessions(c.Request.Context(), demoted, projectID, "ownership_transferred")
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "updated", "Updated project member role", map[string]interface{}{"role": role})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "project.member.update", TargetType: "user", TargetID: userID.String(),
+		Result: "success", Before: map[string]any{"role": currentRole},
+		After: map[string]any{"role": role, "ownership_transferred": len(demotedOwners) > 0},
+	})
 	c.JSON(http.StatusOK, gin.H{"user_id": userID, "role": role})
 }
 
@@ -367,6 +397,10 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 	}
 	h.invalidateMemberSessions(c.Request.Context(), userID, projectID, "member_removed")
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "removed", "Removed project member", nil)
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "project.member.remove", TargetType: "user", TargetID: userID.String(),
+		Result: "success", Before: map[string]any{"role": role},
+	})
 	c.Status(http.StatusNoContent)
 }
 

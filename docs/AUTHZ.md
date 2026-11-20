@@ -23,7 +23,7 @@ Global rules:
 
 - **`admin`** keeps break-glass access to every capability. Each break-glass
   request logs `authz_break_glass` with the request ID, user, project and
-  capability; the append-only audit record arrives with `GOV-04`.
+  capability; the structured log line is the audit trail for this path.
 - **`viewer`** is read-only platform-wide. Even a project `owner` membership
   grants only `project.read`, `code.read` and `delivery.read`.
 - **`member`** receives the capabilities of the project role.
@@ -50,7 +50,9 @@ Global rules:
 
 `pr.review` is granted to developers but has no HTTP route until `GOV-03`
 introduces first-class reviews. `audit.read` and `delivery.rollback` likewise
-wait for `GOV-04` and the delivery write surface.
+wait for project-scoped audit routes and the delivery write surface. The
+global-admin audit API (`GOV-04`) is a separate, admin-only surface and does not
+use project capabilities.
 
 ### Tester restriction
 
@@ -170,8 +172,8 @@ Membership changes do more than alter the next database lookup:
 - Global admin break-glass requests log `authz_break_glass`.
 - Project IDs and paths are caller-controlled, so both fields are stripped of
   CR and LF before logging; a request cannot forge a second log entry.
-- Audit persistence for both events is `GOV-04`; session revocation and SSE
-  teardown land with `GOV-02` (see section 5).
+- Audit persistence for both authorization events remains future work; session
+  revocation and SSE teardown are implemented by `GOV-02` (see section 5).
 
 ## 7. Verification
 
