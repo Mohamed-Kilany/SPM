@@ -158,9 +158,22 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodPatch, "/tickets/:tid/state", auth.CapWorkItemWrite, h.Ticket.ChangeState)
 		project(http.MethodDelete, "/tickets/:tid", auth.CapWorkItemWrite, h.Ticket.Delete)
 		project(http.MethodPost, "/work-items", auth.CapWorkItemWrite, h.Workspace.CreateWorkItem)
+		project(http.MethodGet, "/work-items/:itemId", auth.CapProjectRead, h.Workspace.GetWorkItemDetail)
 		project(http.MethodPut, "/work-items/:itemId", auth.CapWorkItemWrite, h.Workspace.UpdateWorkItem)
 		project(http.MethodPatch, "/work-items/:itemId/status", auth.CapWorkItemWrite, h.Workspace.ChangeWorkItemStatus)
 		project(http.MethodDelete, "/work-items/:itemId", auth.CapWorkItemWrite, h.Workspace.DeleteWorkItem)
+
+		// Work item collaboration: comments, watchers, attachments and links.
+		project(http.MethodPost, "/work-items/:itemId/comments", auth.CapWorkItemWrite, h.Workspace.CreateComment)
+		project(http.MethodPatch, "/comments/:commentId", auth.CapWorkItemWrite, h.Workspace.UpdateComment)
+		project(http.MethodDelete, "/comments/:commentId", auth.CapWorkItemWrite, h.Workspace.DeleteComment)
+		project(http.MethodPost, "/work-items/:itemId/watch", auth.CapProjectRead, h.Workspace.WatchWorkItem)
+		project(http.MethodDelete, "/work-items/:itemId/watch", auth.CapProjectRead, h.Workspace.UnwatchWorkItem)
+		project(http.MethodPost, "/work-items/:itemId/attachments", auth.CapWorkItemWrite, h.Workspace.UploadAttachment)
+		project(http.MethodGet, "/attachments/:attachmentId/download", auth.CapProjectRead, h.Workspace.DownloadAttachment)
+		project(http.MethodDelete, "/attachments/:attachmentId", auth.CapWorkItemWrite, h.Workspace.DeleteAttachment)
+		project(http.MethodPost, "/work-items/:itemId/links", auth.CapWorkItemWrite, h.Workspace.CreateWorkItemLink)
+		project(http.MethodDelete, "/work-items/:itemId/links/:linkId", auth.CapWorkItemWrite, h.Workspace.DeleteWorkItemLink)
 
 		// Planning.
 		project(http.MethodPost, "/prds", auth.CapPlanningWrite, h.Workspace.CreatePRD)

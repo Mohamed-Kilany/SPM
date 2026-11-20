@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "016_planning_revisions.sql" {
-		t.Fatalf("latest migration = %q, want 016_planning_revisions.sql", names[len(names)-1])
+	if names[len(names)-1] != "017_work_item_collaboration.sql" {
+		t.Fatalf("latest migration = %q, want 017_work_item_collaboration.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -151,6 +151,53 @@ func TestPlanningRevisionRollbackIsComplete(t *testing.T) {
 	}
 	if len(embedded) != 0 {
 		t.Errorf("rollback scripts must not be embedded: %v", embedded)
+	}
+}
+
+func TestWorkItemCollaborationRollbackIsComplete(t *testing.T) {
+	forward := readMigration(t, "017_work_item_collaboration.sql")
+	rollback, err := os.ReadFile("rollback/017_work_item_collaboration.sql")
+	if err != nil {
+		t.Fatalf("read collaboration rollback companion: %v", err)
+	}
+	body := string(rollback)
+
+	for _, table := range []string{"work_item_watchers", "comment_mentions"} {
+		if !strings.Contains(forward, "CREATE TABLE IF NOT EXISTS "+table) {
+			t.Errorf("017 does not create %s", table)
+		}
+		if !strings.Contains(body, "DROP TABLE IF EXISTS "+table+";") {
+			t.Errorf("rollback does not drop %s", table)
+		}
+	}
+	for _, column := range []struct{ table, name string }{
+		{"work_items", "labels"},
+		{"comments", "edited_at"},
+		{"attachments", "checksum_sha256"},
+		{"attachments", "scan_status"},
+		{"attachments", "scan_engine"},
+		{"attachments", "scan_detail"},
+		{"attachments", "deleted_at"},
+	} {
+		if !strings.Contains(forward, "ALTER TABLE "+column.table+" ADD COLUMN IF NOT EXISTS "+column.name) {
+			t.Errorf("017 does not add %s.%s", column.table, column.name)
+		}
+		if !strings.Contains(body, "ALTER TABLE "+column.table+" DROP COLUMN IF EXISTS "+column.name+";") {
+			t.Errorf("rollback does not drop %s.%s", column.table, column.name)
+		}
+	}
+	index := regexp.MustCompile(`(?i)CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)`)
+	names := index.FindAllStringSubmatch(forward, -1)
+	if len(names) == 0 {
+		t.Fatal("017 creates no indexes")
+	}
+	for _, match := range names {
+		if !strings.Contains(body, "DROP INDEX IF EXISTS "+match[1]+";") {
+			t.Errorf("rollback does not drop index %s", match[1])
+		}
+	}
+	if !strings.Contains(forward, "scan_status IN ('pending', 'clean', 'rejected')") {
+		t.Error("017 does not constrain attachment scan status")
 	}
 }
 

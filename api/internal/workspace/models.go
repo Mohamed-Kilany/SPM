@@ -192,6 +192,7 @@ type WorkItem struct {
 	ReproductionSteps  string     `json:"reproduction_steps"`
 	ExpectedResult     string     `json:"expected_result"`
 	ActualResult       string     `json:"actual_result"`
+	Labels             []string   `json:"labels"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	ClosedAt           *time.Time `json:"closed_at"`
@@ -467,6 +468,87 @@ type ArtifactLink struct {
 	LinkType   string     `json:"link_type"`
 	CreatedBy  *uuid.UUID `json:"created_by"`
 	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// Mention is a project member referenced from a comment body.
+type Mention struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+}
+
+// Comment is one sanitized, plain-text discussion entry on an artifact.
+type Comment struct {
+	ID         uuid.UUID  `json:"id"`
+	ProjectID  uuid.UUID  `json:"project_id"`
+	EntityType string     `json:"entity_type"`
+	EntityID   uuid.UUID  `json:"entity_id"`
+	AuthorID   *uuid.UUID `json:"author_id"`
+	AuthorName string     `json:"author_name"`
+	Body       string     `json:"body"`
+	Mentions   []Mention  `json:"mentions"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	EditedAt   *time.Time `json:"edited_at"`
+}
+
+// Attachment is uploaded evidence. ScanStatus must be clean before download.
+type Attachment struct {
+	ID             uuid.UUID  `json:"id"`
+	ProjectID      uuid.UUID  `json:"project_id"`
+	EntityType     string     `json:"entity_type"`
+	EntityID       uuid.UUID  `json:"entity_id"`
+	Filename       string     `json:"filename"`
+	MIMEType       string     `json:"mime_type"`
+	SizeBytes      int64      `json:"size_bytes"`
+	ChecksumSHA256 string     `json:"checksum_sha256"`
+	ScanStatus     string     `json:"scan_status"`
+	ScanEngine     string     `json:"scan_engine"`
+	ScanDetail     string     `json:"scan_detail,omitempty"`
+	UploadedBy     *uuid.UUID `json:"uploaded_by"`
+	UploaderName   string     `json:"uploader_name"`
+	CreatedAt      time.Time  `json:"created_at"`
+	DownloadURL    string     `json:"download_url"`
+}
+
+// Watcher is a project member subscribed to a work item.
+type Watcher struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// LinkedArtifact is one bidirectional link rendered from the perspective of
+// the artifact being viewed.
+type LinkedArtifact struct {
+	LinkID       uuid.UUID `json:"link_id"`
+	LinkType     string    `json:"link_type"`
+	Direction    string    `json:"direction"`
+	ArtifactType string    `json:"artifact_type"`
+	ArtifactID   uuid.UUID `json:"artifact_id"`
+	ArtifactKey  string    `json:"artifact_key,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	Status       string    `json:"status,omitempty"`
+}
+
+// WorkItemDetail is the drawer aggregate: the item, its children, and the
+// collaboration surfaces that are too large for the workspace snapshot.
+type WorkItemDetail struct {
+	WorkItem
+	Children        []WorkItem       `json:"children"`
+	Comments        []Comment        `json:"comments"`
+	Attachments     []Attachment     `json:"attachments"`
+	Watchers        []Watcher        `json:"watchers"`
+	Watching        bool             `json:"watching"`
+	Links           []LinkedArtifact `json:"links"`
+	Activity        []ActivityEvent  `json:"activity"`
+	Branches        []GitBranch      `json:"branches"`
+	PullRequests    []PullRequest    `json:"pull_requests"`
+	ChildCount      int              `json:"child_count"`
+	CommentCount    int              `json:"comment_count"`
+	AttachmentCount int              `json:"attachment_count"`
+	WatcherCount    int              `json:"watcher_count"`
 }
 
 // TestTrendPoint is one completed test run's pass/fail summary.

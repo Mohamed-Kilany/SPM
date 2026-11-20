@@ -128,10 +128,83 @@ export interface WorkItem {
   reproduction_steps: string
   expected_result: string
   actual_result: string
+  labels: string[]
   created_at: string
   updated_at: string
   closed_at: string | null
   revision: number
+}
+
+export interface Mention {
+  user_id: string
+  username: string
+  display_name: string
+}
+
+export interface Comment {
+  id: string
+  project_id: string
+  entity_type: string
+  entity_id: string
+  author_id: string | null
+  author_name: string
+  body: string
+  mentions: Mention[]
+  created_at: string
+  updated_at: string
+  edited_at: string | null
+}
+
+export interface Attachment {
+  id: string
+  project_id: string
+  entity_type: string
+  entity_id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  checksum_sha256: string
+  scan_status: 'pending' | 'clean' | 'rejected' | string
+  scan_engine: string
+  scan_detail?: string
+  uploaded_by: string | null
+  uploader_name: string
+  created_at: string
+  download_url: string
+}
+
+export interface Watcher {
+  user_id: string
+  username: string
+  display_name: string
+  created_at: string
+}
+
+export interface LinkedArtifact {
+  link_id: string
+  link_type: string
+  direction: 'inbound' | 'outbound' | string
+  artifact_type: string
+  artifact_id: string
+  artifact_key?: string
+  title?: string
+  status?: string
+}
+
+export interface WorkItemDetail extends WorkItem {
+  children: WorkItem[]
+  comments: Comment[]
+  attachments: Attachment[]
+  watchers: Watcher[]
+  watching: boolean
+  links: LinkedArtifact[]
+  activity: ActivityEvent[]
+  branches: GitBranch[]
+  pull_requests: PullRequest[]
+  child_count: number
+  comment_count: number
+  attachment_count: number
+  watcher_count: number
 }
 
 export interface Sprint {

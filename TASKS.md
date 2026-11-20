@@ -3064,20 +3064,30 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   resource labels and is documented in [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
 #### PLN-02 · Work item detail, comments, links and watchers
-- **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/planning-work-item-detail`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/planning-work-item-detail`
 - **Depends on:** PLN-01
 - **Scope:** Build the work item detail drawer/page: title/description, acceptance criteria,
   status, owner, priority, sprint, release, labels, parent/children, links, attachments,
   comments, watchers, activity and traceability. Support optimistic updates and audit.
 - **Acceptance criteria:**
-  - [ ] Create/edit/comment/link/watch works from the board, planning and search.
-  - [ ] Comments support mentions and are sanitized/escaped.
-  - [ ] Links are bidirectional and visible on both artifacts.
-  - [ ] Attachments are size/type restricted, scanned and permission-checked.
-  - [ ] Every change emits an activity/audit event and SSE update.
-  - [ ] The drawer is keyboard operable and deep-linkable.
-- **Tests/evidence:** API CRUD/link/comment tests, XSS test, attachment test, Playwright drawer.
-- **Docs/telemetry:** Work item field reference.
+  - [x] Create/edit/comment/link/watch works from the board, planning and search.
+  - [x] Comments support mentions and are sanitized/escaped.
+  - [x] Links are bidirectional and visible on both artifacts.
+  - [x] Attachments are size/type restricted, scanned and permission-checked.
+  - [x] Every change emits an activity/audit event and SSE update.
+  - [x] The drawer is keyboard operable and deep-linkable.
+- **Tests/evidence:** Migration `017` adds labels, watchers, mentions, attachment scan state and
+  their indexes; `schema_test.go` checks the forward and contract scripts stay complete, and a
+  PGlite rehearsal applied all 17 migrations, re-applied `017`, exercised label containment,
+  stale-revision rejection, watcher/mention uniqueness and cascades, attachment scan checks and
+  the full rollback. `handler_collaboration_test.go` covers comment sanitization, mention
+  parsing (including trailing punctuation), label normalization and the link allowlist;
+  `attachments_test.go` covers traversal, type/magic mismatches, active markup, EICAR, size
+  limits, scanner outage and storage. UI `typecheck`, 23 Vitest tests (including mention
+  parsing) and `build` pass; OpenAPI `-check` is current.
+- **Docs/telemetry:** [`docs/WORK-ITEMS.md`](docs/WORK-ITEMS.md) documents every field, the
+  collaboration endpoints, attachment limits/scanning/permissions, activity/audit/SSE emission
+  and the deep-link/keyboard contract. Compose persists attachments in `attachments_data`.
 
 #### PLN-03 · Sprint and release lifecycle
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/planning-sprints-releases`
@@ -5144,13 +5154,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 — Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 1 | 0 | 12 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 2 | 0 | 11 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **13** | **0** | **115** |
+| **Total** | - | **128** | **14** | **0** | **114** |
 
 ### C.2 Card index by phase
 
@@ -5202,6 +5212,7 @@ labels must exist in the repository.
 | 2026-11-20 | Closed GOV-02: archived projects now deny non-admin access through the per-request membership join and disappear from `/projects` and `/auth/me`; membership add/update/remove/ownership-transfer and admin role changes invalidate JWTs through the NATS-backed KV (one-second boundary covers same-second tokens) and publish `spm.authz.invalidation` so every replica evicts the affected SSE streams, including project-wide eviction on archive. Added `spm_authz_invalidations_total`, two-replica invalidation, eviction and archived-project tests, and updated `docs/AUTHZ.md`, `docs/OBSERVABILITY.md` and `docs/ARCHITECTURE.md` | Maintainer |
 | 2026-11-20 | Closed GOV-04: added a monthly-partitioned `audit_events` table whose database trigger owns the `sha256(prev_hash + '|' + payload)` chain and rejects update/delete/truncate; added a fail-open audit writer with recursive redaction, `AUDIT_RETENTION_DAYS`, audited whole-partition drops with chain anchors, admin list/detail/export/verify API and `/admin/audit` UI. Wired auth, admin, project, membership, settings, repository, branch, pull-request, environment, deployment and Argo CD producers; added audit write/chain/prune metrics with failure alerts and published `docs/AUDIT.md` | Maintainer |
 | 2026-11-20 | Closed PLN-01: added `revision` tokens and trigger-owned bumps to the eight planning tables, `If-Match`/`expected_version` conditional mutations with `428`/`409`/`400` responses, explicit retry UX, self-parent and all 73 foreign-key indexes, `schema_test.go` drift guards, a `migration_template.sql` and contract companion, and `docs/DATA-MODEL.md`/`docs/MIGRATION-GUIDE.md`; added `spm_planning_conflicts_total`. Merged as PR #26 (`07ecdae`) after a forward/rollback PGlite rehearsal and all required checks | Maintainer |
+| 2026-11-21 | Closed PLN-02: added the work item detail drawer with labels, comments/mentions, watchers, bidirectional links, scanned attachments, activity and traceability; migrated `017_work_item_collaboration` with a contract companion and hardened upload validation (type/magic/size, active markup, EICAR, optional ClamAV with fail-closed scanning); documented fields and endpoints in `docs/WORK-ITEMS.md`. Verified with Go/UI tests, OpenAPI drift, Compose config and a PGlite forward/rollback rehearsal | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

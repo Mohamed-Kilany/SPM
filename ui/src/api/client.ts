@@ -24,6 +24,10 @@ import type {
   RepositoryFile,
   RepositoryTreeResponse,
   TraceabilityResponse,
+  Attachment,
+  Comment,
+  LinkedArtifact,
+  WorkItemDetail,
   Workspace,
 } from '../types/workspace'
 
@@ -86,7 +90,9 @@ async function requestRaw<T>(path: string, options: RequestOptions = {}): Promis
   if (extraHeaders) {
     for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value)
   }
-  if (body !== undefined) headers.set('Content-Type', 'application/json')
+  if (body !== undefined && !(typeof FormData !== 'undefined' && body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   if (auth) {
     const token = getStoredToken()
     if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -105,7 +111,12 @@ async function requestRaw<T>(path: string, options: RequestOptions = {}): Promis
     const response = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : typeof FormData !== 'undefined' && body instanceof FormData
+            ? body
+            : JSON.stringify(body),
       signal: controller?.signal ?? signal,
       credentials: 'same-origin',
     })
@@ -617,6 +628,85 @@ export const api = {
     return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}`,
       { method: 'DELETE', headers: ifMatch(revision) },
+    )
+  },
+
+  async getWorkItemDetail(projectId: string, itemId: string): Promise<WorkItemDetail> {
+    return request<WorkItemDetail>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}`,
+    )
+  },
+
+  async createComment(projectId: string, itemId: string, body: string): Promise<Comment> {
+    return request<Comment>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/comments`,
+      { method: 'POST', body: { body } },
+    )
+  },
+
+  async updateComment(projectId: string, commentId: string, body: string): Promise<Comment> {
+    return request<Comment>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: 'PATCH', body: { body } },
+    )
+  },
+
+  async deleteComment(projectId: string, commentId: string): Promise<void> {
+    await request<null>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async setWorkItemWatching(
+    projectId: string,
+    itemId: string,
+    watching: boolean,
+  ): Promise<{ watching: boolean }> {
+    return request<{ watching: boolean }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/watch`,
+      { method: watching ? 'POST' : 'DELETE', body: watching ? {} : undefined },
+    )
+  },
+
+  async uploadAttachment(projectId: string, itemId: string, file: File): Promise<Attachment> {
+    const form = new FormData()
+    form.append('file', file)
+    return request<Attachment>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/attachments`,
+      { method: 'POST', body: form },
+    )
+  },
+
+  async downloadAttachment(projectId: string, attachmentId: string): Promise<Blob> {
+    const { response } = await requestRaw<unknown>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(attachmentId)}/download`,
+    )
+    return response.blob()
+  },
+
+  async deleteAttachment(projectId: string, attachmentId: string): Promise<void> {
+    await request<null>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(attachmentId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async createWorkItemLink(
+    projectId: string,
+    itemId: string,
+    payload: { target_type: string; target_id: string; link_type?: string },
+  ): Promise<LinkedArtifact> {
+    return request<LinkedArtifact>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/links`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async deleteWorkItemLink(projectId: string, itemId: string, linkId: string): Promise<void> {
+    await request<null>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/links/${encodeURIComponent(linkId)}`,
+      { method: 'DELETE' },
     )
   },
 

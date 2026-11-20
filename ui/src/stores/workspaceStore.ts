@@ -8,6 +8,7 @@ import type {
   Epic,
   Feature,
   GitCommit,
+  Member,
   PRD,
   PullRequest,
   Release,
@@ -42,6 +43,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const builds = computed<Build[]>(() => workspace.value?.builds ?? [])
   const deployments = computed<Deployment[]>(() => workspace.value?.deployments ?? [])
   const activity = computed<ActivityEvent[]>(() => workspace.value?.activity ?? [])
+  const members = computed<Member[]>(() => workspace.value?.members ?? [])
 
   async function load(id: string): Promise<void> {
     if (!id) return
@@ -121,6 +123,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     builds,
     deployments,
     activity,
+    members,
     load,
     refresh,
     reset,

@@ -452,6 +452,97 @@ properties:
 properties:
   commit_message: { type: string }
   strategy: { type: string, enum: [merge, squash, rebase] }`,
+	"CommentInput": `type: object
+required: [body]
+properties:
+  body:
+    type: string
+    minLength: 1
+    maxLength: 10000
+    description: 'Plain text. Control characters are stripped and clients must render it escaped, never as HTML.'`,
+	"WorkItemLinkInput": `type: object
+required: [target_type, target_id]
+properties:
+  target_type: { type: string, enum: [prd, epic, feature, work_item, test_case, sprint, release] }
+  target_id: { type: string, format: uuid }
+  link_type: { type: string, maxLength: 40, default: related, description: 'Lower-case letters, digits, hyphens and underscores.' }`,
+	"Mention": `type: object
+properties:
+  user_id: { type: string, format: uuid }
+  username: { type: string }
+  display_name: { type: string }`,
+	"Comment": `type: object
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  entity_type: { type: string }
+  entity_id: { type: string, format: uuid }
+  author_id: { type: [string, "null"], format: uuid }
+  author_name: { type: string }
+  body: { type: string, description: 'Plain text; render escaped.' }
+  mentions: { type: array, items: { $ref: '#/components/schemas/Mention' } }
+  created_at: { type: string, format: date-time }
+  updated_at: { type: string, format: date-time }
+  edited_at: { type: [string, "null"], format: date-time }`,
+	"Attachment": `type: object
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  entity_type: { type: string }
+  entity_id: { type: string, format: uuid }
+  filename: { type: string }
+  mime_type: { type: string }
+  size_bytes: { type: integer, format: int64 }
+  checksum_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+  scan_status: { type: string, enum: [pending, clean, rejected] }
+  scan_engine: { type: string }
+  scan_detail: { type: string }
+  uploaded_by: { type: [string, "null"], format: uuid }
+  uploader_name: { type: string }
+  created_at: { type: string, format: date-time }
+  download_url: { type: string }`,
+	"LinkedArtifact": `type: object
+properties:
+  link_id: { type: string, format: uuid }
+  link_type: { type: string }
+  direction: { type: string, enum: [inbound, outbound] }
+  artifact_type: { type: string, enum: [prd, epic, feature, work_item, test_case, sprint, release] }
+  artifact_id: { type: string, format: uuid }
+  artifact_key: { type: string }
+  title: { type: string }
+  status: { type: string }`,
+	"WatchState": `type: object
+properties:
+  watching: { type: boolean }`,
+	"WorkItemDetail": `type: object
+description: A work item plus the collaboration collections rendered by the detail drawer.
+additionalProperties: true
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  key: { type: string }
+  item_number: { type: integer, format: int64 }
+  type: { type: string }
+  title: { type: string }
+  description: { type: string }
+  acceptance_criteria: { type: string }
+  status: { type: string }
+  priority: { type: string }
+  labels: { type: array, items: { type: string } }
+  revision: { type: integer, format: int64 }
+  children: { type: array, items: { type: object, additionalProperties: true } }
+  comments: { type: array, items: { $ref: '#/components/schemas/Comment' } }
+  attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' } }
+  watchers: { type: array, items: { type: object, additionalProperties: true } }
+  watching: { type: boolean }
+  links: { type: array, items: { $ref: '#/components/schemas/LinkedArtifact' } }
+  activity: { type: array, items: { type: object, additionalProperties: true } }
+  branches: { type: array, items: { type: object, additionalProperties: true } }
+  pull_requests: { type: array, items: { type: object, additionalProperties: true } }
+  child_count: { type: integer }
+  comment_count: { type: integer }
+  attachment_count: { type: integer }
+  watcher_count: { type: integer }`,
 	"AIAskInput": `type: object
 required: [question]
 properties:
@@ -588,7 +679,9 @@ func operationYAML(route server.Route, openAPIPath string) string {
 		b.WriteString(revisionHeaders(route.Method, openAPIPath))
 	default:
 		fmt.Fprintf(&b, "  '200':\n    description: OK\n")
-		if strings.HasSuffix(openAPIPath, "/admin/audit/export") {
+		if isAttachmentDownload(route.Method, openAPIPath) {
+			b.WriteString("    content:\n      application/octet-stream:\n        schema:\n          type: string\n          format: binary\n    headers:\n      Content-Disposition:\n        description: Attachment filename.\n        schema: { type: string }\n      ETag:\n        description: SHA-256 checksum of the stored bytes.\n        schema: { type: string }\n")
+		} else if strings.HasSuffix(openAPIPath, "/admin/audit/export") {
 			b.WriteString("    content:\n      text/csv:\n        schema: { type: string }\n      application/json:\n        schema:\n          type: array\n          items:\n            $ref: '#/components/schemas/AuditEvent'\n")
 		} else if schema := successSchema(route.Method, openAPIPath); schema != "" {
 			fmt.Fprintf(&b, "    content:\n      application/json:\n        schema:\n          $ref: '#/components/schemas/%s'\n", schema)
@@ -612,7 +705,11 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	}
 
 	// Request body.
-	if schema := requestSchema(route.Method, openAPIPath); schema != "" {
+	if isAttachmentUpload(route.Method, openAPIPath) {
+		b.WriteString("requestBody:\n  required: true\n  content:\n    multipart/form-data:\n      schema:\n        type: object\n        required: [file]\n        properties:\n          file: { type: string, format: binary }\n")
+	} else if strings.EqualFold(route.Method, "POST") && strings.HasSuffix(openAPIPath, "/watch") {
+		b.WriteString("requestBody:\n  required: false\n  content:\n    application/json:\n      schema: { type: object, additionalProperties: false }\n")
+	} else if schema := requestSchema(route.Method, openAPIPath); schema != "" {
 		required := "true"
 		if strings.HasSuffix(openAPIPath, "/merge") {
 			required = "false"
@@ -631,19 +728,39 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	return b.String()
 }
 
-// isRevisionedPath reports whether path is a planning resource with optimistic
-// concurrency. Test runs are revisioned but have no update endpoint; their
+// isRevisionedPath reports whether path identifies a single revisioned
+// planning object. Test runs are revisioned but have no update endpoint; their
 // revision is returned on create and bumped when the run status is refreshed.
+// Collections and sub-resources such as comments, watchers, attachments and
+// links are deliberately excluded.
 func isRevisionedPath(path string) bool {
-	for _, collection := range []string{
-		"/prds", "/epics", "/features", "/work-items",
-		"/sprints", "/releases", "/test-cases", "/test-runs",
-	} {
-		if strings.HasSuffix(path, collection) || strings.Contains(path, collection+"/") {
-			return true
-		}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 6 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "projects" || parts[3] != "{id}" {
+		return false
+	}
+	switch parts[4] {
+	case "prds", "epics", "features", "work-items", "sprints", "releases", "test-cases", "test-runs":
+		return true
 	}
 	return false
+}
+
+func isWorkItemStatusPath(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) == 7 && parts[4] == "work-items" && parts[6] == "status"
+}
+
+func isWorkItemDetailPath(method, path string) bool {
+	return strings.EqualFold(method, "GET") && isRevisionedPath(path) &&
+		strings.Split(strings.Trim(path, "/"), "/")[4] == "work-items"
+}
+
+func isAttachmentUpload(method, path string) bool {
+	return strings.EqualFold(method, "POST") && strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/attachments")
+}
+
+func isAttachmentDownload(method, path string) bool {
+	return strings.EqualFold(method, "GET") && strings.HasSuffix(path, "/attachments/{attachmentId}/download")
 }
 
 func isRevisionedCreate(method, path string) bool {
@@ -665,14 +782,11 @@ func isRevisionedCreate(method, path string) bool {
 }
 
 func isRevisionedMutation(method, path string) bool {
-	if !isRevisionedPath(path) {
-		return false
-	}
 	switch strings.ToUpper(method) {
 	case "PUT", "DELETE":
-		return true
+		return isRevisionedPath(path)
 	case "PATCH":
-		return strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/status")
+		return isWorkItemStatusPath(path)
 	default:
 		return false
 	}
@@ -746,6 +860,7 @@ func successCode(method, path string) string {
 			strings.HasSuffix(path, "/auth/stream-ticket"),
 			strings.HasSuffix(path, "/ai/ask"),
 			strings.HasSuffix(path, "/provision"),
+			strings.HasSuffix(path, "/watch"),
 			strings.Contains(path, "/pull-requests/") && strings.HasSuffix(path, "/merge"):
 			return "200"
 		}
@@ -773,6 +888,10 @@ func errorCodes(route server.Route, path string) []string {
 	}
 	if strings.HasSuffix(path, "/merge") {
 		codes = append(codes, "422")
+	}
+	if isAttachmentUpload(route.Method, path) ||
+		(strings.EqualFold(route.Method, "POST") && strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/links")) {
+		codes = appendUnique(codes, "422")
 	}
 	if successCode(route.Method, path) == "201" && !strings.Contains(path, "/auth/login") {
 		codes = appendUnique(codes, "409")
@@ -838,6 +957,12 @@ func requestSchema(method, path string) string {
 		return "EpicInput"
 	case strings.HasSuffix(path, "/features"), strings.Contains(path, "/features/"):
 		return "FeatureInput"
+	case strings.Contains(path, "/comments/"), strings.HasSuffix(path, "/comments"):
+		return "CommentInput"
+	case strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/links"):
+		return "WorkItemLinkInput"
+	case strings.HasSuffix(path, "/attachments"), strings.HasSuffix(path, "/watch"):
+		return ""
 	case strings.HasSuffix(path, "/work-items"), strings.Contains(path, "/work-items/"):
 		if strings.HasSuffix(path, "/status") {
 			return "StatusInput"
@@ -893,6 +1018,18 @@ func requestSchema(method, path string) string {
 
 func successSchema(method, path string) string {
 	switch {
+	case isAttachmentDownload(method, path):
+		return ""
+	case isWorkItemDetailPath(method, path):
+		return "WorkItemDetail"
+	case strings.Contains(path, "/comments/"), strings.HasSuffix(path, "/comments"):
+		return "Comment"
+	case strings.HasSuffix(path, "/watch"):
+		return "WatchState"
+	case isAttachmentUpload(method, path):
+		return "Attachment"
+	case strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/links"):
+		return "LinkedArtifact"
 	case isRevisionedCreate(method, path) || isRevisionedMutation(method, path):
 		return "RevisionResult"
 	case strings.HasSuffix(path, "/auth/login"):
@@ -940,7 +1077,8 @@ func tagFor(path string) string {
 	case strings.Contains(path, "/prds"), strings.Contains(path, "/epics"),
 		strings.Contains(path, "/features"), strings.Contains(path, "/work-items"),
 		strings.Contains(path, "/sprints"), strings.Contains(path, "/releases"),
-		strings.Contains(path, "/tickets"):
+		strings.Contains(path, "/tickets"), strings.Contains(path, "/comments"),
+		strings.Contains(path, "/attachments"):
 		return "Planning"
 	case strings.Contains(path, "/test-"):
 		return "Tests"
@@ -957,61 +1095,72 @@ func tagFor(path string) string {
 }
 
 var summaryOverrides = map[string]string{
-	"GET /health":                                                "Health probe",
-	"GET /health/live":                                           "Liveness probe",
-	"GET /health/ready":                                          "Readiness probe",
-	"POST /api/v1/auth/login":                                    "Sign in",
-	"GET /api/v1/auth/me":                                        "Get the current user",
-	"PATCH /api/v1/auth/me":                                      "Update the current profile",
-	"POST /api/v1/auth/password":                                 "Change the current password",
-	"POST /api/v1/auth/stream-ticket":                            "Issue a stream ticket",
-	"GET /api/v1/users":                                          "List directory users",
-	"GET /api/v1/search":                                         "Search artifacts",
-	"GET /api/v1/admin/users":                                    "List users",
-	"POST /api/v1/admin/users":                                   "Create a user",
-	"PATCH /api/v1/admin/users/{userId}":                         "Update a user",
-	"GET /api/v1/admin/audit/events":                             "List audit events",
-	"GET /api/v1/admin/audit/events/{auditId}":                   "Get an audit event",
-	"GET /api/v1/admin/audit/export":                             "Export audit events",
-	"GET /api/v1/admin/audit/verify":                             "Verify the audit hash chain",
-	"GET /api/v1/projects":                                       "List projects",
-	"POST /api/v1/projects":                                      "Create a project",
-	"GET /api/v1/projects/{id}":                                  "Get a project",
-	"PATCH /api/v1/projects/{id}":                                "Update a project",
-	"GET /api/v1/projects/{id}/workspace":                        "Get the project workspace",
-	"GET /api/v1/projects/{id}/activity":                         "List project activity",
-	"GET /api/v1/projects/{id}/traceability":                     "Get traceability",
-	"GET /api/v1/projects/{id}/reports":                          "Get project reports",
-	"GET /api/v1/projects/{id}/reports/export":                   "Export a report",
-	"GET /api/v1/projects/{id}/release-readiness":                "Get release readiness",
-	"GET /api/v1/projects/{id}/settings":                         "Get project settings",
-	"PUT /api/v1/projects/{id}/settings":                         "Update project settings",
-	"GET /api/v1/projects/{id}/members":                          "List project members",
-	"POST /api/v1/projects/{id}/members":                         "Add a project member",
-	"PATCH /api/v1/projects/{id}/members/{userId}":               "Update a project member",
-	"DELETE /api/v1/projects/{id}/members/{userId}":              "Remove a project member",
-	"GET /api/v1/projects/{id}/stream":                           "Stream project events",
-	"GET /api/v1/projects/{id}/ai/search":                        "Search with AI",
-	"POST /api/v1/projects/{id}/ai/ask":                          "Ask a question",
-	"GET /api/v1/projects/{id}/ai/insights":                      "Get AI insights",
-	"POST /api/v1/projects/{id}/pull-requests/{prId}/merge":      "Merge a pull request",
-	"POST /api/v1/projects/{id}/repositories/{repoId}/provision": "Provision a repository",
-	"POST /api/v1/projects/{id}/test-runs/import":                "Import test results",
-	"POST /api/v1/projects/{id}/repositories":                    "Create a repository",
-	"POST /api/v1/projects/{id}/branches":                        "Create a branch",
-	"POST /api/v1/projects/{id}/pull-requests":                   "Create a pull request",
-	"PUT /api/v1/projects/{id}/pull-requests/{prId}":             "Update a pull request",
-	"POST /api/v1/projects/{id}/environments":                    "Create an environment",
-	"POST /api/v1/projects/{id}/links":                           "Create a link",
-	"DELETE /api/v1/projects/{id}/links/{linkId}":                "Delete a link",
-	"POST /api/v1/projects/{id}/tickets":                         "Create a ticket",
-	"POST /api/v1/projects/{id}/test-cases":                      "Create a test case",
-	"POST /api/v1/projects/{id}/test-runs":                       "Create a test run",
-	"POST /api/v1/webhooks/gitea":                                "Receive a Gitea webhook",
-	"POST /api/v1/webhooks/argocd":                               "Receive an Argo CD webhook",
-	"POST /api/v1/webhooks/git/{provider}":                       "Receive a Git provider webhook",
-	"POST /api/v1/webhooks/ci/{provider}":                        "Receive a CI provider webhook",
-	"POST /api/v1/webhooks/cd/{provider}":                        "Receive a CD provider webhook",
+	"GET /health":                                                     "Health probe",
+	"GET /health/live":                                                "Liveness probe",
+	"GET /health/ready":                                               "Readiness probe",
+	"POST /api/v1/auth/login":                                         "Sign in",
+	"GET /api/v1/auth/me":                                             "Get the current user",
+	"PATCH /api/v1/auth/me":                                           "Update the current profile",
+	"POST /api/v1/auth/password":                                      "Change the current password",
+	"POST /api/v1/auth/stream-ticket":                                 "Issue a stream ticket",
+	"GET /api/v1/users":                                               "List directory users",
+	"GET /api/v1/search":                                              "Search artifacts",
+	"GET /api/v1/admin/users":                                         "List users",
+	"POST /api/v1/admin/users":                                        "Create a user",
+	"PATCH /api/v1/admin/users/{userId}":                              "Update a user",
+	"GET /api/v1/admin/audit/events":                                  "List audit events",
+	"GET /api/v1/admin/audit/events/{auditId}":                        "Get an audit event",
+	"GET /api/v1/admin/audit/export":                                  "Export audit events",
+	"GET /api/v1/admin/audit/verify":                                  "Verify the audit hash chain",
+	"GET /api/v1/projects":                                            "List projects",
+	"POST /api/v1/projects":                                           "Create a project",
+	"GET /api/v1/projects/{id}":                                       "Get a project",
+	"PATCH /api/v1/projects/{id}":                                     "Update a project",
+	"GET /api/v1/projects/{id}/workspace":                             "Get the project workspace",
+	"GET /api/v1/projects/{id}/activity":                              "List project activity",
+	"GET /api/v1/projects/{id}/traceability":                          "Get traceability",
+	"GET /api/v1/projects/{id}/reports":                               "Get project reports",
+	"GET /api/v1/projects/{id}/reports/export":                        "Export a report",
+	"GET /api/v1/projects/{id}/release-readiness":                     "Get release readiness",
+	"GET /api/v1/projects/{id}/settings":                              "Get project settings",
+	"PUT /api/v1/projects/{id}/settings":                              "Update project settings",
+	"GET /api/v1/projects/{id}/members":                               "List project members",
+	"POST /api/v1/projects/{id}/members":                              "Add a project member",
+	"PATCH /api/v1/projects/{id}/members/{userId}":                    "Update a project member",
+	"DELETE /api/v1/projects/{id}/members/{userId}":                   "Remove a project member",
+	"GET /api/v1/projects/{id}/stream":                                "Stream project events",
+	"GET /api/v1/projects/{id}/ai/search":                             "Search with AI",
+	"POST /api/v1/projects/{id}/ai/ask":                               "Ask a question",
+	"GET /api/v1/projects/{id}/ai/insights":                           "Get AI insights",
+	"POST /api/v1/projects/{id}/pull-requests/{prId}/merge":           "Merge a pull request",
+	"POST /api/v1/projects/{id}/repositories/{repoId}/provision":      "Provision a repository",
+	"POST /api/v1/projects/{id}/test-runs/import":                     "Import test results",
+	"POST /api/v1/projects/{id}/repositories":                         "Create a repository",
+	"POST /api/v1/projects/{id}/branches":                             "Create a branch",
+	"POST /api/v1/projects/{id}/pull-requests":                        "Create a pull request",
+	"PUT /api/v1/projects/{id}/pull-requests/{prId}":                  "Update a pull request",
+	"POST /api/v1/projects/{id}/environments":                         "Create an environment",
+	"POST /api/v1/projects/{id}/links":                                "Create a link",
+	"DELETE /api/v1/projects/{id}/links/{linkId}":                     "Delete a link",
+	"POST /api/v1/projects/{id}/tickets":                              "Create a ticket",
+	"GET /api/v1/projects/{id}/work-items/{itemId}":                   "Get a work item detail",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/comments":         "Comment on a work item",
+	"PATCH /api/v1/projects/{id}/comments/{commentId}":                "Edit a comment",
+	"DELETE /api/v1/projects/{id}/comments/{commentId}":               "Delete a comment",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/watch":            "Watch a work item",
+	"DELETE /api/v1/projects/{id}/work-items/{itemId}/watch":          "Stop watching a work item",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/attachments":      "Upload a work item attachment",
+	"GET /api/v1/projects/{id}/attachments/{attachmentId}/download":   "Download an attachment",
+	"DELETE /api/v1/projects/{id}/attachments/{attachmentId}":         "Delete an attachment",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/links":            "Link a work item",
+	"DELETE /api/v1/projects/{id}/work-items/{itemId}/links/{linkId}": "Unlink a work item",
+	"POST /api/v1/projects/{id}/test-cases":                           "Create a test case",
+	"POST /api/v1/projects/{id}/test-runs":                            "Create a test run",
+	"POST /api/v1/webhooks/gitea":                                     "Receive a Gitea webhook",
+	"POST /api/v1/webhooks/argocd":                                    "Receive an Argo CD webhook",
+	"POST /api/v1/webhooks/git/{provider}":                            "Receive a Git provider webhook",
+	"POST /api/v1/webhooks/ci/{provider}":                             "Receive a CI provider webhook",
+	"POST /api/v1/webhooks/cd/{provider}":                             "Receive a CD provider webhook",
 }
 
 func summaryFor(method, path string) string {
