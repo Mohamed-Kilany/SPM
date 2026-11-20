@@ -13,6 +13,7 @@ import (
 	"spm-platform/api/internal/cdengine"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/gitengine"
+	"spm-platform/api/internal/metrics"
 )
 
 // DeliverySyncer reconciles the SPM delivery read model from the systems that
@@ -74,12 +75,19 @@ func (s *DeliverySyncer) reconcile(ctx context.Context) {
 }
 
 func (s *DeliverySyncer) reconcileActions(ctx context.Context) {
+	started := time.Now()
+	var firstErr error
+	defer func() {
+		metrics.Default().ObserveReconcile("gitea-actions", time.Since(started), firstErr)
+	}()
+
 	rows, err := s.db.Query(ctx, `
 		SELECT r.id, r.project_id, r.name, r.provider, r.default_branch, p.app_name, p.key_prefix
 		FROM git_repositories r JOIN projects p ON p.id=r.project_id
 		WHERE r.provider='gitea'
 		ORDER BY r.created_at`)
 	if err != nil {
+		firstErr = err
 		log.Printf("delivery sync: list gitea repositories: %v", err)
 		return
 	}
@@ -89,6 +97,9 @@ func (s *DeliverySyncer) reconcileActions(ctx context.Context) {
 		var repo workspaceRepo
 		if err := rows.Scan(&repo.RepositoryID, &repo.ProjectID, &repo.Name, &repo.Provider,
 			&repo.DefaultBranch, &repo.AppName, &repo.KeyPrefix); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			log.Printf("delivery sync: scan repository: %v", err)
 			continue
 		}
@@ -96,6 +107,9 @@ func (s *DeliverySyncer) reconcileActions(ctx context.Context) {
 		runs, err := s.git.ListWorkflowRuns(runCtx, repo.Name, 50)
 		cancel()
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			log.Printf("delivery sync: Gitea Actions for %s: %v", repo.Name, err)
 			continue
 		}
@@ -124,26 +138,40 @@ func (s *DeliverySyncer) reconcileActions(ctx context.Context) {
 				ExternalID: externalID, Number: number, LogsURL: run.URL,
 				Provider: "gitea-actions", Metadata: metadata,
 			}); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
 				log.Printf("delivery sync: build run %d for %s: %v", run.ID, repo.Name, err)
 			}
 		}
 	}
 	if err := rows.Err(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
 		log.Printf("delivery sync: repositories: %v", err)
 	}
 }
 
 func (s *DeliverySyncer) reconcileArgo(ctx context.Context) {
+	started := time.Now()
+	var firstErr error
+	defer func() {
+		metrics.Default().ObserveReconcile("argocd", time.Since(started), firstErr)
+	}()
+
 	argoCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	apps, err := s.argo.ListApplications(argoCtx)
 	cancel()
 	if err != nil {
+		firstErr = err
 		log.Printf("delivery sync: Argo CD applications: %v", err)
 		return
 	}
 
 	projectRows, err := s.db.Query(ctx, `SELECT id, app_name FROM projects WHERE COALESCE(app_name,'') <> ''`)
 	if err != nil {
+		firstErr = err
 		log.Printf("delivery sync: list projects: %v", err)
 		return
 	}
@@ -152,11 +180,15 @@ func (s *DeliverySyncer) reconcileArgo(ctx context.Context) {
 	for projectRows.Next() {
 		var id, appName string
 		if err := projectRows.Scan(&id, &appName); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		projects[appName] = id
 	}
 	if err := projectRows.Err(); err != nil {
+		firstErr = err
 		log.Printf("delivery sync: project rows: %v", err)
 		return
 	}
@@ -192,6 +224,9 @@ func (s *DeliverySyncer) reconcileArgo(ctx context.Context) {
 			Revision: revision, CommitSHA: commitSHAFromRevision(revision),
 			Details: details,
 		}); err != nil && !strings.Contains(err.Error(), "no environment configured") {
+			if firstErr == nil {
+				firstErr = err
+			}
 			log.Printf("delivery sync: Argo application %s: %v", app.Metadata.Name, err)
 		}
 	}

@@ -139,7 +139,10 @@ docker-compose.test.yml  Isolated test stack
 - Health: `/health/live`, `/health/ready`, `/health`; each probe reports the build `version`,
   `commit` and `built_at` injected from the release tag.
 - UI version: shown in the navigation footer from `VITE_APP_VERSION`.
-- Metrics: not yet exposed. Tracked as `OBS-01` in `TASKS.md`; there is no Prometheus endpoint today.
+- Metrics: `/metrics` is served by a separate internal listener (`METRICS_ADDR`, default
+  `0.0.0.0:9090` in Compose; the port is not published). Set `METRICS_TOKEN` to require a bearer
+  token. The metric catalog, cardinality rules and example queries are in
+  [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md). Tracing is tracked as `OBS-02`.
 
 ## Status
 

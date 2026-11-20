@@ -2239,8 +2239,8 @@ actions still work), permission-filtered.
   Go tests for injected and default health metadata; Vitest for version normalization; AI pytest;
   a scratch-tag release dry run is executed after merge and recorded in the activity log.
 - **Docs/telemetry:** `docs/RELEASING.md`, `CHANGELOG.md`, release workflow, build metadata in
-  `/health` and the UI. A Prometheus build-info metric is deferred to `OBS-01`, which introduces
-  the metrics endpoint; no metric is claimed today.
+  `/health` and the UI. The Prometheus build-info metric is delivered by `OBS-01` as
+  `spm_build_info`; this card does not duplicate it.
 
 #### BASE-09 · Retire the legacy project board
 - **Status:** TODO · **Priority:** P2 · **Estimate:** S · **Branch:** `change/retire-legacy-board`
@@ -3602,19 +3602,31 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 ### Phase 8 — Observability, operations and hardening
 
 #### OBS-01 · Prometheus metrics endpoint
-- **Status:** TODO · **Priority:** P0 · **Estimate:** M · **Branch:** `feature/observability-metrics`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** M · **Branch:** `feature/observability-metrics`
 - **Depends on:** BASE-04
 - **Scope:** Implement `/metrics` in Prometheus format with RED metrics for HTTP, dependency
   health/latency, Go runtime, DB pool, NATS lag, SSE connections, audit write failures, AI
   latency and build/deployment reconciliation. Protect it from public exposure.
 - **Acceptance criteria:**
-  - [ ] `/metrics` returns valid Prometheus text and is scraped successfully.
-  - [ ] Request metrics include route template, method, status and duration (no raw IDs).
-  - [ ] DB/NATS/Gitea/Argo/AI dependency metrics exist.
-  - [ ] The endpoint is internal-only (network policy/port) or authenticated.
-  - [ ] README/ARCHITECTURE claims match reality.
-- **Tests/evidence:** Prometheus scrape test, metric cardinality review, dashboard query.
-- **Docs/telemetry:** `docs/OBSERVABILITY.md`, metric naming conventions.
+  - [x] `/metrics` returns valid Prometheus text and is scraped successfully. The endpoint is
+    served by a separate internal listener (`METRICS_ADDR`); Compose enables it on port 9090
+    without publishing the port, and `METRICS_TOKEN` optionally requires a bearer token.
+  - [x] Request metrics include route template, method, status and duration; raw identifiers are
+    never used as labels and unmatched paths collapse to `unmatched`.
+  - [x] DB, NATS, Gitea, Argo CD and AI dependency metrics exist. NATS exposes connectivity,
+    subscriptions and message/byte counters; consumer lag is not exposed because the API uses
+    core NATS subjects with no durable consumer backlog to measure.
+  - [x] The endpoint is internal-only (separate, unpublished port) and can additionally require
+    a bearer token. It is absent from the public router and `docs/openapi.yaml`.
+  - [x] README and `docs/ARCHITECTURE.md` now describe the endpoint, its exposure and the metric
+    contract instead of claiming metrics do not exist.
+- **Tests/evidence:** `api/internal/metrics` tests cover the scrape output, build info, token
+  auth, route-template labels, unmatched routes, SSE gauge, AI/dependency/reconciliation
+  counters and nil-registry safety; `api/internal/sse` tests the connection gauge. The metric
+  catalog and cardinality review are in `docs/OBSERVABILITY.md`.
+- **Docs/telemetry:** `docs/OBSERVABILITY.md`, `/metrics` collectors and the `spm_build_info`
+  gauge. Audit write-failure metrics are deferred to `GOV-04`, which introduces the audit
+  subsystem; exporting a counter that nothing increments would be a false claim.
 
 #### OBS-02 · OpenTelemetry tracing
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/observability-tracing`
@@ -4830,6 +4842,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
 | `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
 | `CHANGELOG.md` | Generated release history | Maintainer | Active (`BASE-08`) |
+| `docs/OBSERVABILITY.md` | Metric catalog, naming, cardinality and exposure policy | Maintainer | Active (`OBS-01`) |
 
 ### 13.2 Standards and specifications
 
@@ -5031,9 +5044,9 @@ labels must exist in the repository.
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
-| 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
+| 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **8** | **0** | **120** |
+| **Total** | - | **128** | **9** | **0** | **119** |
 
 ### C.2 Card index by phase
 
@@ -5084,6 +5097,7 @@ labels must exist in the repository.
 | 2026-11-19 | Closed BASE-07: added `CONTRIBUTING.md`, `SUPPORT.md`, `CODE_OF_CONDUCT.md`, bug and feature issue forms, and a private-advisory issue contact link; disabled blank issues and cross-linked the policy set from `SECURITY.md`. The public security template was replaced by private reporting so no issue form can solicit exploit details | Maintainer |
 | 2026-11-19 | Verified BASE-07 after merge: all three files are present in `.github/ISSUE_TEMPLATE` on `master`; private vulnerability reporting remains enabled and the forms reference existing labels | Maintainer |
 | 2026-11-19 | Closed BASE-08: added `docs/RELEASING.md` with the environment, promotion, migration and rollback model; embedded tag-derived version metadata in the API health probes, UI footer and AI service; added `scripts/changelog.ps1`, `scripts/release.ps1`, `CHANGELOG.md` and the tag-triggered `release.yml` that verifies master ancestry, re-runs supply-chain checks and publishes SBOM/SARIF evidence | Maintainer |
+| 2026-11-20 | Verified the BASE-08 release dry run: pushed the scratch tag `v0.0.0-rc.1` from `master`; `release.yml` verify, images and publish jobs all succeeded; GitHub created a prerelease with generated changelog notes and six assets (`sbom-api/ui/ai.spdx.json`, `trivy-api/ui/ai.sarif`); the release and both local and remote tags were then deleted, leaving no published release | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

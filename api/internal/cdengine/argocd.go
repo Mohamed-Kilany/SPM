@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"spm-platform/api/internal/metrics"
 )
 
 // ArgoApplication is the subset of an Argo CD Application that SPM reconciles
@@ -73,7 +75,8 @@ func NewArgoClient() *ArgoClient {
 		baseURL: strings.TrimRight(envOr("ARGOCD_BASE_URL", "http://k3s:30080"), "/"),
 		token:   os.Getenv("ARGOCD_TOKEN"),
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: metrics.InstrumentTransport("argocd", nil),
 		},
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"spm-platform/api/internal/metrics"
 )
 
 // Client is an HTTP client for the SPM AI service.
@@ -134,7 +136,12 @@ func (c *Client) Insights(ctx context.Context, documents []Document, limit int) 
 	return response, err
 }
 
-func (c *Client) post(ctx context.Context, path string, payload interface{}, out interface{}) error {
+func (c *Client) post(ctx context.Context, path string, payload interface{}, out interface{}) (err error) {
+	started := time.Now()
+	defer func() {
+		metrics.Default().ObserveAI(path, time.Since(started), err)
+	}()
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode AI request: %w", err)

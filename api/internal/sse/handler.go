@@ -84,6 +84,18 @@ func (m *Manager) Close() {
 	}
 }
 
+// ActiveConnections returns the number of live SSE subscribers across every
+// project. It is used by the metrics endpoint and is safe for concurrent use.
+func (m *Manager) ActiveConnections() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	total := 0
+	for _, subs := range m.subs {
+		total += len(subs)
+	}
+	return total
+}
+
 func (m *Manager) handleUpdate(data []byte) {
 	var update events.Update
 	if err := json.Unmarshal(data, &update); err != nil {
