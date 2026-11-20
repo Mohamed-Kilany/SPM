@@ -103,7 +103,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	// PRDs
 	prdRows, err := s.db.Query(ctx, `
 		SELECT id, project_id, title, version, status, COALESCE(summary, ''), COALESCE(content, ''),
-		       COALESCE(owner_id::text, ''), COALESCE(approved_by::text, ''), approved_at, created_at, updated_at
+		       COALESCE(owner_id::text, ''), COALESCE(approved_by::text, ''), approved_at, created_at, updated_at, revision
 		FROM prds WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 		var p PRD
 		var owner, approved string
 		if err := prdRows.Scan(&p.ID, &p.ProjectID, &p.Title, &p.Version, &p.Status, &p.Summary,
-			&p.Content, &owner, &approved, &p.ApprovedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.Content, &owner, &approved, &p.ApprovedAt, &p.CreatedAt, &p.UpdatedAt, &p.Revision); err != nil {
 			return err
 		}
 		p.OwnerID = parseUUIDPtr(owner)
@@ -127,7 +127,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 
 	// Releases
 	relRows, err := s.db.Query(ctx, `
-		SELECT id, project_id, name, version, status, planned_at, released_at, COALESCE(notes, ''), created_at, updated_at
+		SELECT id, project_id, name, version, status, planned_at, released_at, COALESCE(notes, ''), created_at, updated_at, revision
 		FROM releases WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	for relRows.Next() {
 		var r Release
 		if err := relRows.Scan(&r.ID, &r.ProjectID, &r.Name, &r.Version, &r.Status, &r.PlannedAt,
-			&r.ReleasedAt, &r.Notes, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.ReleasedAt, &r.Notes, &r.CreatedAt, &r.UpdatedAt, &r.Revision); err != nil {
 			return err
 		}
 		w.Releases = append(w.Releases, r)
@@ -148,7 +148,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 
 	// Sprints
 	sprintRows, err := s.db.Query(ctx, `
-		SELECT id, project_id, name, COALESCE(goal, ''), status, start_date, end_date, capacity, created_at, updated_at
+		SELECT id, project_id, name, COALESCE(goal, ''), status, start_date, end_date, capacity, created_at, updated_at, revision
 		FROM sprints WHERE project_id = $1 ORDER BY start_date DESC NULLS LAST, created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -158,7 +158,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	for sprintRows.Next() {
 		var sp Sprint
 		if err := sprintRows.Scan(&sp.ID, &sp.ProjectID, &sp.Name, &sp.Goal, &sp.Status, &sp.StartDate,
-			&sp.EndDate, &sp.Capacity, &sp.CreatedAt, &sp.UpdatedAt); err != nil {
+			&sp.EndDate, &sp.Capacity, &sp.CreatedAt, &sp.UpdatedAt, &sp.Revision); err != nil {
 			return err
 		}
 		w.Sprints = append(w.Sprints, sp)
@@ -170,7 +170,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	// Epics
 	epicRows, err := s.db.Query(ctx, `
 		SELECT id, project_id, COALESCE(prd_id::text, ''), title, COALESCE(description, ''), status, priority,
-		       COALESCE(owner_id::text, ''), COALESCE(target_release_id::text, ''), start_date, due_date, created_at, updated_at
+		       COALESCE(owner_id::text, ''), COALESCE(target_release_id::text, ''), start_date, due_date, created_at, updated_at, revision
 		FROM epics WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -181,7 +181,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 		var e Epic
 		var prd, owner, release string
 		if err := epicRows.Scan(&e.ID, &e.ProjectID, &prd, &e.Title, &e.Description, &e.Status, &e.Priority,
-			&owner, &release, &e.StartDate, &e.DueDate, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			&owner, &release, &e.StartDate, &e.DueDate, &e.CreatedAt, &e.UpdatedAt, &e.Revision); err != nil {
 			return err
 		}
 		e.PRDID = parseUUIDPtr(prd)
@@ -197,7 +197,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	featureRows, err := s.db.Query(ctx, `
 		SELECT id, project_id, epic_id, title, COALESCE(description, ''), COALESCE(acceptance_criteria, ''),
 		       status, priority, COALESCE(owner_id::text, ''), estimate_points,
-		       COALESCE(target_release_id::text, ''), created_at, updated_at
+		       COALESCE(target_release_id::text, ''), created_at, updated_at, revision
 		FROM features WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -209,7 +209,7 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 		var owner, release string
 		if err := featureRows.Scan(&f.ID, &f.ProjectID, &f.EpicID, &f.Title, &f.Description,
 			&f.AcceptanceCriteria, &f.Status, &f.Priority, &owner, &f.EstimatePoints, &release,
-			&f.CreatedAt, &f.UpdatedAt); err != nil {
+			&f.CreatedAt, &f.UpdatedAt, &f.Revision); err != nil {
 			return err
 		}
 		f.OwnerID = parseUUIDPtr(owner)
@@ -226,7 +226,7 @@ func (s *Store) loadWorkItems(ctx context.Context, projectID uuid.UUID, w *Works
 		       severity, COALESCE(assignee_id::text, ''), COALESCE(reporter_id::text, ''), estimate_points,
 		       COALESCE(sprint_id::text, ''), COALESCE(release_id::text, ''), COALESCE(environment_id::text, ''),
 		       due_date, COALESCE(reproduction_steps, ''), COALESCE(expected_result, ''), COALESCE(actual_result, ''),
-		       created_at, updated_at, closed_at
+		       created_at, updated_at, closed_at, revision
 		FROM work_items WHERE project_id = $1 ORDER BY item_number DESC`
 	rows, err := s.db.Query(ctx, q, projectID)
 	if err != nil {
@@ -241,7 +241,7 @@ func (s *Store) loadWorkItems(ctx context.Context, projectID uuid.UUID, w *Works
 			&it.Title, &it.Description, &it.AcceptanceCriteria, &it.Status, &it.Priority, &it.Severity,
 			&assignee, &reporter, &it.EstimatePoints, &sprint, &release, &env, &it.DueDate,
 			&it.ReproductionSteps, &it.ExpectedResult, &it.ActualResult, &it.CreatedAt, &it.UpdatedAt,
-			&it.ClosedAt); err != nil {
+			&it.ClosedAt, &it.Revision); err != nil {
 			return err
 		}
 		it.FeatureID = parseUUIDPtr(feature)
@@ -262,7 +262,7 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 	caseRows, err := s.db.Query(ctx, `
 		SELECT id, project_id, COALESCE(feature_id::text, ''), title, COALESCE(description, ''),
 		       COALESCE(preconditions, ''), type, priority, status, COALESCE(automation_ref, ''),
-		       COALESCE(owner_id::text, ''), tags, created_at, updated_at
+		       COALESCE(owner_id::text, ''), tags, created_at, updated_at, revision
 		FROM test_cases WHERE project_id = $1 ORDER BY updated_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -275,7 +275,7 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 		var feature, owner string
 		if err := caseRows.Scan(&tc.ID, &tc.ProjectID, &feature, &tc.Title, &tc.Description,
 			&tc.Preconditions, &tc.Type, &tc.Priority, &tc.Status, &tc.AutomationRef, &owner,
-			&tc.Tags, &tc.CreatedAt, &tc.UpdatedAt); err != nil {
+			&tc.Tags, &tc.CreatedAt, &tc.UpdatedAt, &tc.Revision); err != nil {
 			return err
 		}
 		tc.FeatureID = parseUUIDPtr(feature)
@@ -319,7 +319,7 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 		SELECT id, project_id, COALESCE(release_id::text, ''), COALESCE(sprint_id::text, ''),
 		       COALESCE(environment_id::text, ''), COALESCE(build_id::text, ''), name, status,
 		       COALESCE(executed_by::text, ''), started_at, completed_at, COALESCE(import_source, ''),
-		       COALESCE(import_ref, ''), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
+		       COALESCE(import_ref, ''), COALESCE(metadata, '{}'::jsonb), created_at, updated_at, revision
 		FROM test_runs WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -333,7 +333,7 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 		var metadata []byte
 		if err := runRows.Scan(&tr.ID, &tr.ProjectID, &release, &sprint, &env, &build, &tr.Name,
 			&tr.Status, &executed, &tr.StartedAt, &tr.CompletedAt, &tr.ImportSource, &tr.ImportRef,
-			&metadata, &tr.CreatedAt, &tr.UpdatedAt); err != nil {
+			&metadata, &tr.CreatedAt, &tr.UpdatedAt, &tr.Revision); err != nil {
 			return err
 		}
 		tr.ReleaseID = parseUUIDPtr(release)

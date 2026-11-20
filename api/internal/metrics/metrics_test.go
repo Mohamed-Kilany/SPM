@@ -216,6 +216,27 @@ func TestAuthzInvalidationCounter(t *testing.T) {
 	}
 }
 
+func TestPlanningConflictCounter(t *testing.T) {
+	registry := newTestRegistry()
+	registry.ObservePlanningConflict("prd")
+	registry.ObservePlanningConflict("prd")
+	registry.ObservePlanningConflict("work item")
+
+	conflicts := family(t, registry, "spm_planning_conflicts_total")
+	if len(conflicts.GetMetric()) != 2 {
+		t.Fatalf("conflict series = %d, want 2", len(conflicts.GetMetric()))
+	}
+	var prdTotal float64
+	for _, metric := range conflicts.GetMetric() {
+		if labelValue(metric, "resource") == "prd" {
+			prdTotal = metric.GetCounter().GetValue()
+		}
+	}
+	if prdTotal != 2 {
+		t.Fatalf("prd conflicts = %v, want 2", prdTotal)
+	}
+}
+
 func TestAuditMetrics(t *testing.T) {
 	registry := newTestRegistry()
 	registry.ObserveAuditWrite(10*time.Millisecond, nil)

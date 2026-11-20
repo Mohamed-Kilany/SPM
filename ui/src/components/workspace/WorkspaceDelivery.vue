@@ -8,7 +8,7 @@ import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
-import { api } from '../../api/client'
+import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { dateInputValue } from '../../lib/workspace'
 import { formatDateTime, shortId, timeAgo } from '../../lib/format'
 import type { Build, Deployment, GitRepository, ProjectSettings, PullRequest, Release } from '../../types/workspace'
@@ -515,7 +515,12 @@ async function saveRelease(): Promise<void> {
       notes: releaseForm.notes,
     }
     if (releaseEditingId.value) {
-      await api.updateRelease(store.projectId, releaseEditingId.value, payload)
+      const current = store.releases.find((release) => release.id === releaseEditingId.value)
+      if (!current) {
+        releaseError.value = 'This release no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updateRelease(store.projectId, releaseEditingId.value, payload, current.revision)
       toast.success('Release updated.', 'Release')
     } else {
       await api.createRelease(store.projectId, payload)
@@ -524,6 +529,11 @@ async function saveRelease(): Promise<void> {
     releaseModal.value = false
     await store.refresh()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      releaseError.value = revisionConflictMessage('release')
+      return
+    }
     releaseError.value = error instanceof Error ? error.message : 'Failed to save release'
   } finally {
     releaseBusy.value = false

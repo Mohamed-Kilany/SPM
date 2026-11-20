@@ -10,7 +10,7 @@ import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
-import { api } from '../../api/client'
+import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { dateInputValue, statusLabel } from '../../lib/workspace'
 import { formatDateTime, timeAgo } from '../../lib/format'
 import type { Epic, Feature, PRD } from '../../types/workspace'
@@ -197,7 +197,12 @@ async function savePrd(): Promise<void> {
       owner_id: prdForm.owner_id || null,
     }
     if (prdEditingId.value) {
-      await api.updatePRD(store.projectId, prdEditingId.value, payload)
+      const current = store.prdById(prdEditingId.value)
+      if (!current) {
+        formError.value = 'This PRD no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updatePRD(store.projectId, prdEditingId.value, payload, current.revision)
       toast.success('PRD updated.', 'Planning')
     } else {
       const result = await api.createPRD(store.projectId, payload)
@@ -207,6 +212,11 @@ async function savePrd(): Promise<void> {
     prdModal.value = false
     await store.refresh()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      formError.value = revisionConflictMessage('PRD')
+      return
+    }
     formError.value = error instanceof Error ? error.message : 'Failed to save PRD'
   } finally {
     busy.value = false
@@ -287,7 +297,12 @@ async function saveEpic(): Promise<void> {
       due_date: epicForm.due_date || null,
     }
     if (epicEditingId.value) {
-      await api.updateEpic(store.projectId, epicEditingId.value, payload)
+      const current = store.epicById(epicEditingId.value)
+      if (!current) {
+        formError.value = 'This epic no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updateEpic(store.projectId, epicEditingId.value, payload, current.revision)
       toast.success('Epic updated.', 'Planning')
     } else {
       await api.createEpic(store.projectId, payload)
@@ -296,6 +311,11 @@ async function saveEpic(): Promise<void> {
     epicModal.value = false
     await store.refresh()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      formError.value = revisionConflictMessage('epic')
+      return
+    }
     formError.value = error instanceof Error ? error.message : 'Failed to save epic'
   } finally {
     busy.value = false
@@ -381,7 +401,12 @@ async function saveFeature(): Promise<void> {
       target_release_id: featureForm.target_release_id || null,
     }
     if (featureEditingId.value) {
-      await api.updateFeature(store.projectId, featureEditingId.value, payload)
+      const current = store.featureById(featureEditingId.value)
+      if (!current) {
+        formError.value = 'This feature no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updateFeature(store.projectId, featureEditingId.value, payload, current.revision)
       toast.success('Feature updated.', 'Planning')
     } else {
       await api.createFeature(store.projectId, payload)
@@ -390,6 +415,11 @@ async function saveFeature(): Promise<void> {
     featureModal.value = false
     await store.refresh()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      formError.value = revisionConflictMessage('feature')
+      return
+    }
     formError.value = error instanceof Error ? error.message : 'Failed to save feature'
   } finally {
     busy.value = false
@@ -413,17 +443,35 @@ function askDelete(type: DeleteTarget['type'], id: string, title: string): void 
 async function confirmDelete(): Promise<void> {
   const target = deleteTarget.value
   if (!target) return
+  const revision =
+    target.type === 'prd'
+      ? store.prdById(target.id)?.revision
+      : target.type === 'epic'
+        ? store.epicById(target.id)?.revision
+        : store.featureById(target.id)?.revision
+  if (!revision) {
+    toast.warning('This item no longer exists. The workspace was refreshed.', 'Planning')
+    deleteOpen.value = false
+    deleteTarget.value = null
+    await store.refresh()
+    return
+  }
   busy.value = true
   try {
-    if (target.type === 'prd') await api.deletePRD(store.projectId, target.id)
-    if (target.type === 'epic') await api.deleteEpic(store.projectId, target.id)
-    if (target.type === 'feature') await api.deleteFeature(store.projectId, target.id)
+    if (target.type === 'prd') await api.deletePRD(store.projectId, target.id, revision)
+    if (target.type === 'epic') await api.deleteEpic(store.projectId, target.id, revision)
+    if (target.type === 'feature') await api.deleteFeature(store.projectId, target.id, revision)
     toast.success(`${target.title} deleted.`, 'Planning')
     deleteOpen.value = false
     deleteTarget.value = null
     if (selectedPrdId.value === target.id) selectedPrdId.value = 'all'
     await store.refresh()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.warning(revisionConflictMessage(target.type), 'Planning')
+      return
+    }
     toast.error(error instanceof Error ? error.message : 'Delete failed', 'Planning')
   } finally {
     busy.value = false

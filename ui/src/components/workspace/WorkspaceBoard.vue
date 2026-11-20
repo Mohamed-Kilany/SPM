@@ -10,7 +10,7 @@ import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
-import { api } from '../../api/client'
+import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import {
   allowedTransitions,
   boardColumns,
@@ -199,10 +199,15 @@ async function onDrop(columnKey: string): Promise<void> {
   }
   movingId.value = id
   try {
-    await api.changeWorkItemStatus(store.projectId, id, target)
+    await api.changeWorkItemStatus(store.projectId, id, target, item.revision)
     await store.refresh()
     toast.success(`${item.key} moved to ${statusLabel(target)}.`, 'Board updated')
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.warning(revisionConflictMessage('work item'), 'Board')
+      return
+    }
     toast.error(error instanceof Error ? error.message : 'Could not move work item', 'Board')
   } finally {
     movingId.value = null
@@ -417,7 +422,12 @@ async function saveItem(): Promise<void> {
       actual_result: itemForm.actual_result,
     }
     if (itemEditingId.value) {
-      await api.updateWorkItem(store.projectId, itemEditingId.value, payload)
+      const current = store.workItemById(itemEditingId.value)
+      if (!current) {
+        itemError.value = 'This work item no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updateWorkItem(store.projectId, itemEditingId.value, payload, current.revision)
       toast.success('Work item updated.', 'Board')
     } else {
       const result = await api.createWorkItem(store.projectId, payload)
@@ -427,6 +437,11 @@ async function saveItem(): Promise<void> {
     await store.refresh()
     itemModal.value = false
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      itemError.value = revisionConflictMessage('work item')
+      return
+    }
     itemError.value = error instanceof Error ? error.message : 'Failed to save work item'
   } finally {
     itemBusy.value = false
@@ -438,11 +453,16 @@ async function transition(status: string): Promise<void> {
   if (!item || itemBusy.value) return
   itemBusy.value = true
   try {
-    await api.changeWorkItemStatus(store.projectId, item.id, status)
+    await api.changeWorkItemStatus(store.projectId, item.id, status, item.revision)
     itemForm.status = status
     await store.refresh()
     toast.success(`${item.key} is now ${statusLabel(status)}.`, 'Workflow')
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.warning(revisionConflictMessage('work item'), 'Workflow')
+      return
+    }
     toast.error(error instanceof Error ? error.message : 'Status transition failed', 'Workflow')
   } finally {
     itemBusy.value = false
@@ -483,12 +503,17 @@ async function deleteItem(): Promise<void> {
   if (!item) return
   itemBusy.value = true
   try {
-    await api.deleteWorkItem(store.projectId, item.id)
+    await api.deleteWorkItem(store.projectId, item.id, item.revision)
     await store.refresh()
     deleteOpen.value = false
     itemModal.value = false
     toast.success(`${item.key} deleted.`, 'Board')
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.warning(revisionConflictMessage('work item'), 'Board')
+      return
+    }
     toast.error(error instanceof Error ? error.message : 'Could not delete work item', 'Board')
   } finally {
     itemBusy.value = false

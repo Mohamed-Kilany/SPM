@@ -10,7 +10,7 @@ import BurnChart from '../charts/BurnChart.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
-import { api } from '../../api/client'
+import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { dateInputValue, statusLabel } from '../../lib/workspace'
 import { formatDateTime } from '../../lib/format'
 import type { ProjectReport, ReleaseReadiness, Sprint, WorkItem } from '../../types/workspace'
@@ -118,7 +118,12 @@ async function saveSprint(): Promise<void> {
       capacity: sprintForm.capacity ? Number(sprintForm.capacity) : null,
     }
     if (sprintEditingId.value) {
-      await api.updateSprint(store.projectId, sprintEditingId.value, payload)
+      const current = store.sprints.find((sprint) => sprint.id === sprintEditingId.value)
+      if (!current) {
+        sprintError.value = 'This sprint no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updateSprint(store.projectId, sprintEditingId.value, payload, current.revision)
       toast.success('Sprint updated.', 'Sprint')
     } else {
       await api.createSprint(store.projectId, payload)
@@ -128,6 +133,11 @@ async function saveSprint(): Promise<void> {
     await store.refresh()
     await loadReport()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      sprintError.value = revisionConflictMessage('sprint')
+      return
+    }
     sprintError.value = error instanceof Error ? error.message : 'Failed to save sprint'
   } finally {
     sprintBusy.value = false

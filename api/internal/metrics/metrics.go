@@ -47,6 +47,7 @@ type Registry struct {
 	reconcileLastSuccess *prometheus.GaugeVec
 
 	authzInvalidations *prometheus.CounterVec
+	planningConflicts  *prometheus.CounterVec
 
 	auditWrites            *prometheus.CounterVec
 	auditWriteDuration     prometheus.Histogram
@@ -124,6 +125,10 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_authz_invalidations_total",
 			Help: "Authorization invalidations published by scope and reason.",
 		}, []string{"scope", "reason"}),
+		planningConflicts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "spm_planning_conflicts_total",
+			Help: "Rejected optimistic-concurrency writes by planning resource.",
+		}, []string{"resource"}),
 		auditWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "spm_audit_writes_total",
 			Help: "Audit log writes by outcome.",
@@ -177,6 +182,7 @@ func New(info BuildInfo) *Registry {
 		metrics.reconcileDuration,
 		metrics.reconcileLastSuccess,
 		metrics.authzInvalidations,
+		metrics.planningConflicts,
 		metrics.auditWrites,
 		metrics.auditWriteDuration,
 		metrics.auditChainValid,
@@ -265,6 +271,15 @@ func (r *Registry) ObserveAuthzInvalidation(scope, reason string) {
 		return
 	}
 	r.authzInvalidations.WithLabelValues(scope, reason).Inc()
+}
+
+// ObservePlanningConflict records a rejected stale write. The resource label
+// is a bounded enumeration supplied by the handler, never user input.
+func (r *Registry) ObservePlanningConflict(resource string) {
+	if r == nil {
+		return
+	}
+	r.planningConflicts.WithLabelValues(resource).Inc()
 }
 
 // ObserveAuditWrite records one audit persistence attempt.

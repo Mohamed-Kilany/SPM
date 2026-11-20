@@ -66,6 +66,43 @@ or a document that fails OpenAPI validation, fails the gate.
 - Webhooks: Gitea and Argo CD authenticate with their configured signature or token; generic
   delivery webhooks use the repository webhook token.
 
+## Optimistic concurrency
+
+Planning artifacts are revisioned: PRDs, epics, features, work items, test cases,
+test runs, sprints and releases. `revision` is an internal integer that the
+database increments on every update; it is not the human-facing `version`
+string on a PRD or release. The model is described in
+[`DATA-MODEL.md`](DATA-MODEL.md).
+
+A mutating request must send the revision it read:
+
+- `If-Match: "7"` (also accepts `7`, `W/"7"` and `*`), or
+- `?expected_version=7`, or
+- `expected_version: 7` in the JSON body.
+
+Precedence is header, then query, then body. `If-Match: *` requires the row to
+exist but accepts any revision.
+
+| Result | Status | Error code |
+|---|---|---|
+| No token supplied | `428` | `REVISION_REQUIRED` |
+| Token is stale (someone else wrote first) | `409` | `REVISION_CONFLICT` |
+| Token is malformed or not a positive integer | `400` | `INVALID_REVISION` |
+
+A `409` body carries `current_version` with the revision to retry from, and the
+response `ETag` is that revision. Successful create and update responses return
+`{"id": "...", "revision": N}` with the new `ETag`; a revisioned delete returns
+`200 {"id": "...", "revision": N, "deleted": true}`. Rejected stale writes
+increment `spm_planning_conflicts_total{resource}`.
+
+Test runs are the one exception: they are revisioned and return the token on
+create, but have no update endpoint. Their status refresh bumps the revision
+internally, and test result/step patches do not require a token.
+
+The UI sends `If-Match` from the freshest workspace snapshot. On `409` it
+refreshes the project, keeps the edit dialog open and asks the user to review
+and retry; it never silently overwrites.
+
 ## Not yet covered
 
 - `schemathesis` or another property-based smoke run against an ephemeral stack is not part of the

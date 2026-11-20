@@ -24,17 +24,18 @@ type testStepInput struct {
 }
 
 type testCaseRequest struct {
-	FeatureID     *uuid.UUID      `json:"feature_id"`
-	Title         string          `json:"title"`
-	Description   string          `json:"description"`
-	Preconditions string          `json:"preconditions"`
-	Type          string          `json:"type"`
-	Priority      string          `json:"priority"`
-	Status        string          `json:"status"`
-	AutomationRef string          `json:"automation_ref"`
-	OwnerID       *uuid.UUID      `json:"owner_id"`
-	Tags          []string        `json:"tags"`
-	Steps         []testStepInput `json:"steps"`
+	FeatureID       *uuid.UUID      `json:"feature_id"`
+	Title           string          `json:"title"`
+	Description     string          `json:"description"`
+	Preconditions   string          `json:"preconditions"`
+	Type            string          `json:"type"`
+	Priority        string          `json:"priority"`
+	Status          string          `json:"status"`
+	AutomationRef   string          `json:"automation_ref"`
+	OwnerID         *uuid.UUID      `json:"owner_id"`
+	Tags            []string        `json:"tags"`
+	Steps           []testStepInput `json:"steps"`
+	ExpectedVersion *int64          `json:"expected_version"`
 }
 
 func (h *Handler) CreateTestCase(c *gin.Context) {
@@ -92,11 +93,12 @@ func (h *Handler) CreateTestCase(c *gin.Context) {
 	defer tx.Rollback(c.Request.Context())
 
 	var id uuid.UUID
+	var revision int64
 	err = tx.QueryRow(c.Request.Context(), `
 		INSERT INTO test_cases (project_id, feature_id, title, description, preconditions, type, priority, status, automation_ref, owner_id, tags)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, revision`,
 		projectID, req.FeatureID, req.Title, req.Description, req.Preconditions, req.Type,
-		req.Priority, req.Status, req.AutomationRef, req.OwnerID, req.Tags).Scan(&id)
+		req.Priority, req.Status, req.AutomationRef, req.OwnerID, req.Tags).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create test case")
 		return
@@ -115,7 +117,8 @@ func (h *Handler) CreateTestCase(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "test_case", &id, "created", "Created test case "+req.Title, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "revision": revision})
 }
 
 func (h *Handler) UpdateTestCase(c *gin.Context) {
@@ -150,6 +153,11 @@ func (h *Handler) UpdateTestCase(c *gin.Context) {
 		return
 	}
 
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+
 	tx, err := h.store.DB().Begin(c.Request.Context())
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start transaction")
@@ -157,14 +165,21 @@ func (h *Handler) UpdateTestCase(c *gin.Context) {
 	}
 	defer tx.Rollback(c.Request.Context())
 
-	tag, err := tx.Exec(c.Request.Context(), `
+	var revision int64
+	err = tx.QueryRow(c.Request.Context(), `
 		UPDATE test_cases SET feature_id=$3, title=$4, description=$5, preconditions=$6, type=$7,
 		priority=$8, status=$9, automation_ref=$10, owner_id=$11, tags=$12, updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`,
+		WHERE id=$1 AND project_id=$2`+revisionClause(13)+`
+		RETURNING revision`,
 		caseID, projectID, req.FeatureID, req.Title, req.Description, req.Preconditions, req.Type,
-		req.Priority, req.Status, req.AutomationRef, req.OwnerID, req.Tags)
-	if err != nil || tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Test case not found")
+		req.Priority, req.Status, req.AutomationRef, req.OwnerID, req.Tags,
+		revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "test case", "test_cases", caseID, projectID)
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update test case")
 		return
 	}
 	if _, err := tx.Exec(c.Request.Context(), `DELETE FROM test_steps WHERE test_case_id=$1`, caseID); err != nil {
@@ -185,7 +200,8 @@ func (h *Handler) UpdateTestCase(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "test_case", &caseID, "updated", "Updated test case "+req.Title, nil)
-	c.JSON(http.StatusOK, gin.H{"id": caseID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": caseID, "revision": revision})
 }
 
 func (h *Handler) DeleteTestCase(c *gin.Context) {
@@ -197,13 +213,24 @@ func (h *Handler) DeleteTestCase(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `DELETE FROM test_cases WHERE id=$1 AND project_id=$2`, caseID, projectID)
-	if err != nil || tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Test case not found")
+	expected, ok := revisionFromRequest(c, nil)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(),
+		`DELETE FROM test_cases WHERE id=$1 AND project_id=$2`+revisionClause(3)+` RETURNING revision`,
+		caseID, projectID, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "test case", "test_cases", caseID, projectID)
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete test case")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "test_case", &caseID, "deleted", "Deleted test case", nil)
-	c.JSON(http.StatusOK, gin.H{"id": caseID})
+	c.JSON(http.StatusOK, gin.H{"id": caseID, "revision": revision, "deleted": true})
 }
 
 // ---------------------------------------------------------------------------
@@ -276,10 +303,11 @@ func (h *Handler) CreateTestRun(c *gin.Context) {
 	defer tx.Rollback(c.Request.Context())
 
 	var runID uuid.UUID
+	var revision int64
 	err = tx.QueryRow(c.Request.Context(), `
 		INSERT INTO test_runs (project_id, release_id, sprint_id, environment_id, build_id, name, status, executed_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		projectID, req.ReleaseID, req.SprintID, req.EnvironmentID, req.BuildID, req.Name, req.Status, req.ExecutedBy).Scan(&runID)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, revision`,
+		projectID, req.ReleaseID, req.SprintID, req.EnvironmentID, req.BuildID, req.Name, req.Status, req.ExecutedBy).Scan(&runID, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create test run")
 		return
@@ -311,7 +339,8 @@ func (h *Handler) CreateTestRun(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "test_run", &runID, "created", "Created test run "+req.Name, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": runID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": runID, "revision": revision})
 }
 
 type testResultPatch struct {

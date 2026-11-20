@@ -67,6 +67,7 @@ export interface PRD {
   approved_at: string | null
   created_at: string
   updated_at: string
+  revision: number
 }
 
 export interface Epic {
@@ -83,6 +84,7 @@ export interface Epic {
   due_date: string | null
   created_at: string
   updated_at: string
+  revision: number
 }
 
 export interface Feature {
@@ -99,6 +101,7 @@ export interface Feature {
   target_release_id: string | null
   created_at: string
   updated_at: string
+  revision: number
 }
 
 export interface WorkItem {
@@ -128,6 +131,7 @@ export interface WorkItem {
   created_at: string
   updated_at: string
   closed_at: string | null
+  revision: number
 }
 
 export interface Sprint {
@@ -141,6 +145,7 @@ export interface Sprint {
   capacity: number | null
   created_at: string
   updated_at: string
+  revision: number
 }
 
 export interface Release {
@@ -154,6 +159,7 @@ export interface Release {
   notes: string
   created_at: string
   updated_at: string
+  revision: number
 }
 
 export interface Environment {
@@ -197,6 +203,7 @@ export interface TestCase {
   created_at: string
   updated_at: string
   steps: TestStep[]
+  revision: number
 }
 
 export interface TestStepResult {
@@ -245,6 +252,7 @@ export interface TestRun {
   created_at: string
   updated_at: string
   results: TestResult[]
+  revision: number
 }
 
 export interface GitRepository {

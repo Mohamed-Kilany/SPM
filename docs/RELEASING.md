@@ -126,9 +126,11 @@ transaction. They are forward-only: there is no down migration.
 
 Every schema change follows expand/contract across two releases:
 
-1. **Expand** (`vN`): add nullable columns, new tables or new indexes concurrently. The new code
+1. **Expand** (`vN`): add nullable columns, new tables or new indexes. The new code
    writes both old and new shapes when needed. The previous application version (`vN-1`) remains
-   compatible with the schema.
+   compatible with the schema. The migration runner applies each file inside a transaction, so
+   non-transactional DDL such as `CREATE INDEX CONCURRENTLY` is not available; see
+   [`MIGRATION-GUIDE.md`](MIGRATION-GUIDE.md).
 2. **Migrate**: backfill data in bounded batches, with progress logging and an idempotent query.
 3. **Switch**: the new code reads the new shape. Keep the old shape writable until `vN+1`.
 4. **Contract** (`vN+1` or later): drop the old column, table or index only after `vN` has been
