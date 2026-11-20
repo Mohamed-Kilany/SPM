@@ -188,3 +188,19 @@ Schema migrations are embedded in the API and applied at startup. Releases follo
 the previous tag must remain compatible with the expanded schema for the rollback window. The
 deploy order, rollback procedure, compatibility rules and the `OPS-09` rehearsal handoff are in
 [`RELEASING.md`](RELEASING.md).
+
+## 11. Observability
+
+The API exposes Prometheus metrics on `/metrics` through a **separate internal listener**. The
+public API port never serves the endpoint, and the route is not part of `docs/openapi.yaml`.
+`METRICS_ADDR` controls the listener (Compose sets `0.0.0.0:9090` and does not publish the port);
+`METRICS_TOKEN` optionally requires a bearer token.
+
+The collectors cover HTTP RED metrics, Go runtime and process state, PostgreSQL pool saturation,
+NATS connectivity and message counters, live SSE connections, Gitea/Argo CD dependency latency,
+AI latency and build/deployment reconciliation. HTTP metrics use Gin's route template, never the
+raw path, so resource identifiers cannot leak into labels or explode cardinality.
+
+The metric catalog, naming rules, cardinality policy, example queries and deliberately deferred
+signals are in [`OBSERVABILITY.md`](OBSERVABILITY.md). Tracing, dashboards, SLOs and alert routing
+are `OBS-02`..`OBS-05`; audit-write metrics arrive with the audit subsystem in `GOV-04`.

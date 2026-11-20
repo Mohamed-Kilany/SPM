@@ -75,3 +75,19 @@ func TestStreamFlushesInitialComment(t *testing.T) {
 	assert.Equal(t, ": connected\n", line,
 		"EventSource needs an immediate body byte so onopen fires on quiet projects")
 }
+
+func TestActiveConnectionsTracksSubscribeAndUnsubscribe(t *testing.T) {
+	manager := &Manager{
+		bufs: make(map[string]*RingBuffer),
+		subs: make(map[string]map[int64]chan SSEEvent),
+	}
+
+	assert.Equal(t, 0, manager.ActiveConnections())
+
+	_, _, unsubscribe, ok := manager.subscribe("project", 0, false, 0)
+	require.True(t, ok)
+	assert.Equal(t, 1, manager.ActiveConnections())
+
+	unsubscribe()
+	assert.Equal(t, 0, manager.ActiveConnections())
+}

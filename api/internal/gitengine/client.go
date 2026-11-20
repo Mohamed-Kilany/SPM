@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"spm-platform/api/internal/metrics"
 )
 
 // Client is a Gitea HTTP API client that implements Provisioner and BranchCreator.
@@ -43,7 +45,8 @@ func NewWithConfig(baseURL, token, org string) *Client {
 		token:   token,
 		org:     org,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout:   5 * time.Second,
+			Transport: metrics.InstrumentTransport("gitea", nil),
 		},
 	}
 }

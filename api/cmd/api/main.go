@@ -20,6 +20,7 @@ import (
 	"spm-platform/api/internal/cdengine"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/gitengine"
+	"spm-platform/api/internal/metrics"
 	"spm-platform/api/internal/migrate"
 	"spm-platform/api/internal/observability"
 	"spm-platform/api/internal/project"
@@ -55,6 +56,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	metricsRegistry := metrics.New(metrics.BuildInfo{Version: version, Commit: commit, BuiltAt: buildDate})
+	metrics.SetDefault(metricsRegistry)
+
 	poolCfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		log.Fatalf("postgres: invalid DATABASE_URL: %v", err)
@@ -79,12 +83,14 @@ func main() {
 	if err := migrate.Run(ctx, pool); err != nil {
 		log.Fatalf("migrations: %v", err)
 	}
+	metricsRegistry.RegisterPool(pool)
 
 	eventsClient, err := events.New(natsURL, retentionDays)
 	if err != nil {
 		log.Fatalf("nats: %v", err)
 	}
 	defer eventsClient.Close()
+	metricsRegistry.RegisterNATS(eventsClient.Conn())
 
 	snapRepo := snapshot.New(pool)
 	gitEngineClient := gitengine.New()
@@ -103,6 +109,7 @@ func main() {
 		log.Fatalf("sse: %v", err)
 	}
 	defer sseManager.Close()
+	metricsRegistry.RegisterSSE(sseManager.ActiveConnections)
 
 	cdManager := cdengine.New(eventsClient)
 	watchdog := cdengine.NewWatchdog(eventsClient)
@@ -121,8 +128,8 @@ func main() {
 	deliverySyncer.Start(ctx)
 
 	r := gin.New()
-	r.Use(observability.RequestID(), observability.AccessLog(), observability.Recovery(),
-		observability.SecurityHeaders(), observability.RateLimit(600, time.Minute))
+	r.Use(metricsRegistry.HTTPMiddleware(), observability.RequestID(), observability.AccessLog(),
+		observability.Recovery(), observability.SecurityHeaders(), observability.RateLimit(600, time.Minute))
 	_ = r.SetTrustedProxies(nil)
 
 	deps := server.Handlers{
@@ -156,6 +163,26 @@ func main() {
 		// WriteTimeout is intentionally zero: SSE connections are long-lived.
 	}
 
+	// Metrics are served on a separate listener. The public API port never
+	// exposes /metrics; compose keeps the port on the internal network and
+	// METRICS_TOKEN optionally adds bearer authentication.
+	var metricsSrv *http.Server
+	if metricsAddr := envOr("METRICS_ADDR", ""); metricsAddr != "" {
+		metricsSrv = &http.Server{
+			Addr:              metricsAddr,
+			Handler:           metricsRegistry.Handler(os.Getenv("METRICS_TOKEN")),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      30 * time.Second,
+		}
+		go func() {
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("metrics server: %v", err)
+			}
+		}()
+		log.Printf("SPM metrics on %s/metrics", metricsAddr)
+	}
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server: %v", err)
@@ -170,6 +197,11 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("server shutdown: %v", err)
+	}
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("metrics shutdown: %v", err)
+		}
 	}
 	sseManager.Close()
 	eventsClient.Close()
