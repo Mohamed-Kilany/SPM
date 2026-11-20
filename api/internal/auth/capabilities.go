@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -255,13 +256,20 @@ func RequireProjectCapabilityWithResolver(resolver MembershipResolver, capabilit
 				Role:         RoleAdmin,
 				Capabilities: append([]Capability(nil), AllCapabilities...),
 			}
+			// The project ID and request path are caller-controlled. Strip CR
+			// and LF before logging so a request cannot forge log entries
+			// (CWE-117).
+			safeProjectID := strings.ReplaceAll(projectID, "\n", "")
+			safeProjectID = strings.ReplaceAll(safeProjectID, "\r", "")
+			safePath := strings.ReplaceAll(c.Request.URL.Path, "\n", "")
+			safePath = strings.ReplaceAll(safePath, "\r", "")
 			slog.Info("authz_break_glass",
 				"request_id", observability.RequestIDFrom(c),
 				"user_id", claims.CanonicalUserID(),
-				"project_id", projectID,
+				"project_id", safeProjectID,
 				"capability", string(capability),
 				"method", c.Request.Method,
-				"path", c.Request.URL.Path,
+				"path", safePath,
 			)
 			c.Set(projectAccessKey, access)
 			c.Next()
@@ -274,10 +282,12 @@ func RequireProjectCapabilityWithResolver(resolver MembershipResolver, capabilit
 		}
 		role, member, err := resolver.RoleForProject(c.Request.Context(), projectID, claims.CanonicalUserID())
 		if err != nil {
+			safeProjectID := strings.ReplaceAll(projectID, "\n", "")
+			safeProjectID = strings.ReplaceAll(safeProjectID, "\r", "")
 			slog.Error("authz_membership_lookup_failed",
 				"request_id", observability.RequestIDFrom(c),
 				"user_id", claims.CanonicalUserID(),
-				"project_id", projectID,
+				"project_id", safeProjectID,
 				"error", err,
 			)
 			denyCapability(c, claims.CanonicalUserID(), projectID, "", capability, "membership lookup failed")
@@ -301,15 +311,21 @@ func RequireProjectCapabilityWithResolver(resolver MembershipResolver, capabilit
 }
 
 func denyCapability(c *gin.Context, userID, projectID, role string, capability Capability, reason string) {
+	// Project IDs and paths come from the request. Strip CR and LF so a caller
+	// cannot forge log entries (CWE-117).
+	safeProjectID := strings.ReplaceAll(projectID, "\n", "")
+	safeProjectID = strings.ReplaceAll(safeProjectID, "\r", "")
+	safePath := strings.ReplaceAll(c.Request.URL.Path, "\n", "")
+	safePath = strings.ReplaceAll(safePath, "\r", "")
 	slog.Warn("authz_denied",
 		"request_id", observability.RequestIDFrom(c),
 		"user_id", userID,
-		"project_id", projectID,
+		"project_id", safeProjectID,
 		"project_role", role,
 		"capability", string(capability),
 		"reason", reason,
 		"method", c.Request.Method,
-		"path", c.Request.URL.Path,
+		"path", safePath,
 	)
 	c.AbortWithStatusJSON(http.StatusForbidden, errorResponse{
 		Error: errorBody{

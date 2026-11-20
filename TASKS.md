@@ -2318,8 +2318,9 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** [`docs/AUTHZ.md`](docs/AUTHZ.md) defines the matrix, tester and developer
   restrictions, ownership rules, denial contract and `/auth/me` shape;
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) summarizes enforcement. Denials log
-  `authz_denied`; break-glass logs `authz_break_glass`. Audit storage and capability-change audit
-  events are `GOV-04`; session/SSE invalidation is `GOV-02`.
+  `authz_denied`; break-glass logs `authz_break_glass`; caller-controlled project IDs and
+  paths have CR/LF stripped so they cannot forge log entries. Audit storage and
+  capability-change audit events are `GOV-04`; session/SSE invalidation is `GOV-02`.
 
 #### GOV-02 · Membership and session invalidation
 - **Status:** TODO · **Priority:** P0 · **Estimate:** M · **Branch:** `fix/membership-session-invalidation`
@@ -5122,7 +5123,7 @@ labels must exist in the repository.
 | 2026-11-19 | Closed BASE-08: added `docs/RELEASING.md` with the environment, promotion, migration and rollback model; embedded tag-derived version metadata in the API health probes, UI footer and AI service; added `scripts/changelog.ps1`, `scripts/release.ps1`, `CHANGELOG.md` and the tag-triggered `release.yml` that verifies master ancestry, re-runs supply-chain checks and publishes SBOM/SARIF evidence | Maintainer |
 | 2026-11-20 | Verified the BASE-08 release dry run: pushed the scratch tag `v0.0.0-rc.1` from `master`; `release.yml` verify, images and publish jobs all succeeded; GitHub created a prerelease with generated changelog notes and six assets (`sbom-api/ui/ai.spdx.json`, `trivy-api/ui/ai.sarif`); the release and both local and remote tags were then deleted, leaving no published release | Maintainer |
 | 2026-11-20 | Closed OBS-01: added a Prometheus endpoint on a separate internal listener with optional bearer auth, RED/Go/process/PostgreSQL/NATS/SSE/Gitea/Argo/AI/reconciliation/build-info collectors, bounded route-template labels and `docs/OBSERVABILITY.md`. Post-merge verification confirmed `api/internal/metrics` and the observability contract on `master`, PR #21 merged with all required checks green, and 0 open Dependabot or secret-scanning alerts | Maintainer |
-| 2026-11-20 | Closed GOV-01: replaced the coarse project-write gate with 14 explicit capabilities resolved from `project_members` on every request; added DB-backed `RequireProjectCapability`, global viewer/admin overlays, tester and developer restrictions, owner-grant protection, `/auth/me` per-project capabilities, `x-spm-capability` OpenAPI metadata and capability-gated UI actions. Added `docs/AUTHZ.md` and exhaustive route × role authorization tests | Maintainer |
+| 2026-11-20 | Closed GOV-01: replaced the coarse project-write gate with 14 explicit capabilities resolved from `project_members` on every request; added DB-backed `RequireProjectCapability`, global viewer/admin overlays, tester and developer restrictions, owner-grant protection, `/auth/me` per-project capabilities, `x-spm-capability` OpenAPI metadata and capability-gated UI actions. Added `docs/AUTHZ.md`, CR/LF sanitization for caller-controlled authorization log fields and exhaustive route × role authorization tests | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

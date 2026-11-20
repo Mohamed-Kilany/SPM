@@ -1,10 +1,13 @@
 package auth_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"spm-platform/api/internal/auth"
+	"spm-platform/api/internal/models"
 )
 
 // TestCapabilityMatrix pins the canonical role-to-capability matrix. The
@@ -236,6 +240,47 @@ func TestRequireProjectCapabilityExposesResolvedSet(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"role":"developer"`)
 	assert.Contains(t, w.Body.String(), `"code.write"`)
 	assert.NotContains(t, w.Body.String(), `"member.write"`)
+}
+
+// TestAuthzLogsStripLineBreaks proves that caller-controlled project IDs and
+// paths cannot forge log entries. CodeQL flags this class as CWE-117; the
+// structured handler also quotes values, but the sanitizer keeps the guarantee
+// independent of the handler.
+func TestAuthzLogsStripLineBreaks(t *testing.T) {
+	cases := []struct {
+		name   string
+		claims *models.AuthClaims
+	}{
+		{"break glass", &models.AuthClaims{UserID: "admin-1", Role: auth.RoleAdmin}},
+		{"denied", &models.AuthClaims{UserID: "user-1", Role: auth.RoleMember}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/projects/x/check", nil)
+			c.Request.URL.Path = "/api/v1/projects/x\nforged/check"
+			c.Params = gin.Params{{Key: "id", Value: "proj\r\nforged"}}
+			c.Set(auth.ClaimsKey, tc.claims)
+
+			handler := auth.RequireProjectCapabilityWithResolver(
+				&fakeResolver{member: false}, auth.CapSettingsWrite)
+			handler(c)
+
+			out := strings.TrimSpace(buf.String())
+			require.NotEmpty(t, out)
+			assert.NotContains(t, out, `\n`, "log entry kept an escaped newline")
+			assert.NotContains(t, out, `\r`, "log entry kept an escaped carriage return")
+			assert.Contains(t, out, `"project_id":"projforged"`)
+			assert.Contains(t, out, `"path":"/api/v1/projects/xforged/check"`)
+		})
+	}
 }
 
 func capabilitySet(capabilities ...auth.Capability) map[auth.Capability]bool {

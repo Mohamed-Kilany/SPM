@@ -138,6 +138,8 @@ the API is the enforcement point.
 - The middleware logs `authz_denied` with the request ID, user, project,
   project role, capability and path.
 - Global admin break-glass requests log `authz_break_glass`.
+- Project IDs and paths are caller-controlled, so both fields are stripped of
+  CR and LF before logging; a request cannot forge a second log entry.
 - Audit persistence for both events is `GOV-04`; session revocation and SSE
   teardown on membership removal are `GOV-02`.
 
