@@ -295,6 +295,7 @@ description: Single-use ticket issued by POST /api/v1/auth/stream-ticket.`))
 	}
 	setMap(responses, "Forbidden", errorResponse("The caller is authenticated but not authorized"))
 	setMap(responses, "Conflict", errorResponse("The resource already exists or conflicts with current state"))
+	setMap(responses, "PreconditionRequired", errorResponse("A mutation of a revisioned planning resource requires the current revision in If-Match or expected_version"))
 	setMap(responses, "UnprocessableEntity", errorResponse("The request is valid but violates a business rule"))
 	setMap(responses, "TooManyRequests", errorResponse("Rate limit exceeded"))
 	setMap(responses, "InternalError", errorResponse("Unexpected server error"))
@@ -377,7 +378,8 @@ properties:
 	"StatusInput": `type: object
 required: [status]
 properties:
-  status: { type: string }`,
+  status: { type: string }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
 	"SprintInput": `type: object
 required: [name]
 properties:
@@ -386,7 +388,8 @@ properties:
   status: { type: string }
   start_date: { type: [string, "null"], format: date-time }
   end_date: { type: [string, "null"], format: date-time }
-  capacity: { type: [number, "null"] }`,
+  capacity: { type: [number, "null"] }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
 	"ReleaseInput": `type: object
 required: [name, version]
 properties:
@@ -394,7 +397,8 @@ properties:
   version: { type: string }
   status: { type: string }
   planned_at: { type: [string, "null"], format: date-time }
-  notes: { type: string }`,
+  notes: { type: string }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
 	"TestResultInput": `type: object
 properties:
   status: { type: string }
@@ -524,6 +528,13 @@ properties:
   first_bad_id: { type: string }
   first_bad_cause: { type: string, enum: [missing_anchor, broken_link, hash_mismatch] }
   checked_at: { type: string, format: date-time }`,
+	"RevisionResult": `type: object
+required: [id, revision]
+description: Result of a planning mutation. revision is the new concurrency token and is also returned as the ETag on create and update.
+properties:
+  id: { type: string, format: uuid }
+  revision: { type: integer, format: int64, minimum: 1 }
+  deleted: { type: boolean, description: Present and true on a successful delete. }`,
 }
 
 func sortedSchemaNames() []string {
@@ -558,20 +569,22 @@ func operationYAML(route server.Route, openAPIPath string) string {
 		b.WriteString("  '204':\n    description: Deleted\n")
 	case "201":
 		fmt.Fprintf(&b, "  '201':\n    description: Created\n")
-		if schema := successSchema(openAPIPath); schema != "" {
+		if schema := successSchema(route.Method, openAPIPath); schema != "" {
 			fmt.Fprintf(&b, "    content:\n      application/json:\n        schema:\n          $ref: '#/components/schemas/%s'\n", schema)
 		} else {
 			b.WriteString("    content:\n      application/json:\n        schema: { type: object, additionalProperties: true }\n")
 		}
+		b.WriteString(revisionHeaders(route.Method, openAPIPath))
 	default:
 		fmt.Fprintf(&b, "  '200':\n    description: OK\n")
 		if strings.HasSuffix(openAPIPath, "/admin/audit/export") {
 			b.WriteString("    content:\n      text/csv:\n        schema: { type: string }\n      application/json:\n        schema:\n          type: array\n          items:\n            $ref: '#/components/schemas/AuditEvent'\n")
-		} else if schema := successSchema(openAPIPath); schema != "" {
+		} else if schema := successSchema(route.Method, openAPIPath); schema != "" {
 			fmt.Fprintf(&b, "    content:\n      application/json:\n        schema:\n          $ref: '#/components/schemas/%s'\n", schema)
 		} else {
 			b.WriteString("    content:\n      application/json:\n        schema: { type: object, additionalProperties: true }\n")
 		}
+		b.WriteString(revisionHeaders(route.Method, openAPIPath))
 	}
 
 	// Error envelope.
@@ -579,7 +592,7 @@ func operationYAML(route server.Route, openAPIPath string) string {
 		ref := map[string]string{
 			"400": "BadRequest", "401": "Unauthorized", "403": "Forbidden",
 			"404": "NotFound", "409": "Conflict", "422": "UnprocessableEntity",
-			"429": "TooManyRequests", "500": "InternalError",
+			"428": "PreconditionRequired", "429": "TooManyRequests", "500": "InternalError",
 		}[code]
 		fmt.Fprintf(&b, "  '%s': { $ref: '#/components/responses/%s' }\n", code, ref)
 	}
@@ -598,7 +611,78 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	if params := auditQueryParameters(openAPIPath); params != "" {
 		b.WriteString(params)
 	}
+	if params := revisionParameters(route.Method, openAPIPath); params != "" {
+		b.WriteString(params)
+	}
 	return b.String()
+}
+
+// isRevisionedPath reports whether path is a planning resource with optimistic
+// concurrency. Test runs are revisioned but have no update endpoint; their
+// revision is returned on create and bumped when the run status is refreshed.
+func isRevisionedPath(path string) bool {
+	for _, collection := range []string{
+		"/prds", "/epics", "/features", "/work-items",
+		"/sprints", "/releases", "/test-cases", "/test-runs",
+	} {
+		if strings.HasSuffix(path, collection) || strings.Contains(path, collection+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func isRevisionedCreate(method, path string) bool {
+	if !strings.EqualFold(method, "POST") {
+		return false
+	}
+	switch {
+	case strings.HasSuffix(path, "/prds"),
+		strings.HasSuffix(path, "/epics"),
+		strings.HasSuffix(path, "/features"),
+		strings.HasSuffix(path, "/work-items"),
+		strings.HasSuffix(path, "/sprints"),
+		strings.HasSuffix(path, "/releases"),
+		strings.HasSuffix(path, "/test-cases"),
+		strings.HasSuffix(path, "/test-runs"):
+		return true
+	}
+	return false
+}
+
+func isRevisionedMutation(method, path string) bool {
+	if !isRevisionedPath(path) {
+		return false
+	}
+	switch strings.ToUpper(method) {
+	case "PUT", "DELETE":
+		return true
+	case "PATCH":
+		return strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/status")
+	default:
+		return false
+	}
+}
+
+// revisionHeaders documents the strong ETag returned by create and update.
+func revisionHeaders(method, path string) string {
+	if strings.EqualFold(method, "DELETE") {
+		return ""
+	}
+	if !isRevisionedCreate(method, path) && !isRevisionedMutation(method, path) {
+		return ""
+	}
+	return "    headers:\n      ETag:\n        description: The new revision as a strong ETag.\n        schema: { type: string }\n"
+}
+
+func revisionParameters(method, path string) string {
+	if !isRevisionedMutation(method, path) {
+		return ""
+	}
+	return `parameters:
+  - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+  - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+`
 }
 
 // auditQueryParameters documents the admin audit filters. Other list routes
@@ -638,6 +722,9 @@ func securityFor(auth server.AuthLevel) string {
 func successCode(method, path string) string {
 	switch strings.ToUpper(method) {
 	case "DELETE":
+		if isRevisionedPath(path) {
+			return "200"
+		}
 		return "204"
 	case "POST":
 		switch {
@@ -674,12 +761,32 @@ func errorCodes(route server.Route, path string) []string {
 		codes = append(codes, "422")
 	}
 	if successCode(route.Method, path) == "201" && !strings.Contains(path, "/auth/login") {
-		codes = append(codes, "409")
+		codes = appendUnique(codes, "409")
+	}
+	if isRevisionedMutation(route.Method, path) {
+		codes = appendUnique(codes, "400", "409", "428")
 	}
 	if strings.Contains(path, "/auth/login") {
 		codes = append(codes, "429")
 	}
 	codes = append(codes, "500")
+	sort.Strings(codes)
+	return codes
+}
+
+func appendUnique(codes []string, values ...string) []string {
+	for _, value := range values {
+		found := false
+		for _, existing := range codes {
+			if existing == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			codes = append(codes, value)
+		}
+	}
 	return codes
 }
 
@@ -770,8 +877,10 @@ func requestSchema(method, path string) string {
 	return ""
 }
 
-func successSchema(path string) string {
+func successSchema(method, path string) string {
 	switch {
+	case isRevisionedCreate(method, path) || isRevisionedMutation(method, path):
+		return "RevisionResult"
 	case strings.HasSuffix(path, "/auth/login"):
 		return "LoginResponse"
 	case strings.HasSuffix(path, "/auth/me"):

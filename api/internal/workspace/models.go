@@ -128,6 +128,7 @@ type PRD struct {
 	ApprovedAt *time.Time `json:"approved_at"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
+	Revision   int64      `json:"revision"`
 }
 
 // Epic groups features under a product outcome.
@@ -145,6 +146,7 @@ type Epic struct {
 	DueDate         *time.Time `json:"due_date"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	Revision        int64      `json:"revision"`
 }
 
 // Feature is a user-facing capability under an epic.
@@ -162,6 +164,7 @@ type Feature struct {
 	TargetReleaseID    *uuid.UUID `json:"target_release_id"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
+	Revision           int64      `json:"revision"`
 }
 
 // WorkItem is a story, task, subtask, bug, spike or chore.
@@ -192,6 +195,7 @@ type WorkItem struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	ClosedAt           *time.Time `json:"closed_at"`
+	Revision           int64      `json:"revision"`
 }
 
 // Sprint is a time-boxed planning interval.
@@ -206,6 +210,7 @@ type Sprint struct {
 	Capacity  *float64   `json:"capacity"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	Revision  int64      `json:"revision"`
 }
 
 // Release is a shippable version.
@@ -220,6 +225,7 @@ type Release struct {
 	Notes      string     `json:"notes"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
+	Revision   int64      `json:"revision"`
 }
 
 // Environment is a deployment target.
@@ -253,6 +259,7 @@ type TestCase struct {
 	Tags          []string   `json:"tags"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+	Revision      int64      `json:"revision"`
 	Steps         []TestStep `json:"steps"`
 }
 
@@ -286,6 +293,7 @@ type TestRun struct {
 	Metadata      map[string]interface{} `json:"metadata"`
 	CreatedAt     time.Time              `json:"created_at"`
 	UpdatedAt     time.Time              `json:"updated_at"`
+	Revision      int64                  `json:"revision"`
 	Results       []TestResult           `json:"results"`
 }
 

@@ -9,7 +9,7 @@ import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
-import { api } from '../../api/client'
+import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { percent, statusLabel } from '../../lib/workspace'
 import { formatDateTime, timeAgo } from '../../lib/format'
 import type { TestCase, TestResult, TestRun, TestStep, TestStepResult } from '../../types/workspace'
@@ -268,7 +268,12 @@ async function saveCase(): Promise<void> {
       })),
     }
     if (caseEditingId.value) {
-      await api.updateTestCase(store.projectId, caseEditingId.value, payload)
+      const current = store.testCases.find((testCase) => testCase.id === caseEditingId.value)
+      if (!current) {
+        caseError.value = 'This test case no longer exists. Close the dialog and refresh.'
+        return
+      }
+      await api.updateTestCase(store.projectId, caseEditingId.value, payload, current.revision)
       toast.success('Test case updated.', 'Test lab')
     } else {
       await api.createTestCase(store.projectId, payload)
@@ -277,6 +282,11 @@ async function saveCase(): Promise<void> {
     caseModal.value = false
     await store.refresh()
   } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      caseError.value = revisionConflictMessage('test case')
+      return
+    }
     caseError.value = error instanceof Error ? error.message : 'Failed to save test case'
   } finally {
     caseBusy.value = false

@@ -606,7 +606,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -634,13 +639,22 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
-          description: Deleted
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -662,11 +676,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -675,6 +696,8 @@ paths:
             schema:
               $ref: '#/components/schemas/EpicInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -697,7 +720,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -725,13 +753,22 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
-          description: Deleted
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -753,11 +790,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -766,6 +810,8 @@ paths:
             schema:
               $ref: '#/components/schemas/FeatureInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -961,7 +1007,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -989,13 +1040,22 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
-          description: Deleted
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -1017,11 +1077,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -1030,6 +1097,8 @@ paths:
             schema:
               $ref: '#/components/schemas/PRDInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -1207,7 +1276,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -1239,11 +1313,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -1252,6 +1333,8 @@ paths:
             schema:
               $ref: '#/components/schemas/ReleaseInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -1550,7 +1633,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -1582,11 +1670,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -1595,6 +1690,8 @@ paths:
             schema:
               $ref: '#/components/schemas/SprintInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -1642,7 +1739,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -1670,13 +1772,22 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
-          description: Deleted
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -1698,11 +1809,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -1711,6 +1829,8 @@ paths:
             schema:
               $ref: '#/components/schemas/TestCaseInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -1733,7 +1853,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -2070,7 +2195,12 @@ paths:
           description: Created
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -2098,13 +2228,22 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '204':
-          description: Deleted
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -2126,11 +2265,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -2139,6 +2285,8 @@ paths:
             schema:
               $ref: '#/components/schemas/WorkItemInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -2161,11 +2309,18 @@ paths:
           description: OK
           content:
             application/json:
-              schema: {type: object, additionalProperties: true}
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
         required: true
@@ -2174,6 +2329,8 @@ paths:
             schema:
               $ref: '#/components/schemas/StatusInput'
       parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
         - name: "id"
           in: path
           required: true
@@ -2473,6 +2630,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    PreconditionRequired:
+      description: "A mutation of a revisioned planning resource requires the current revision in If-Match or expected_version"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
     Error:
       type: object
@@ -2538,6 +2701,7 @@ components:
         summary: {type: string}
         content: {type: string}
         status: {type: string}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     EpicInput:
       type: object
       required: [prd_id, title]
@@ -2546,6 +2710,7 @@ components:
         title: {type: string}
         description: {type: string}
         status: {type: string}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     FeatureInput:
       type: object
       required: [epic_id, title]
@@ -2554,6 +2719,7 @@ components:
         title: {type: string}
         description: {type: string}
         status: {type: string}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     WorkItemInput:
       type: object
       required: [type, title]
@@ -2570,6 +2736,7 @@ components:
         sprint_id: {type: string, format: uuid}
         release_id: {type: string, format: uuid}
         environment_id: {type: string, format: uuid}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     TestCaseInput:
       type: object
       required: [title]
@@ -2587,6 +2754,7 @@ components:
             properties:
               action: {type: string}
               expected_result: {type: string}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     TestRunInput:
       type: object
       required: [name, case_ids]
@@ -2760,6 +2928,7 @@ components:
         status: {type: string}
         planned_at: {type: [string, "null"], format: date-time}
         notes: {type: string}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     RepositoryInput:
       type: object
       required: [name]
@@ -2786,6 +2955,7 @@ components:
         start_date: {type: [string, "null"], format: date-time}
         end_date: {type: [string, "null"], format: date-time}
         capacity: {type: [number, "null"]}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     StateInput:
       type: object
       required: [state]
@@ -2796,6 +2966,7 @@ components:
       required: [status]
       properties:
         status: {type: string}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     TestResultInput:
       type: object
       properties:
@@ -2875,3 +3046,11 @@ components:
         first_bad_id: {type: string}
         first_bad_cause: {type: string, enum: [missing_anchor, broken_link, hash_mismatch]}
         checked_at: {type: string, format: date-time}
+    RevisionResult:
+      type: object
+      required: [id, revision]
+      description: Result of a planning mutation. revision is the new concurrency token and is also returned as the ETag on create and update.
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        deleted: {type: boolean, description: Present and true on a successful delete.}

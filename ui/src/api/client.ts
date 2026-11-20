@@ -47,6 +47,25 @@ interface RequestOptions {
   auth?: boolean
   signal?: AbortSignal
   timeoutMs?: number
+  headers?: Record<string, string>
+}
+
+export interface RevisionedResult {
+  id: string
+  revision: number
+  deleted?: boolean
+}
+
+export function isRevisionConflict(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'REVISION_CONFLICT'
+}
+
+export function revisionConflictMessage(action: string): string {
+  return `This ${action} changed in another session. The workspace has been refreshed; review the latest values and try again.`
+}
+
+function ifMatch(revision: number): Record<string, string> {
+  return { 'If-Match': `"${revision}"` }
 }
 
 interface RawResult<T> {
@@ -61,9 +80,12 @@ function notifyUnauthorized(): void {
 }
 
 async function requestRaw<T>(path: string, options: RequestOptions = {}): Promise<RawResult<T>> {
-  const { method = 'GET', body, auth = true, signal, timeoutMs } = options
+  const { method = 'GET', body, auth = true, signal, timeoutMs, headers: extraHeaders } = options
   const headers = new Headers({ Accept: 'application/json' })
 
+  if (extraHeaders) {
+    for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value)
+  }
   if (body !== undefined) headers.set('Content-Type', 'application/json')
   if (auth) {
     const token = getStoredToken()
@@ -471,59 +493,73 @@ export const api = {
     return { blob: await response.blob(), filename: match?.[1] ?? `report.${format}` }
   },
 
-  async createPRD(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/prds`, {
+  async createPRD(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/prds`, {
       method: 'POST',
       body: payload,
     })
   },
 
-  async updatePRD(projectId: string, prdId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async updatePRD(
+    projectId: string,
+    prdId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/prds/${encodeURIComponent(prdId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
-  async deletePRD(projectId: string, prdId: string): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async deletePRD(projectId: string, prdId: string, revision: number): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/prds/${encodeURIComponent(prdId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: ifMatch(revision) },
     )
   },
 
-  async createEpic(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/epics`, {
+  async createEpic(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/epics`, {
       method: 'POST',
       body: payload,
     })
   },
 
-  async updateEpic(projectId: string, epicId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async updateEpic(
+    projectId: string,
+    epicId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/epics/${encodeURIComponent(epicId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
-  async createFeature(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/features`, {
+  async createFeature(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/features`, {
       method: 'POST',
       body: payload,
     })
   },
 
-  async deleteEpic(projectId: string, epicId: string): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async deleteEpic(projectId: string, epicId: string, revision: number): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/epics/${encodeURIComponent(epicId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: ifMatch(revision) },
     )
   },
 
-  async deleteFeature(projectId: string, featureId: string): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async deleteFeature(
+    projectId: string,
+    featureId: string,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: ifMatch(revision) },
     )
   },
 
@@ -531,18 +567,19 @@ export const api = {
     projectId: string,
     featureId: string,
     payload: unknown,
-  ): Promise<{ id: string }> {
-    return request<{ id: string }>(
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
   async createWorkItem(
     projectId: string,
     payload: unknown,
-  ): Promise<{ id: string; key?: string }> {
-    return request<{ id: string; key?: string }>(
+  ): Promise<RevisionedResult & { key?: string }> {
+    return request<RevisionedResult & { key?: string }>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/work-items`,
       { method: 'POST', body: payload },
     )
@@ -552,10 +589,11 @@ export const api = {
     projectId: string,
     itemId: string,
     payload: unknown,
-  ): Promise<{ id: string }> {
-    return request<{ id: string }>(
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
@@ -563,36 +601,46 @@ export const api = {
     projectId: string,
     itemId: string,
     status: string,
-  ): Promise<{ id: string; status: string }> {
-    return request<{ id: string; status: string }>(
+    revision: number,
+  ): Promise<RevisionedResult & { status: string }> {
+    return request<RevisionedResult & { status: string }>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/status`,
-      { method: 'PATCH', body: { status } },
+      { method: 'PATCH', body: { status }, headers: ifMatch(revision) },
     )
   },
 
-  async deleteWorkItem(projectId: string, itemId: string): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async deleteWorkItem(
+    projectId: string,
+    itemId: string,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: ifMatch(revision) },
     )
   },
 
-  async createSprint(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/sprints`, {
+  async createSprint(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/sprints`, {
       method: 'POST',
       body: payload,
     })
   },
 
-  async updateSprint(projectId: string, sprintId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async updateSprint(
+    projectId: string,
+    sprintId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/sprints/${encodeURIComponent(sprintId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
-  async createRelease(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/releases`, {
+  async createRelease(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/releases`, {
       method: 'POST',
       body: payload,
     })
@@ -602,15 +650,16 @@ export const api = {
     projectId: string,
     releaseId: string,
     payload: unknown,
-  ): Promise<{ id: string }> {
-    return request<{ id: string }>(
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
-  async createTestCase(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-cases`, {
+  async createTestCase(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-cases`, {
       method: 'POST',
       body: payload,
     })
@@ -620,22 +669,27 @@ export const api = {
     projectId: string,
     caseId: string,
     payload: unknown,
-  ): Promise<{ id: string }> {
-    return request<{ id: string }>(
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/test-cases/${encodeURIComponent(caseId)}`,
-      { method: 'PUT', body: payload },
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
     )
   },
 
-  async deleteTestCase(projectId: string, caseId: string): Promise<{ id: string }> {
-    return request<{ id: string }>(
+  async deleteTestCase(
+    projectId: string,
+    caseId: string,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/test-cases/${encodeURIComponent(caseId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: ifMatch(revision) },
     )
   },
 
-  async createTestRun(projectId: string, payload: unknown): Promise<{ id: string }> {
-    return request<{ id: string }>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-runs`, {
+  async createTestRun(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-runs`, {
       method: 'POST',
       body: payload,
     })

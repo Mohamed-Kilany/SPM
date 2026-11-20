@@ -194,12 +194,13 @@ func (h *Handler) GetTraceability(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 type prdRequest struct {
-	Title   string     `json:"title"`
-	Version string     `json:"version"`
-	Status  string     `json:"status"`
-	Summary string     `json:"summary"`
-	Content string     `json:"content"`
-	OwnerID *uuid.UUID `json:"owner_id"`
+	Title           string     `json:"title"`
+	Version         string     `json:"version"`
+	Status          string     `json:"status"`
+	Summary         string     `json:"summary"`
+	Content         string     `json:"content"`
+	OwnerID         *uuid.UUID `json:"owner_id"`
+	ExpectedVersion *int64     `json:"expected_version"`
 }
 
 func (h *Handler) CreatePRD(c *gin.Context) {
@@ -228,16 +229,18 @@ func (h *Handler) CreatePRD(c *gin.Context) {
 		return
 	}
 	var id uuid.UUID
+	var revision int64
 	err := h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO prds (project_id, title, version, status, summary, content, owner_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		projectID, req.Title, req.Version, req.Status, req.Summary, req.Content, req.OwnerID).Scan(&id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, revision`,
+		projectID, req.Title, req.Version, req.Status, req.Summary, req.Content, req.OwnerID).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create PRD")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "prd", &id, "created", "Created PRD "+req.Title, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "revision": revision})
 }
 
 func (h *Handler) UpdatePRD(c *gin.Context) {
@@ -266,20 +269,28 @@ func (h *Handler) UpdatePRD(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid PRD status")
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE prds SET title=$3, version=$4, status=$5, summary=$6, content=$7, owner_id=$8, updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`,
-		prdID, projectID, req.Title, req.Version, req.Status, req.Summary, req.Content, req.OwnerID)
+		WHERE id=$1 AND project_id=$2`+revisionClause(9)+`
+		RETURNING revision`,
+		prdID, projectID, req.Title, req.Version, req.Status, req.Summary, req.Content, req.OwnerID,
+		revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "PRD", "prds", prdID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update PRD")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "PRD not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "prd", &prdID, "updated", "Updated PRD "+req.Title, nil)
-	c.JSON(http.StatusOK, gin.H{"id": prdID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": prdID, "revision": revision})
 }
 
 func (h *Handler) DeletePRD(c *gin.Context) {
@@ -291,17 +302,24 @@ func (h *Handler) DeletePRD(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `DELETE FROM prds WHERE id=$1 AND project_id=$2`, prdID, projectID)
+	expected, ok := revisionFromRequest(c, nil)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(),
+		`DELETE FROM prds WHERE id=$1 AND project_id=$2`+revisionClause(3)+` RETURNING revision`,
+		prdID, projectID, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "PRD", "prds", prdID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete PRD")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "PRD not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "prd", &prdID, "deleted", "Deleted PRD", nil)
-	c.JSON(http.StatusOK, gin.H{"id": prdID})
+	c.JSON(http.StatusOK, gin.H{"id": prdID, "revision": revision, "deleted": true})
 }
 
 func validPRDStatus(s string) bool {
@@ -326,6 +344,7 @@ type epicRequest struct {
 	TargetReleaseID *uuid.UUID `json:"target_release_id"`
 	StartDate       *string    `json:"start_date"`
 	DueDate         *string    `json:"due_date"`
+	ExpectedVersion *int64     `json:"expected_version"`
 }
 
 func (h *Handler) CreateEpic(c *gin.Context) {
@@ -368,16 +387,18 @@ func (h *Handler) CreateEpic(c *gin.Context) {
 		return
 	}
 	var id uuid.UUID
+	var revision int64
 	err = h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO epics (project_id, prd_id, title, description, status, priority, owner_id, target_release_id, start_date, due_date)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		projectID, req.PRDID, req.Title, req.Description, req.Status, req.Priority, req.OwnerID, req.TargetReleaseID, start, due).Scan(&id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, revision`,
+		projectID, req.PRDID, req.Title, req.Description, req.Status, req.Priority, req.OwnerID, req.TargetReleaseID, start, due).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create epic")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "epic", &id, "created", "Created epic "+req.Title, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "revision": revision})
 }
 
 func (h *Handler) UpdateEpic(c *gin.Context) {
@@ -403,21 +424,29 @@ func (h *Handler) UpdateEpic(c *gin.Context) {
 	}
 	start, _ := parseTimePtr(req.StartDate)
 	due, _ := parseTimePtr(req.DueDate)
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE epics SET prd_id=$3, title=$4, description=$5, status=$6, priority=$7, owner_id=$8,
 		target_release_id=$9, start_date=$10, due_date=$11, updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`,
-		epicID, projectID, req.PRDID, req.Title, req.Description, req.Status, req.Priority, req.OwnerID, req.TargetReleaseID, start, due)
+		WHERE id=$1 AND project_id=$2`+revisionClause(12)+`
+		RETURNING revision`,
+		epicID, projectID, req.PRDID, req.Title, req.Description, req.Status, req.Priority, req.OwnerID,
+		req.TargetReleaseID, start, due, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "epic", "epics", epicID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update epic")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Epic not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "epic", &epicID, "updated", "Updated epic "+req.Title, nil)
-	c.JSON(http.StatusOK, gin.H{"id": epicID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": epicID, "revision": revision})
 }
 
 func (h *Handler) DeleteEpic(c *gin.Context) {
@@ -429,17 +458,24 @@ func (h *Handler) DeleteEpic(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `DELETE FROM epics WHERE id=$1 AND project_id=$2`, epicID, projectID)
+	expected, ok := revisionFromRequest(c, nil)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(),
+		`DELETE FROM epics WHERE id=$1 AND project_id=$2`+revisionClause(3)+` RETURNING revision`,
+		epicID, projectID, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "epic", "epics", epicID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete epic")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Epic not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "epic", &epicID, "deleted", "Deleted epic", nil)
-	c.JSON(http.StatusOK, gin.H{"id": epicID})
+	c.JSON(http.StatusOK, gin.H{"id": epicID, "revision": revision, "deleted": true})
 }
 
 func validEpicStatus(s string) bool {
@@ -464,6 +500,7 @@ type featureRequest struct {
 	OwnerID            *uuid.UUID `json:"owner_id"`
 	EstimatePoints     *float64   `json:"estimate_points"`
 	TargetReleaseID    *uuid.UUID `json:"target_release_id"`
+	ExpectedVersion    *int64     `json:"expected_version"`
 }
 
 func (h *Handler) CreateFeature(c *gin.Context) {
@@ -504,16 +541,18 @@ func (h *Handler) CreateFeature(c *gin.Context) {
 		return
 	}
 	var id uuid.UUID
+	var revision int64
 	err := h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO features (project_id, epic_id, title, description, acceptance_criteria, status, priority, owner_id, estimate_points, target_release_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		projectID, req.EpicID, req.Title, req.Description, req.AcceptanceCriteria, req.Status, req.Priority, req.OwnerID, req.EstimatePoints, req.TargetReleaseID).Scan(&id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, revision`,
+		projectID, req.EpicID, req.Title, req.Description, req.AcceptanceCriteria, req.Status, req.Priority, req.OwnerID, req.EstimatePoints, req.TargetReleaseID).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create feature")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "feature", &id, "created", "Created feature "+req.Title, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "revision": revision})
 }
 
 func (h *Handler) UpdateFeature(c *gin.Context) {
@@ -541,22 +580,30 @@ func (h *Handler) UpdateFeature(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Epic does not belong to this project")
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE features SET epic_id=$3, title=$4, description=$5, acceptance_criteria=$6, status=$7,
 		priority=$8, owner_id=$9, estimate_points=$10, target_release_id=$11, updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`,
+		WHERE id=$1 AND project_id=$2`+revisionClause(12)+`
+		RETURNING revision`,
 		featureID, projectID, req.EpicID, req.Title, req.Description, req.AcceptanceCriteria,
-		req.Status, req.Priority, req.OwnerID, req.EstimatePoints, req.TargetReleaseID)
+		req.Status, req.Priority, req.OwnerID, req.EstimatePoints, req.TargetReleaseID,
+		revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "feature", "features", featureID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update feature")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Feature not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "feature", &featureID, "updated", "Updated feature "+req.Title, nil)
-	c.JSON(http.StatusOK, gin.H{"id": featureID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": featureID, "revision": revision})
 }
 
 func (h *Handler) DeleteFeature(c *gin.Context) {
@@ -568,17 +615,24 @@ func (h *Handler) DeleteFeature(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `DELETE FROM features WHERE id=$1 AND project_id=$2`, featureID, projectID)
+	expected, ok := revisionFromRequest(c, nil)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(),
+		`DELETE FROM features WHERE id=$1 AND project_id=$2`+revisionClause(3)+` RETURNING revision`,
+		featureID, projectID, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "feature", "features", featureID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete feature")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Feature not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "feature", &featureID, "deleted", "Deleted feature", nil)
-	c.JSON(http.StatusOK, gin.H{"id": featureID})
+	c.JSON(http.StatusOK, gin.H{"id": featureID, "revision": revision, "deleted": true})
 }
 
 func validFeatureStatus(s string) bool {
@@ -613,6 +667,7 @@ type workItemRequest struct {
 	ReproductionSteps  string     `json:"reproduction_steps"`
 	ExpectedResult     string     `json:"expected_result"`
 	ActualResult       string     `json:"actual_result"`
+	ExpectedVersion    *int64     `json:"expected_version"`
 }
 
 func (h *Handler) CreateWorkItem(c *gin.Context) {
@@ -670,16 +725,17 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 	}
 	var id uuid.UUID
 	var number int64
+	var revision int64
 	err = h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO work_items (project_id, feature_id, parent_id, type, title, description, acceptance_criteria,
 		status, priority, severity, assignee_id, reporter_id, estimate_points, sprint_id, release_id, environment_id,
 		due_date, reproduction_steps, expected_result, actual_result)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-		RETURNING id, item_number`,
+		RETURNING id, item_number, revision`,
 		projectID, req.FeatureID, req.ParentID, req.Type, req.Title, req.Description, req.AcceptanceCriteria,
 		req.Status, req.Priority, req.Severity, req.AssigneeID, req.ReporterID, req.EstimatePoints,
 		req.SprintID, req.ReleaseID, req.EnvironmentID, due, req.ReproductionSteps, req.ExpectedResult,
-		req.ActualResult).Scan(&id, &number)
+		req.ActualResult).Scan(&id, &number, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create work item")
 		return
@@ -688,7 +744,8 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 	_ = h.store.DB().QueryRow(c.Request.Context(), `SELECT key_prefix FROM projects WHERE id=$1`, projectID).Scan(&prefix)
 	key := prefix + "-" + strconv.FormatInt(number, 10)
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "work_item", &id, "created", "Created "+req.Type+" "+key+": "+req.Title, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id, "key": key, "item_number": number})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "key": key, "item_number": number, "revision": revision})
 }
 
 func (h *Handler) UpdateWorkItem(c *gin.Context) {
@@ -721,32 +778,40 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 		return
 	}
 	due, _ := parseTimePtr(req.DueDate)
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE work_items SET feature_id=$3, parent_id=$4, type=$5, title=$6, description=$7,
 		acceptance_criteria=$8, status=$9, priority=$10, severity=$11, assignee_id=$12, reporter_id=$13,
 		estimate_points=$14, sprint_id=$15, release_id=$16, environment_id=$17, due_date=$18,
 		reproduction_steps=$19, expected_result=$20, actual_result=$21,
 		closed_at = CASE WHEN $9::varchar IN ('done','closed','verified','cancelled') THEN COALESCE(closed_at, NOW()) ELSE NULL END,
 		updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`,
+		WHERE id=$1 AND project_id=$2`+revisionClause(22)+`
+		RETURNING revision`,
 		itemID, projectID, req.FeatureID, req.ParentID, req.Type, req.Title, req.Description,
 		req.AcceptanceCriteria, req.Status, req.Priority, req.Severity, req.AssigneeID, req.ReporterID,
 		req.EstimatePoints, req.SprintID, req.ReleaseID, req.EnvironmentID, due, req.ReproductionSteps,
-		req.ExpectedResult, req.ActualResult)
+		req.ExpectedResult, req.ActualResult, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "work item", "work_items", itemID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update work item")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Work item not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "work_item", &itemID, "updated", "Updated work item "+req.Title, nil)
-	c.JSON(http.StatusOK, gin.H{"id": itemID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": itemID, "revision": revision})
 }
 
 type statusRequest struct {
-	Status string `json:"status"`
+	Status          string `json:"status"`
+	ExpectedVersion *int64 `json:"expected_version"`
 }
 
 func (h *Handler) ChangeWorkItemStatus(c *gin.Context) {
@@ -781,17 +846,28 @@ func (h *Handler) ChangeWorkItemStatus(c *gin.Context) {
 		apiError(c, http.StatusUnprocessableEntity, "INVALID_TRANSITION", "Cannot move from "+currentStatus+" to "+req.Status)
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE work_items SET status=$3,
 		closed_at = CASE WHEN $3::varchar IN ('done','closed','verified','cancelled') THEN COALESCE(closed_at, NOW()) ELSE NULL END,
-		updated_at=NOW() WHERE id=$1 AND project_id=$2`, itemID, projectID, req.Status)
-	if err != nil || tag.RowsAffected() == 0 {
+		updated_at=NOW() WHERE id=$1 AND project_id=$2`+revisionClause(4)+`
+		RETURNING revision`, itemID, projectID, req.Status, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "work item", "work_items", itemID, projectID)
+		return
+	}
+	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update status")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "work_item", &itemID, "status_changed",
 		"Moved work item from "+currentStatus+" to "+req.Status, map[string]interface{}{"from": currentStatus, "to": req.Status})
-	c.JSON(http.StatusOK, gin.H{"id": itemID, "status": req.Status})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": itemID, "status": req.Status, "revision": revision})
 }
 
 func (h *Handler) DeleteWorkItem(c *gin.Context) {
@@ -807,17 +883,24 @@ func (h *Handler) DeleteWorkItem(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `DELETE FROM work_items WHERE id=$1 AND project_id=$2`, itemID, projectID)
+	expected, ok := revisionFromRequest(c, nil)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(),
+		`DELETE FROM work_items WHERE id=$1 AND project_id=$2`+revisionClause(3)+` RETURNING revision`,
+		itemID, projectID, revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "work item", "work_items", itemID, projectID)
+		return
+	}
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete work item")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Work item not found")
-		return
-	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "work_item", &itemID, "deleted", "Deleted work item", nil)
-	c.JSON(http.StatusOK, gin.H{"id": itemID})
+	c.JSON(http.StatusOK, gin.H{"id": itemID, "revision": revision, "deleted": true})
 }
 
 func (h *Handler) validateWorkItem(ctx context.Context, projectID, selfID uuid.UUID, req *workItemRequest) error {
@@ -995,12 +1078,13 @@ func (h *Handler) ensureBelongs(ctx context.Context, table string, projectID, id
 // ---------------------------------------------------------------------------
 
 type sprintRequest struct {
-	Name      string   `json:"name"`
-	Goal      string   `json:"goal"`
-	Status    string   `json:"status"`
-	StartDate *string  `json:"start_date"`
-	EndDate   *string  `json:"end_date"`
-	Capacity  *float64 `json:"capacity"`
+	Name            string   `json:"name"`
+	Goal            string   `json:"goal"`
+	Status          string   `json:"status"`
+	StartDate       *string  `json:"start_date"`
+	EndDate         *string  `json:"end_date"`
+	Capacity        *float64 `json:"capacity"`
+	ExpectedVersion *int64   `json:"expected_version"`
 }
 
 func (h *Handler) CreateSprint(c *gin.Context) {
@@ -1019,16 +1103,18 @@ func (h *Handler) CreateSprint(c *gin.Context) {
 	start, _ := parseTimePtr(req.StartDate)
 	end, _ := parseTimePtr(req.EndDate)
 	var id uuid.UUID
+	var revision int64
 	err := h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO sprints (project_id, name, goal, status, start_date, end_date, capacity)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		projectID, req.Name, req.Goal, req.Status, start, end, req.Capacity).Scan(&id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, revision`,
+		projectID, req.Name, req.Goal, req.Status, start, end, req.Capacity).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create sprint")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "sprint", &id, "created", "Created sprint "+req.Name, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "revision": revision})
 }
 
 func (h *Handler) UpdateSprint(c *gin.Context) {
@@ -1047,23 +1133,36 @@ func (h *Handler) UpdateSprint(c *gin.Context) {
 	}
 	start, _ := parseTimePtr(req.StartDate)
 	end, _ := parseTimePtr(req.EndDate)
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE sprints SET name=$3, goal=$4, status=$5, start_date=$6, end_date=$7, capacity=$8, updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`, sprintID, projectID, req.Name, req.Goal, req.Status, start, end, req.Capacity)
-	if err != nil || tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Sprint not found")
+		WHERE id=$1 AND project_id=$2`+revisionClause(9)+`
+		RETURNING revision`, sprintID, projectID, req.Name, req.Goal, req.Status, start, end, req.Capacity,
+		revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "sprint", "sprints", sprintID, projectID)
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update sprint")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "sprint", &sprintID, "updated", "Updated sprint "+req.Name, nil)
-	c.JSON(http.StatusOK, gin.H{"id": sprintID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": sprintID, "revision": revision})
 }
 
 type releaseRequest struct {
-	Name      string  `json:"name"`
-	Version   string  `json:"version"`
-	Status    string  `json:"status"`
-	PlannedAt *string `json:"planned_at"`
-	Notes     string  `json:"notes"`
+	Name            string  `json:"name"`
+	Version         string  `json:"version"`
+	Status          string  `json:"status"`
+	PlannedAt       *string `json:"planned_at"`
+	Notes           string  `json:"notes"`
+	ExpectedVersion *int64  `json:"expected_version"`
 }
 
 func (h *Handler) CreateRelease(c *gin.Context) {
@@ -1081,16 +1180,18 @@ func (h *Handler) CreateRelease(c *gin.Context) {
 	}
 	planned, _ := parseTimePtr(req.PlannedAt)
 	var id uuid.UUID
+	var revision int64
 	err := h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO releases (project_id, name, version, status, planned_at, notes)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		projectID, req.Name, req.Version, req.Status, planned, req.Notes).Scan(&id)
+		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, revision`,
+		projectID, req.Name, req.Version, req.Status, planned, req.Notes).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create release")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "release", &id, "created", "Created release "+req.Version, nil)
-	c.JSON(http.StatusCreated, gin.H{"id": id})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusCreated, gin.H{"id": id, "revision": revision})
 }
 
 func (h *Handler) UpdateRelease(c *gin.Context) {
@@ -1112,16 +1213,28 @@ func (h *Handler) UpdateRelease(c *gin.Context) {
 	if req.Status == "released" {
 		releasedAt = time.Now().UTC()
 	}
-	tag, err := h.store.DB().Exec(c.Request.Context(), `
+	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
+	if !ok {
+		return
+	}
+	var revision int64
+	err := h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE releases SET name=$3, version=$4, status=$5, planned_at=$6, released_at=COALESCE($7, released_at),
-		notes=$8, updated_at=NOW() WHERE id=$1 AND project_id=$2`,
-		releaseID, projectID, req.Name, req.Version, req.Status, planned, releasedAt, req.Notes)
-	if err != nil || tag.RowsAffected() == 0 {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Release not found")
+		notes=$8, updated_at=NOW() WHERE id=$1 AND project_id=$2`+revisionClause(9)+`
+		RETURNING revision`,
+		releaseID, projectID, req.Name, req.Version, req.Status, planned, releasedAt, req.Notes,
+		revisionValue(expected)).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.revisionFailure(c, "release", "releases", releaseID, projectID)
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update release")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "release", &releaseID, "updated", "Updated release "+req.Version, nil)
-	c.JSON(http.StatusOK, gin.H{"id": releaseID})
+	setRevisionHeader(c, revision)
+	c.JSON(http.StatusOK, gin.H{"id": releaseID, "revision": revision})
 }
 
 // ---------------------------------------------------------------------------
