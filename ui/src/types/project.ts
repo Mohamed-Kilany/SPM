@@ -101,6 +101,13 @@ export interface ProjectSummary {
   last_activity_at?: string | null
 }
 
+/** Resolved project role and capability set returned by /auth/me. */
+export interface ProjectAccess {
+  project_id: string
+  role: ProjectRole | 'admin' | string
+  capabilities: string[]
+}
+
 export interface AuthUser {
   id: string
   username: string
@@ -109,6 +116,7 @@ export interface AuthUser {
   avatar_url: string
   role: GlobalRole | string
   project_ids: string[]
+  projects?: ProjectAccess[]
 }
 
 export interface LoginResponse {

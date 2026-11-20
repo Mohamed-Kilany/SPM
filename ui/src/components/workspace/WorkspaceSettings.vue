@@ -37,11 +37,17 @@ const removing = ref(false)
 
 const project = computed(() => store.project)
 const members = computed(() => store.workspace?.members ?? [])
-const currentRole = computed(
-  () => members.value.find((member) => member.user_id === auth.user?.id)?.role ?? '',
+const projectId = computed(() => project.value?.id ?? '')
+const canEditSettings = computed(() => auth.can(projectId.value, 'settings.write'))
+const canManageMembers = computed(() => auth.can(projectId.value, 'member.write'))
+const canManage = computed(() => canEditSettings.value || canManageMembers.value)
+// Only an owner (or a global admin) may grant the owner role; the API
+// enforces the same rule.
+const canGrantOwner = computed(
+  () => auth.isAdmin || auth.projectRole(projectId.value) === 'owner',
 )
-const canManage = computed(
-  () => auth.isAdmin || currentRole.value === 'owner' || currentRole.value === 'maintainer',
+const assignableRoles = computed(() =>
+  PROJECT_ROLES.filter((role) => canGrantOwner.value || role.value !== 'owner'),
 )
 
 const availableUsers = computed(() => {
@@ -70,7 +76,7 @@ function hydrateDetails(): void {
 watch(project, hydrateDetails, { immediate: true })
 
 async function loadDirectory(): Promise<void> {
-  if (!canManage.value) return
+  if (!canManageMembers.value) return
   directoryError.value = ''
   try {
     directory.value = await api.listDirectoryUsers()
@@ -80,7 +86,7 @@ async function loadDirectory(): Promise<void> {
 }
 
 onMounted(loadDirectory)
-watch(canManage, (allowed) => {
+watch(canManageMembers, (allowed) => {
   if (allowed) void loadDirectory()
 })
 
@@ -181,7 +187,11 @@ function initials(member: ProjectMember): string {
       class="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
     >
       <AppIcon name="lock" :size="17" class="mt-0.5 flex-none" />
-      <p>You have read-only access to project settings. Owners and maintainers can make changes.</p>
+      <p>
+        You have read-only access. Editing details needs
+        <code class="font-mono">settings.write</code>; managing members needs
+        <code class="font-mono">member.write</code>. Ask a project owner or maintainer.
+      </p>
     </div>
 
     <section class="card p-6">
@@ -198,7 +208,7 @@ function initials(member: ProjectMember): string {
         <div class="grid gap-4 lg:grid-cols-2">
           <label class="block">
             <span class="field-label">Project name</span>
-            <input v-model="details.name" class="field-input" maxlength="255" :disabled="!canManage" required />
+            <input v-model="details.name" class="field-input" maxlength="255" :disabled="!canEditSettings" required />
           </label>
           <label class="block">
             <span class="field-label">Key prefix</span>
@@ -206,7 +216,7 @@ function initials(member: ProjectMember): string {
               v-model="details.key_prefix"
               class="field-input font-mono uppercase"
               maxlength="12"
-              :disabled="!canManage"
+              :disabled="!canEditSettings"
               required
             />
             <span class="mt-1 block text-[11px] text-slate-500">2–12 uppercase letters or digits. Used for artifact keys.</span>
@@ -214,16 +224,16 @@ function initials(member: ProjectMember): string {
         </div>
         <label class="block">
           <span class="field-label">Description</span>
-          <textarea v-model="details.description" class="field-input min-h-[92px]" maxlength="4000" :disabled="!canManage" />
+          <textarea v-model="details.description" class="field-input min-h-[92px]" maxlength="4000" :disabled="!canEditSettings" />
         </label>
         <div class="grid gap-4 lg:grid-cols-2">
           <label class="block">
             <span class="field-label">Default branch</span>
-            <input v-model="details.default_branch" class="field-input font-mono" maxlength="255" :disabled="!canManage" required />
+            <input v-model="details.default_branch" class="field-input font-mono" maxlength="255" :disabled="!canEditSettings" required />
           </label>
           <label class="block">
             <span class="field-label">Project status</span>
-            <select v-model="details.status" class="field-input" :disabled="!canManage">
+            <select v-model="details.status" class="field-input" :disabled="!canEditSettings">
               <option value="active">Active</option>
               <option value="archived">Archived</option>
             </select>
@@ -233,7 +243,7 @@ function initials(member: ProjectMember): string {
           {{ detailsError }}
         </p>
         <div class="flex justify-end">
-          <button type="submit" class="btn-primary" :disabled="!canManage || detailsBusy">
+          <button type="submit" class="btn-primary" :disabled="!canEditSettings || detailsBusy">
             <AppIcon v-if="detailsBusy" name="loader" :size="15" class="animate-spin" />
             Save project
           </button>
@@ -249,7 +259,7 @@ function initials(member: ProjectMember): string {
         <span class="badge bg-indigo-50 text-indigo-700 ring-indigo-200">{{ members.length }} members</span>
       </div>
 
-      <div v-if="canManage" class="border-b border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+      <div v-if="canManageMembers" class="border-b border-slate-200 bg-slate-50/70 p-4 sm:p-5">
         <form class="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_auto]" @submit.prevent="addMember">
           <div class="relative">
             <label class="sr-only" for="member-search">Search users</label>
@@ -270,7 +280,7 @@ function initials(member: ProjectMember): string {
           </select>
           <div class="flex gap-2">
             <select v-model="newMemberRole" class="field-input" aria-label="New member role">
-              <option v-for="role in PROJECT_ROLES" :key="role.value" :value="role.value">{{ role.label }}</option>
+              <option v-for="role in assignableRoles" :key="role.value" :value="role.value">{{ role.label }}</option>
             </select>
             <button type="submit" class="btn-primary flex-none" :disabled="memberBusy || !newMemberId">
               <AppIcon v-if="memberBusy" name="loader" :size="15" class="animate-spin" />
@@ -298,17 +308,17 @@ function initials(member: ProjectMember): string {
           </div>
           <div class="flex items-center gap-2">
             <select
-              v-if="canManage && member.role !== 'owner'"
+              v-if="canManageMembers && member.role !== 'owner'"
               :value="member.role"
               class="field-input w-auto min-w-[130px] py-1.5 text-xs"
               :aria-label="`Role for ${memberName(member)}`"
               @change="updateRole(member, ($event.target as HTMLSelectElement).value)"
             >
-              <option v-for="role in PROJECT_ROLES" :key="role.value" :value="role.value">{{ role.label }}</option>
+              <option v-for="role in assignableRoles" :key="role.value" :value="role.value">{{ role.label }}</option>
             </select>
             <span v-else class="badge bg-slate-100 text-slate-700 ring-slate-200">{{ roleLabel(member.role) }}</span>
             <button
-              v-if="canManage && member.role !== 'owner'"
+              v-if="canManageMembers && member.role !== 'owner'"
               type="button"
               class="btn-ghost text-red-600 hover:bg-red-50"
               :aria-label="`Remove ${memberName(member)}`"

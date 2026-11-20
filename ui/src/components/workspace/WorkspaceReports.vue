@@ -8,6 +8,7 @@ import DonutChart from '../charts/DonutChart.vue'
 import BarChart from '../charts/BarChart.vue'
 import BurnChart from '../charts/BurnChart.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
+import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
 import { api } from '../../api/client'
 import { dateInputValue, statusLabel } from '../../lib/workspace'
@@ -15,7 +16,11 @@ import { formatDateTime } from '../../lib/format'
 import type { ProjectReport, ReleaseReadiness, Sprint, WorkItem } from '../../types/workspace'
 
 const store = useWorkspaceStore()
+const auth = useAuthStore()
 const toast = useToastStore()
+
+const canPlan = computed(() => auth.can(store.projectId, 'planning.write'))
+const canTest = computed(() => auth.can(store.projectId, 'test.write'))
 
 const report = ref<ProjectReport | null>(null)
 const loading = ref(false)
@@ -81,6 +86,7 @@ const sprintForm = reactive({
 })
 
 function openSprint(sprint?: Sprint): void {
+  if (!canPlan.value) return
   sprintEditingId.value = sprint?.id ?? null
   Object.assign(sprintForm, {
     name: sprint?.name ?? '',
@@ -95,6 +101,7 @@ function openSprint(sprint?: Sprint): void {
 }
 
 async function saveSprint(): Promise<void> {
+  if (!canPlan.value) return
   if (!sprintForm.name.trim()) {
     sprintError.value = 'Sprint name is required.'
     return
@@ -138,6 +145,7 @@ const importFileContent = ref('')
 const importSummary = ref('')
 
 function openImport(): void {
+  if (!canTest.value) return
   importEnvironment.value = store.workspace?.environments[0]?.id ?? ''
   importFeature.value = ''
   importFileName.value = ''
@@ -158,6 +166,7 @@ async function chooseImportFile(event: Event): Promise<void> {
 }
 
 async function submitImport(): Promise<void> {
+  if (!canTest.value) return
   if (!importFileContent.value.trim()) {
     importError.value = 'Choose a JUnit XML or SPM JSON result file first.'
     return
@@ -324,7 +333,7 @@ const burnPoints = computed(() => {
         <h2 class="text-lg font-semibold tracking-tight text-slate-900">Reports &amp; release control</h2>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn-secondary" @click="openImport">
+        <button v-if="canTest" type="button" class="btn-secondary" @click="openImport">
           <AppIcon name="inbox" :size="15" /> Import results
         </button>
         <button type="button" class="btn-secondary" @click="exportReport('features', 'csv')">
@@ -518,7 +527,7 @@ const burnPoints = computed(() => {
         <div>
           <h3 class="text-sm font-semibold text-slate-900">Sprint execution</h3>
         </div>
-        <button type="button" class="btn-secondary text-xs" @click="openSprint()">
+        <button v-if="canPlan" type="button" class="btn-secondary text-xs" @click="openSprint()">
           <AppIcon name="plus" :size="13" /> Sprint
         </button>
       </div>
@@ -545,7 +554,7 @@ const burnPoints = computed(() => {
             <span>{{ sprintDone(sprint) }}/{{ sprintItems(sprint).length }} items · {{ sprintPoints(sprint) }} pts</span>
             <span v-if="sprint.capacity">{{ sprint.capacity }} capacity</span>
           </div>
-          <button type="button" class="btn-ghost mt-2 px-0 text-xs" @click="openSprint(sprint)">
+          <button v-if="canPlan" type="button" class="btn-ghost mt-2 px-0 text-xs" @click="openSprint(sprint)">
             <AppIcon name="edit" :size="12" /> Edit sprint
           </button>
         </article>

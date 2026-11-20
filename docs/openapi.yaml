@@ -275,6 +275,7 @@ paths:
       summary: "Get a project"
       operationId: get_api_v1_projects_id
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -297,6 +298,7 @@ paths:
       summary: "Update a project"
       operationId: patch_api_v1_projects_id
       x-spm-auth: project-admin
+      x-spm-capability: settings.write
       security:
         - bearerAuth: []
       responses:
@@ -327,6 +329,7 @@ paths:
       summary: "List project activity"
       operationId: get_api_v1_projects_id_activity
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -350,6 +353,7 @@ paths:
       summary: "Ask a question"
       operationId: post_api_v1_projects_id_ai_ask
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -380,6 +384,7 @@ paths:
       summary: "Get AI insights"
       operationId: get_api_v1_projects_id_ai_insights
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -403,6 +408,7 @@ paths:
       summary: "Search with AI"
       operationId: get_api_v1_projects_id_ai_search
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -427,6 +433,7 @@ paths:
       summary: "Create a branch"
       operationId: post_api_v1_projects_id_branches
       x-spm-auth: project-write
+      x-spm-capability: code.write
       security:
         - bearerAuth: []
       responses:
@@ -458,6 +465,7 @@ paths:
       summary: "Create an environment"
       operationId: post_api_v1_projects_id_environments
       x-spm-auth: project-write
+      x-spm-capability: delivery.deploy
       security:
         - bearerAuth: []
       responses:
@@ -489,6 +497,7 @@ paths:
       summary: "Create epic"
       operationId: post_api_v1_projects_id_epics
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -520,6 +529,7 @@ paths:
       summary: "Delete epic"
       operationId: delete_api_v1_projects_id_epics_epicId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -543,6 +553,7 @@ paths:
       summary: "Update epic"
       operationId: put_api_v1_projects_id_epics_epicId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -577,6 +588,7 @@ paths:
       summary: "Create feature"
       operationId: post_api_v1_projects_id_features
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -608,6 +620,7 @@ paths:
       summary: "Delete feature"
       operationId: delete_api_v1_projects_id_features_featureId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -631,6 +644,7 @@ paths:
       summary: "Update feature"
       operationId: put_api_v1_projects_id_features_featureId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -665,6 +679,7 @@ paths:
       summary: "Create a link"
       operationId: post_api_v1_projects_id_links
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -696,6 +711,7 @@ paths:
       summary: "Delete a link"
       operationId: delete_api_v1_projects_id_links_linkId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -720,6 +736,7 @@ paths:
       summary: "List project members"
       operationId: get_api_v1_projects_id_members
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -743,6 +760,7 @@ paths:
       summary: "Add a project member"
       operationId: post_api_v1_projects_id_members
       x-spm-auth: project-admin
+      x-spm-capability: member.write
       security:
         - bearerAuth: []
       responses:
@@ -775,6 +793,7 @@ paths:
       summary: "Remove a project member"
       operationId: delete_api_v1_projects_id_members_userId
       x-spm-auth: project-admin
+      x-spm-capability: member.write
       security:
         - bearerAuth: []
       responses:
@@ -798,6 +817,7 @@ paths:
       summary: "Update a project member"
       operationId: patch_api_v1_projects_id_members_userId
       x-spm-auth: project-admin
+      x-spm-capability: member.write
       security:
         - bearerAuth: []
       responses:
@@ -832,6 +852,7 @@ paths:
       summary: "Create prd"
       operationId: post_api_v1_projects_id_prds
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -863,6 +884,7 @@ paths:
       summary: "Delete prd"
       operationId: delete_api_v1_projects_id_prds_prdId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -886,6 +908,7 @@ paths:
       summary: "Update prd"
       operationId: put_api_v1_projects_id_prds_prdId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -920,6 +943,7 @@ paths:
       summary: "Create a pull request"
       operationId: post_api_v1_projects_id_pull_requests
       x-spm-auth: project-write
+      x-spm-capability: code.write
       security:
         - bearerAuth: []
       responses:
@@ -951,6 +975,7 @@ paths:
       summary: "Update a pull request"
       operationId: put_api_v1_projects_id_pull_requests_prId
       x-spm-auth: project-write
+      x-spm-capability: code.write
       security:
         - bearerAuth: []
       responses:
@@ -985,6 +1010,7 @@ paths:
       summary: "Get file"
       operationId: get_api_v1_projects_id_pull_requests_prId_files
       x-spm-auth: project-read
+      x-spm-capability: code.read
       security:
         - bearerAuth: []
       responses:
@@ -1012,6 +1038,7 @@ paths:
       summary: "Merge a pull request"
       operationId: post_api_v1_projects_id_pull_requests_prId_merge
       x-spm-auth: project-write
+      x-spm-capability: pr.merge
       security:
         - bearerAuth: []
       responses:
@@ -1047,6 +1074,7 @@ paths:
       summary: "Get release readiness"
       operationId: get_api_v1_projects_id_release_readiness
       x-spm-auth: project-read
+      x-spm-capability: delivery.read
       security:
         - bearerAuth: []
       responses:
@@ -1070,6 +1098,7 @@ paths:
       summary: "Create release"
       operationId: post_api_v1_projects_id_releases
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -1101,6 +1130,7 @@ paths:
       summary: "Update release"
       operationId: put_api_v1_projects_id_releases_releaseId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -1135,6 +1165,7 @@ paths:
       summary: "Get project reports"
       operationId: get_api_v1_projects_id_reports
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -1158,6 +1189,7 @@ paths:
       summary: "Export a report"
       operationId: get_api_v1_projects_id_reports_export
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -1181,6 +1213,7 @@ paths:
       summary: "Create a repository"
       operationId: post_api_v1_projects_id_repositories
       x-spm-auth: project-write
+      x-spm-capability: code.write
       security:
         - bearerAuth: []
       responses:
@@ -1212,6 +1245,7 @@ paths:
       summary: "Get blob"
       operationId: get_api_v1_projects_id_repositories_repoId_blob
       x-spm-auth: project-read
+      x-spm-capability: code.read
       security:
         - bearerAuth: []
       responses:
@@ -1239,6 +1273,7 @@ paths:
       summary: "Get branch"
       operationId: get_api_v1_projects_id_repositories_repoId_branches
       x-spm-auth: project-read
+      x-spm-capability: code.read
       security:
         - bearerAuth: []
       responses:
@@ -1266,6 +1301,7 @@ paths:
       summary: "Get commit"
       operationId: get_api_v1_projects_id_repositories_repoId_commits
       x-spm-auth: project-read
+      x-spm-capability: code.read
       security:
         - bearerAuth: []
       responses:
@@ -1293,6 +1329,7 @@ paths:
       summary: "Provision a repository"
       operationId: post_api_v1_projects_id_repositories_repoId_provision
       x-spm-auth: project-write
+      x-spm-capability: code.write
       security:
         - bearerAuth: []
       responses:
@@ -1320,6 +1357,7 @@ paths:
       summary: "Get tree"
       operationId: get_api_v1_projects_id_repositories_repoId_tree
       x-spm-auth: project-read
+      x-spm-capability: code.read
       security:
         - bearerAuth: []
       responses:
@@ -1347,6 +1385,7 @@ paths:
       summary: "Get project settings"
       operationId: get_api_v1_projects_id_settings
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -1370,6 +1409,7 @@ paths:
       summary: "Update project settings"
       operationId: put_api_v1_projects_id_settings
       x-spm-auth: project-admin
+      x-spm-capability: settings.write
       security:
         - bearerAuth: []
       responses:
@@ -1401,6 +1441,7 @@ paths:
       summary: "Create sprint"
       operationId: post_api_v1_projects_id_sprints
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -1432,6 +1473,7 @@ paths:
       summary: "Update sprint"
       operationId: put_api_v1_projects_id_sprints_sprintId
       x-spm-auth: project-write
+      x-spm-capability: planning.write
       security:
         - bearerAuth: []
       responses:
@@ -1466,6 +1508,7 @@ paths:
       summary: "Stream project events"
       operationId: get_api_v1_projects_id_stream
       x-spm-auth: sse-ticket
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
         - streamTicket: []
@@ -1490,6 +1533,7 @@ paths:
       summary: "Create a test case"
       operationId: post_api_v1_projects_id_test_cases
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1521,6 +1565,7 @@ paths:
       summary: "Delete test case"
       operationId: delete_api_v1_projects_id_test_cases_caseId
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1544,6 +1589,7 @@ paths:
       summary: "Update test case"
       operationId: put_api_v1_projects_id_test_cases_caseId
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1578,6 +1624,7 @@ paths:
       summary: "Create a test run"
       operationId: post_api_v1_projects_id_test_runs
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1609,6 +1656,7 @@ paths:
       summary: "Import test results"
       operationId: post_api_v1_projects_id_test_runs_import
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1640,6 +1688,7 @@ paths:
       summary: "Update result"
       operationId: patch_api_v1_projects_id_test_runs_runId_results_resultId
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1678,6 +1727,7 @@ paths:
       summary: "Create bug"
       operationId: post_api_v1_projects_id_test_runs_runId_results_resultId_bug
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1717,6 +1767,7 @@ paths:
       summary: "Update step"
       operationId: patch_api_v1_projects_id_test_runs_runId_results_resultId_steps_stepResultId
       x-spm-auth: project-write
+      x-spm-capability: test.write
       security:
         - bearerAuth: []
       responses:
@@ -1759,6 +1810,7 @@ paths:
       summary: "Create a ticket"
       operationId: post_api_v1_projects_id_tickets
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1790,6 +1842,7 @@ paths:
       summary: "Delete ticket"
       operationId: delete_api_v1_projects_id_tickets_tid
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1813,6 +1866,7 @@ paths:
       summary: "Update ticket"
       operationId: put_api_v1_projects_id_tickets_tid
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1847,6 +1901,7 @@ paths:
       summary: "Update state"
       operationId: patch_api_v1_projects_id_tickets_tid_state
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1881,6 +1936,7 @@ paths:
       summary: "Get traceability"
       operationId: get_api_v1_projects_id_traceability
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -1905,6 +1961,7 @@ paths:
       summary: "Create work item"
       operationId: post_api_v1_projects_id_work_items
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1936,6 +1993,7 @@ paths:
       summary: "Delete work item"
       operationId: delete_api_v1_projects_id_work_items_itemId
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1959,6 +2017,7 @@ paths:
       summary: "Update work item"
       operationId: put_api_v1_projects_id_work_items_itemId
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -1993,6 +2052,7 @@ paths:
       summary: "Update statu"
       operationId: patch_api_v1_projects_id_work_items_itemId_status
       x-spm-auth: project-write
+      x-spm-capability: work_item.write
       security:
         - bearerAuth: []
       responses:
@@ -2027,6 +2087,7 @@ paths:
       summary: "Get the project workspace"
       operationId: get_api_v1_projects_id_workspace
       x-spm-auth: project-read
+      x-spm-capability: project.read
       security:
         - bearerAuth: []
       responses:
@@ -2326,7 +2387,17 @@ components:
       properties:
         id: {type: string, format: uuid}
         username: {type: string}
-        role: {type: string}
+        email: {type: string}
+        display_name: {type: string}
+        avatar_url: {type: string}
+        role: {type: string, enum: [admin, member, viewer]}
+        project_ids:
+          type: array
+          items: {type: string, format: uuid}
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectAccess'
     ProjectSummary:
       type: object
       properties:
@@ -2656,3 +2727,11 @@ components:
       type: object
       additionalProperties: true
       description: Provider-specific webhook payload. Authentication uses the provider signature or token.
+    ProjectAccess:
+      type: object
+      properties:
+        project_id: {type: string, format: uuid}
+        role: {type: string, enum: [owner, maintainer, developer, tester, viewer, admin]}
+        capabilities:
+          type: array
+          items: {type: string}

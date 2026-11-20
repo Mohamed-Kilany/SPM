@@ -460,6 +460,28 @@ properties:
   username: { type: string }
   email: { type: string }
   role: { type: string }`,
+	"ProjectAccess": `type: object
+properties:
+  project_id: { type: string, format: uuid }
+  role: { type: string, enum: [owner, maintainer, developer, tester, viewer, admin] }
+  capabilities:
+    type: array
+    items: { type: string }`,
+	"User": `type: object
+properties:
+  id: { type: string, format: uuid }
+  username: { type: string }
+  email: { type: string }
+  display_name: { type: string }
+  avatar_url: { type: string }
+  role: { type: string, enum: [admin, member, viewer] }
+  project_ids:
+    type: array
+    items: { type: string, format: uuid }
+  projects:
+    type: array
+    items:
+      $ref: '#/components/schemas/ProjectAccess'`,
 	"LoginResponse": `type: object
 properties:
   token: { type: string }
@@ -487,6 +509,9 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	fmt.Fprintf(&b, "summary: %q\n", summary)
 	fmt.Fprintf(&b, "operationId: %s\n", operationID(route.Method, openAPIPath))
 	fmt.Fprintf(&b, "x-spm-auth: %s\n", route.Auth)
+	if route.Capability != "" {
+		fmt.Fprintf(&b, "x-spm-capability: %s\n", route.Capability)
+	}
 	b.WriteString(security)
 	b.WriteString("responses:\n")
 

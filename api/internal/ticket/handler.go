@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/gitengine"
 	"spm-platform/api/internal/models"
@@ -67,6 +68,10 @@ type createResponse struct {
 func (h *Handler) Create(c *gin.Context) {
 	projectID, ok := parseProjectID(c)
 	if !ok {
+		return
+	}
+	if auth.ProjectRoleFrom(c) == auth.ProjectRoleTester {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Testers create defects from test results and change ticket state; they cannot create general tickets")
 		return
 	}
 	var req createRequest
@@ -161,6 +166,10 @@ type updateResponse struct {
 func (h *Handler) Update(c *gin.Context) {
 	projectID, ok := parseProjectID(c)
 	if !ok {
+		return
+	}
+	if auth.ProjectRoleFrom(c) == auth.ProjectRoleTester {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Testers can change ticket state but cannot edit ticket details")
 		return
 	}
 	ticketID, ok := parseTicketID(c)
@@ -307,6 +316,10 @@ type deleteResponse struct {
 func (h *Handler) Delete(c *gin.Context) {
 	projectID, ok := parseProjectID(c)
 	if !ok {
+		return
+	}
+	if auth.ProjectRoleFrom(c) == auth.ProjectRoleTester {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Testers cannot delete work items")
 		return
 	}
 	ticketID, ok := parseTicketID(c)

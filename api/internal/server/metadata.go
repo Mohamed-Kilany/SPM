@@ -1,6 +1,10 @@
 package server
 
-import "net/http"
+import (
+	"net/http"
+
+	"spm-platform/api/internal/auth"
+)
 
 // AuthLevel describes the authorization contract of a route. It is used by the
 // OpenAPI generator and by the contract test; it does not enforce anything by
@@ -20,17 +24,34 @@ const (
 
 // Route is one method/path pair on the HTTP surface.
 type Route struct {
-	Method string
-	Path   string
-	Auth   AuthLevel
+	Method     string
+	Path       string
+	Auth       AuthLevel
+	Capability auth.Capability
+}
+
+func authLevelForCapability(capability auth.Capability) AuthLevel {
+	switch capability {
+	case auth.CapProjectRead, auth.CapCodeRead, auth.CapDeliveryRead:
+		return AuthProjectRead
+	case auth.CapSettingsWrite, auth.CapMemberWrite:
+		return AuthProjectAdmin
+	default:
+		return AuthProjectWrite
+	}
 }
 
 // Routes returns the canonical route inventory. Register and this table are
 // checked against each other by routes_test.go, so a new route cannot ship
-// without appearing in the contract pipeline.
+// without appearing in the contract pipeline. Every project-scoped route
+// declares the capability its middleware enforces.
 func Routes() []Route {
-	r := func(method, path string, auth AuthLevel) Route {
-		return Route{Method: method, Path: path, Auth: auth}
+	r := func(method, path string, authLevel AuthLevel) Route {
+		return Route{Method: method, Path: path, Auth: authLevel}
+	}
+	// Project route with an explicit capability.
+	p := func(method, path string, capability auth.Capability) Route {
+		return Route{Method: method, Path: path, Auth: authLevelForCapability(capability), Capability: capability}
 	}
 
 	return []Route{
@@ -56,79 +77,84 @@ func Routes() []Route {
 		// Projects.
 		r(http.MethodGet, "/api/v1/projects", AuthBearer),
 		r(http.MethodPost, "/api/v1/projects", AuthMember),
-		r(http.MethodGet, "/api/v1/projects/:id", AuthProjectRead),
-		r(http.MethodPatch, "/api/v1/projects/:id", AuthProjectAdmin),
-		r(http.MethodGet, "/api/v1/projects/:id/workspace", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/activity", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/traceability", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/reports", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/reports/export", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/release-readiness", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/settings", AuthProjectRead),
-		r(http.MethodPut, "/api/v1/projects/:id/settings", AuthProjectAdmin),
-		r(http.MethodGet, "/api/v1/projects/:id/members", AuthProjectRead),
-		r(http.MethodPost, "/api/v1/projects/:id/members", AuthProjectAdmin),
-		r(http.MethodPatch, "/api/v1/projects/:id/members/:userId", AuthProjectAdmin),
-		r(http.MethodDelete, "/api/v1/projects/:id/members/:userId", AuthProjectAdmin),
-		r(http.MethodGet, "/api/v1/projects/:id/stream", AuthSSETicket),
+		p(http.MethodGet, "/api/v1/projects/:id", auth.CapProjectRead),
+		p(http.MethodPatch, "/api/v1/projects/:id", auth.CapSettingsWrite),
+		p(http.MethodGet, "/api/v1/projects/:id/workspace", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/activity", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/traceability", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/reports", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/reports/export", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/release-readiness", auth.CapDeliveryRead),
+		p(http.MethodGet, "/api/v1/projects/:id/settings", auth.CapProjectRead),
+		p(http.MethodPut, "/api/v1/projects/:id/settings", auth.CapSettingsWrite),
+		p(http.MethodGet, "/api/v1/projects/:id/members", auth.CapProjectRead),
+		p(http.MethodPost, "/api/v1/projects/:id/members", auth.CapMemberWrite),
+		p(http.MethodPatch, "/api/v1/projects/:id/members/:userId", auth.CapMemberWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/members/:userId", auth.CapMemberWrite),
+		{
+			Method:     http.MethodGet,
+			Path:       "/api/v1/projects/:id/stream",
+			Auth:       AuthSSETicket,
+			Capability: auth.CapProjectRead,
+		},
 
 		// AI.
-		r(http.MethodGet, "/api/v1/projects/:id/ai/search", AuthProjectRead),
-		r(http.MethodPost, "/api/v1/projects/:id/ai/ask", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/ai/insights", AuthProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/ai/search", auth.CapProjectRead),
+		p(http.MethodPost, "/api/v1/projects/:id/ai/ask", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/ai/insights", auth.CapProjectRead),
 
 		// Repository browsing and pull requests.
-		r(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/tree", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/blob", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/commits", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/branches", AuthProjectRead),
-		r(http.MethodGet, "/api/v1/projects/:id/pull-requests/:prId/files", AuthProjectRead),
-		r(http.MethodPost, "/api/v1/projects/:id/repositories", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/repositories/:repoId/provision", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/branches", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/pull-requests", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/pull-requests/:prId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/pull-requests/:prId/merge", AuthProjectWrite),
+		p(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/tree", auth.CapCodeRead),
+		p(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/blob", auth.CapCodeRead),
+		p(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/commits", auth.CapCodeRead),
+		p(http.MethodGet, "/api/v1/projects/:id/repositories/:repoId/branches", auth.CapCodeRead),
+		p(http.MethodGet, "/api/v1/projects/:id/pull-requests/:prId/files", auth.CapCodeRead),
+		p(http.MethodPost, "/api/v1/projects/:id/repositories", auth.CapCodeWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/repositories/:repoId/provision", auth.CapCodeWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/branches", auth.CapCodeWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/pull-requests", auth.CapCodeWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/pull-requests/:prId", auth.CapCodeWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/pull-requests/:prId/merge", auth.CapPRMerge),
 
 		// Tickets.
-		r(http.MethodPost, "/api/v1/projects/:id/tickets", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/tickets/:tid", AuthProjectWrite),
-		r(http.MethodPatch, "/api/v1/projects/:id/tickets/:tid/state", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/tickets/:tid", AuthProjectWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/tickets", auth.CapWorkItemWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/tickets/:tid", auth.CapWorkItemWrite),
+		p(http.MethodPatch, "/api/v1/projects/:id/tickets/:tid/state", auth.CapWorkItemWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/tickets/:tid", auth.CapWorkItemWrite),
 
 		// Planning.
-		r(http.MethodPost, "/api/v1/projects/:id/prds", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/prds/:prdId", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/prds/:prdId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/epics", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/epics/:epicId", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/epics/:epicId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/features", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/features/:featureId", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/features/:featureId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/work-items", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/work-items/:itemId", AuthProjectWrite),
-		r(http.MethodPatch, "/api/v1/projects/:id/work-items/:itemId/status", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/work-items/:itemId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/sprints", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/sprints/:sprintId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/releases", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/releases/:releaseId", AuthProjectWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/prds", auth.CapPlanningWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/prds/:prdId", auth.CapPlanningWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/prds/:prdId", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/epics", auth.CapPlanningWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/epics/:epicId", auth.CapPlanningWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/epics/:epicId", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/features", auth.CapPlanningWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/features/:featureId", auth.CapPlanningWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/features/:featureId", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/work-items", auth.CapWorkItemWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/work-items/:itemId", auth.CapWorkItemWrite),
+		p(http.MethodPatch, "/api/v1/projects/:id/work-items/:itemId/status", auth.CapWorkItemWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/work-items/:itemId", auth.CapWorkItemWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/sprints", auth.CapPlanningWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/sprints/:sprintId", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/releases", auth.CapPlanningWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/releases/:releaseId", auth.CapPlanningWrite),
 
 		// Test management.
-		r(http.MethodPost, "/api/v1/projects/:id/test-cases", AuthProjectWrite),
-		r(http.MethodPut, "/api/v1/projects/:id/test-cases/:caseId", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/test-cases/:caseId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/test-runs", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/test-runs/import", AuthProjectWrite),
-		r(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId", AuthProjectWrite),
-		r(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/steps/:stepResultId", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/bug", AuthProjectWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-cases", auth.CapTestWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/test-cases/:caseId", auth.CapTestWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/test-cases/:caseId", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-runs", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-runs/import", auth.CapTestWrite),
+		p(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId", auth.CapTestWrite),
+		p(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/steps/:stepResultId", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/bug", auth.CapTestWrite),
 
 		// Delivery configuration and links.
-		r(http.MethodPost, "/api/v1/projects/:id/environments", AuthProjectWrite),
-		r(http.MethodPost, "/api/v1/projects/:id/links", AuthProjectWrite),
-		r(http.MethodDelete, "/api/v1/projects/:id/links/:linkId", AuthProjectWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/environments", auth.CapDeliveryDeploy),
+		p(http.MethodPost, "/api/v1/projects/:id/links", auth.CapPlanningWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/links/:linkId", auth.CapPlanningWrite),
 
 		// Inbound webhooks authenticate by signature or token.
 		r(http.MethodPost, "/api/v1/webhooks/gitea", AuthPublic),

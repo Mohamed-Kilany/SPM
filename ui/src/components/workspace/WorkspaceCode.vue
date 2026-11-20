@@ -6,6 +6,7 @@ import BaseModal from '../BaseModal.vue'
 import EmptyState from './EmptyState.vue'
 import StatusPill from './StatusPill.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
+import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
 import { api } from '../../api/client'
 import { formatDateTime, shortId, timeAgo } from '../../lib/format'
@@ -21,9 +22,13 @@ import type {
 } from '../../types/workspace'
 
 const store = useWorkspaceStore()
+const auth = useAuthStore()
 const toast = useToastStore()
 const router = useRouter()
 const route = useRoute()
+
+const canWriteCode = computed(() => auth.can(store.projectId, 'code.write'))
+const canMerge = computed(() => auth.can(store.projectId, 'pr.merge'))
 
 type CodeView = 'source' | 'commits' | 'branches' | 'pull-requests'
 const activeView = ref<CodeView>('source')
@@ -330,6 +335,7 @@ async function refreshRepository(): Promise<void> {
 }
 
 async function repairRepository(): Promise<void> {
+  if (!canWriteCode.value) return
   const repository = selectedRepository.value
   if (!repository || provisionBusy.value) return
   provisionBusy.value = true
@@ -362,6 +368,7 @@ async function openPrFiles(pr: PullRequest): Promise<void> {
 }
 
 function openBranchModal(): void {
+  if (!canWriteCode.value) return
   const item = workItems.value[0]
   Object.assign(branchForm, {
     repository_id: selectedRepository.value?.id ?? repositories.value[0]?.id ?? '',
@@ -373,6 +380,7 @@ function openBranchModal(): void {
 }
 
 async function saveBranch(): Promise<void> {
+  if (!canWriteCode.value) return
   if (!branchForm.repository_id || !branchForm.work_item_id || !branchForm.name.trim()) {
     branchError.value = 'Repository, work item and branch name are required.'
     return
@@ -400,6 +408,7 @@ async function saveBranch(): Promise<void> {
 }
 
 function openPrModal(): void {
+  if (!canWriteCode.value) return
   const item = workItems.value[0]
   const repositoryId = selectedRepository.value?.id ?? repositories.value[0]?.id ?? ''
   const branch = store.branches.find(
@@ -418,6 +427,7 @@ function openPrModal(): void {
 }
 
 async function savePr(): Promise<void> {
+  if (!canWriteCode.value) return
   if (!prForm.repository_id || !prForm.work_item_id || !prForm.title.trim()) {
     prError.value = 'Repository, work item and title are required.'
     return
@@ -457,12 +467,14 @@ async function savePr(): Promise<void> {
 }
 
 function openMerge(pr: PullRequest): void {
+  if (!canMerge.value) return
   mergeTarget.value = pr
   mergeSha.value = ''
   mergeOpen.value = true
 }
 
 async function confirmMerge(): Promise<void> {
+  if (!canMerge.value) return
   const pr = mergeTarget.value
   if (!pr || mergeBusy.value) return
   mergeBusy.value = true
@@ -551,16 +563,16 @@ watch(
           <AppIcon name="refresh" :size="15" :class="{ 'animate-spin': treeLoading }" />
           Refresh
         </button>
-        <button v-if="selectedRepository" type="button" class="btn-secondary" :disabled="provisionBusy" @click="repairRepository">
+        <button v-if="selectedRepository && canWriteCode" type="button" class="btn-secondary" :disabled="provisionBusy" @click="repairRepository">
           <AppIcon v-if="provisionBusy" name="loader" :size="15" class="animate-spin" />
           <AppIcon v-else name="shield" :size="15" />
           Repair
         </button>
-        <button type="button" class="btn-secondary" :disabled="!repositories.length || !workItems.length" @click="openBranchModal">
+        <button v-if="canWriteCode" type="button" class="btn-secondary" :disabled="!repositories.length || !workItems.length" @click="openBranchModal">
           <AppIcon name="branch" :size="15" />
           New branch
         </button>
-        <button type="button" class="btn-primary" :disabled="!repositories.length || !workItems.length" @click="openPrModal">
+        <button v-if="canWriteCode" type="button" class="btn-primary" :disabled="!repositories.length || !workItems.length" @click="openPrModal">
           <AppIcon name="pullRequest" :size="15" />
           Open pull request
         </button>
@@ -661,7 +673,7 @@ watch(
                 <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                   <p class="font-semibold">Repository unavailable</p>
                   <p class="mt-1 text-xs leading-relaxed">{{ treeError }}</p>
-                  <button type="button" class="btn-secondary mt-3 py-1.5 text-xs" :disabled="provisionBusy" @click="repairRepository">
+                  <button v-if="canWriteCode" type="button" class="btn-secondary mt-3 py-1.5 text-xs" :disabled="provisionBusy" @click="repairRepository">
                     <AppIcon v-if="provisionBusy" name="loader" :size="13" class="animate-spin" />
                     <AppIcon v-else name="shield" :size="13" />
                     Repair repository
@@ -849,7 +861,7 @@ watch(
                   Files
                 </button>
                 <button
-                  v-if="pr.status === 'open'"
+                  v-if="pr.status === 'open' && canMerge"
                   type="button"
                   class="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
                   @click="openMerge(pr)"

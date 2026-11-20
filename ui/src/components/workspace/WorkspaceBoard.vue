@@ -8,6 +8,7 @@ import StatusPill from './StatusPill.vue'
 import PriorityPill from './PriorityPill.vue'
 import EmptyState from './EmptyState.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
+import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
 import { api } from '../../api/client'
 import {
@@ -25,6 +26,7 @@ import { priorityRank, timeAgo } from '../../lib/format'
 import type { WorkItem } from '../../types/workspace'
 
 const store = useWorkspaceStore()
+const auth = useAuthStore()
 const toast = useToastStore()
 const route = useRoute()
 const router = useRouter()
@@ -171,6 +173,7 @@ function clearFilters(): void {
 }
 
 function onDragStart(item: WorkItem, event: DragEvent): void {
+  if (!canWriteWorkItems.value) return
   draggingId.value = item.id
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
@@ -245,6 +248,17 @@ const selectedItem = computed(() =>
 )
 
 const editing = computed(() => Boolean(itemEditingId.value && selectedItem.value))
+
+// Capability gate. Testers hold work_item.write for defects and status moves
+// but cannot edit or delete existing work items; the API enforces the same
+// rules, so a stale client still cannot escalate.
+const projectId = computed(() => store.projectId)
+const canWriteWorkItems = computed(() => auth.can(projectId.value, 'work_item.write'))
+const isTester = computed(() => auth.projectRole(projectId.value) === 'tester')
+const canManageWorkItems = computed(() => canWriteWorkItems.value && !isTester.value)
+const canLinkBranch = computed(() => auth.can(projectId.value, 'code.write'))
+const formDisabled = computed(() => editing.value && !canManageWorkItems.value)
+
 const linkedBranches = computed(() => (selectedItem.value ? branchesFor(selectedItem.value.id) : []))
 const linkedPrs = computed(() => (selectedItem.value ? prsFor(selectedItem.value.id) : []))
 
@@ -297,6 +311,7 @@ function resetItemForm(): void {
 }
 
 function openCreateItem(type = 'task'): void {
+  if (isTester.value) type = 'bug'
   itemEditingId.value = null
   resetItemForm()
   itemForm.type = type
@@ -358,6 +373,7 @@ function onTypeChange(): void {
 }
 
 async function saveItem(): Promise<void> {
+  if (formDisabled.value) return
   if (!itemForm.title.trim()) {
     itemError.value = 'A work item title is required.'
     return
@@ -491,11 +507,11 @@ function openDelivery(): void {
         <h2 class="text-lg font-semibold tracking-tight text-slate-900">Delivery board</h2>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn-secondary" @click="openCreateItem('bug')">
+        <button v-if="canWriteWorkItems" type="button" class="btn-secondary" @click="openCreateItem('bug')">
           <AppIcon name="alert" :size="15" />
           New bug
         </button>
-        <button type="button" class="btn-primary" @click="openCreateItem('task')">
+        <button v-if="canManageWorkItems" type="button" class="btn-primary" @click="openCreateItem('task')">
           <AppIcon name="plus" :size="15" />
           New work item
         </button>
@@ -553,8 +569,8 @@ function openDelivery(): void {
       v-if="!store.workItems.length"
       icon="board"
       title="No work items yet"
-      action-label="Create work item"
-      @action="openCreateItem('task')"
+      :action-label="canManageWorkItems ? 'Create work item' : canWriteWorkItems ? 'Raise a defect' : ''"
+      @action="openCreateItem(canManageWorkItems ? 'task' : 'bug')"
     />
 
     <div v-else class="overflow-x-auto pb-2">
@@ -580,7 +596,7 @@ function openDelivery(): void {
               :key="item.id"
               class="group cursor-pointer rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:border-indigo-200 hover:shadow"
               :class="draggingId === item.id || movingId === item.id ? 'opacity-50' : ''"
-              draggable="true"
+              :draggable="canWriteWorkItems"
               @dragstart="onDragStart(item, $event)"
               @dragend="draggingId = null; dropColumn = null"
               @click="openEditItem(item)"
@@ -631,7 +647,7 @@ function openDelivery(): void {
             </article>
 
             <button
-              v-if="!column.items.length"
+              v-if="!column.items.length && canManageWorkItems"
               type="button"
               class="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 py-5 text-[11px] font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
               @click="openCreateItem(column.key === 'backlog' ? 'task' : 'task')"
@@ -700,6 +716,14 @@ function openDelivery(): void {
           </button>
         </div>
 
+        <div
+          v-if="editing && isTester"
+          class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+        >
+          Testers can change status and raise defects, but cannot edit work item details.
+        </div>
+
+        <fieldset :disabled="formDisabled" class="space-y-5">
         <div>
           <label class="field-label" for="item-title">Title</label>
           <input id="item-title" v-model="itemForm.title" data-autofocus class="field-input" placeholder="Describe the outcome, not the activity" />
@@ -837,6 +861,7 @@ function openDelivery(): void {
             </select>
           </div>
         </div>
+        </fieldset>
 
         <div v-if="editing" class="rounded-xl border border-slate-200 p-4">
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -865,7 +890,7 @@ function openDelivery(): void {
           </div>
           <p v-else class="mt-3 text-[11px] text-slate-600">No code linked yet.</p>
 
-          <div v-if="store.repositories.length" class="mt-3 flex flex-wrap items-end gap-2">
+          <div v-if="canLinkBranch && store.repositories.length" class="mt-3 flex flex-wrap items-end gap-2">
             <div class="min-w-[150px] flex-1">
               <label class="field-label" for="branch-repo">Repository</label>
               <select id="branch-repo" v-model="branchRepoId" class="field-input">
@@ -882,7 +907,7 @@ function openDelivery(): void {
               Link branch
             </button>
           </div>
-          <p v-else class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          <p v-else-if="canLinkBranch" class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
             Link a repository in Delivery to create branches from work items.
           </p>
         </div>
@@ -892,7 +917,7 @@ function openDelivery(): void {
 
       <template #footer>
         <button
-          v-if="editing"
+          v-if="editing && canManageWorkItems"
           type="button"
           class="mr-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
           :disabled="itemBusy"
@@ -901,7 +926,7 @@ function openDelivery(): void {
           <AppIcon name="trash" :size="14" /> Delete
         </button>
         <button type="button" class="btn-secondary" :disabled="itemBusy" @click="itemModal = false">Cancel</button>
-        <button type="button" class="btn-primary" :disabled="itemBusy" @click="saveItem">
+        <button v-if="!formDisabled" type="button" class="btn-primary" :disabled="itemBusy" @click="saveItem">
           <AppIcon v-if="itemBusy" name="loader" :size="14" class="animate-spin" />
           {{ itemBusy ? 'Saving…' : editing ? 'Save work item' : 'Create work item' }}
         </button>

@@ -145,6 +145,10 @@ func (h *Handler) AddMember(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid project role")
 		return
 	}
+	if role == auth.ProjectRoleOwner && !canGrantOwnership(c) {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Only an owner or a global admin can grant ownership")
+		return
+	}
 	var active bool
 	if err := h.store.DB().QueryRow(c.Request.Context(), `SELECT is_active FROM users WHERE id = $1`, userID).Scan(&active); err != nil {
 		if err == pgx.ErrNoRows {
@@ -221,6 +225,10 @@ func (h *Handler) UpdateMember(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load member")
 		return
 	}
+	if (currentRole == auth.ProjectRoleOwner || role == auth.ProjectRoleOwner) && !canGrantOwnership(c) {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Only an owner or a global admin can change ownership")
+		return
+	}
 	if currentRole == auth.ProjectRoleOwner && role != auth.ProjectRoleOwner {
 		var otherOwners int
 		if err := h.store.DB().QueryRow(c.Request.Context(),
@@ -282,6 +290,10 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load member")
 		return
 	}
+	if role == auth.ProjectRoleOwner && !canGrantOwnership(c) {
+		apiError(c, http.StatusForbidden, "FORBIDDEN", "Only an owner or a global admin can remove an owner")
+		return
+	}
 	if role == auth.ProjectRoleOwner {
 		var owners int
 		if err := h.store.DB().QueryRow(c.Request.Context(),
@@ -306,4 +318,12 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "removed", "Removed project member", nil)
 	c.Status(http.StatusNoContent)
+}
+
+// canGrantOwnership reports whether the actor may grant, change or revoke the
+// owner role. Maintainers hold member.write but must not be able to promote
+// themselves or anyone else to owner.
+func canGrantOwnership(c *gin.Context) bool {
+	role := auth.ProjectRoleFrom(c)
+	return role == auth.ProjectRoleOwner || role == auth.RoleAdmin
 }
