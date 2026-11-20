@@ -25,10 +25,10 @@ rules, see [`CONTRIBUTING.md`](CONTRIBUTING.md). Conduct reports follow
 ## Supported versions
 
 The project is pre-release: there are no published release tags yet. `master` is the only
-supported line and receives security fixes. Once releases are tagged (see the release model
-tracked by `BASE-08` in `TASKS.md`), the latest minor and the previous minor will be supported;
-older minors will receive a fix only when the vulnerability is critical and backporting is
-feasible.
+supported line and receives security fixes. Once releases are tagged (see
+[`docs/RELEASING.md`](docs/RELEASING.md)), the latest minor and the previous minor will be
+supported; older minors will receive a fix only when the vulnerability is critical and
+backporting is feasible.
 
 ## Scope
 
@@ -106,7 +106,7 @@ Before tagging a release:
   unexpired date.
 - The SBOM and Trivy evidence artifacts from the release commit are archived.
 - No secret, kubeconfig, `.env` file, database dump or build output is present in the tag.
-- The rollback path in the release model tracked by `BASE-08` is current.
+- The rollback path in [`docs/RELEASING.md`](docs/RELEASING.md) is current.
 
 ## Verification commands
 

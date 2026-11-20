@@ -23,6 +23,27 @@ import (
 	"spm-platform/api/internal/workspace"
 )
 
+// BuildInfo is the release metadata embedded at link time.
+type BuildInfo struct {
+	Version string
+	Commit  string
+	BuiltAt string
+}
+
+func (b BuildInfo) fields() gin.H {
+	version, commit, builtAt := b.Version, b.Commit, b.BuiltAt
+	if version == "" {
+		version = "dev"
+	}
+	if commit == "" {
+		commit = "none"
+	}
+	if builtAt == "" {
+		builtAt = "unknown"
+	}
+	return gin.H{"version": version, "commit": commit, "built_at": builtAt}
+}
+
 // Handlers carries the handler set needed to register the HTTP surface.
 type Handlers struct {
 	Events           *events.Client
@@ -38,25 +59,27 @@ type Handlers struct {
 	TicketStore      *auth.TicketStore
 	Pool             *pgxpool.Pool
 	UserInvalidation nats.KeyValue
+	BuildInfo        BuildInfo
 }
 
 // Register binds every HTTP route to the supplied handlers.
 func Register(r *gin.Engine, h Handlers) {
+	build := h.BuildInfo.fields()
 	health := func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "build": build})
 	}
 	ready := func(c *gin.Context) {
 		checkCtx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 		defer cancel()
 		if err := h.Pool.Ping(checkCtx); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "postgres": err.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "postgres": err.Error(), "build": build})
 			return
 		}
 		if !h.Events.Conn().IsConnected() {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "nats": "disconnected"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "nats": "disconnected", "build": build})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+		c.JSON(http.StatusOK, gin.H{"status": "ready", "build": build})
 	}
 	r.GET("/health", ready)
 	r.GET("/health/live", health)

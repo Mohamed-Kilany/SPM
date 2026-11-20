@@ -5,6 +5,7 @@ import AppIcon from './AppIcon.vue'
 import { useAuthStore } from '../stores/authStore'
 import { useWorkspaceStore } from '../stores/workspaceStore'
 import { useToastStore } from '../stores/toastStore'
+import { displayVersion } from '../lib/version'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
@@ -24,6 +25,7 @@ const isProjects = computed(() => route.name === 'projects')
 const isSearch = computed(() => route.name === 'search')
 const isAdminUsers = computed(() => route.name === 'admin-users')
 const isProfile = computed(() => route.name === 'profile')
+const appVersion = displayVersion(import.meta.env.VITE_APP_VERSION)
 
 const projectTabs = [
   { key: 'overview', label: 'Overview', icon: 'activity' },
@@ -238,6 +240,12 @@ function tabLink(tab: string) {
           <AppIcon name="logout" :size="17" />
         </button>
       </div>
+      <p
+        class="mt-2 text-center text-[10px] font-medium uppercase tracking-[0.16em] text-slate-400"
+        data-testid="app-version"
+      >
+        Version {{ appVersion }}
+      </p>
     </div>
   </aside>
 </template>

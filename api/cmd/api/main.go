@@ -33,6 +33,14 @@ import (
 	"spm-platform/api/internal/workspace"
 )
 
+// Build metadata is injected with -ldflags at release time. The defaults keep
+// local and test builds honest instead of reporting a fake release version.
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	databaseURL := mustEnv("DATABASE_URL")
@@ -131,6 +139,11 @@ func main() {
 		TicketStore:      ticketStore,
 		Pool:             pool,
 		UserInvalidation: eventsClient.UserInvalidation(),
+		BuildInfo: server.BuildInfo{
+			Version: version,
+			Commit:  commit,
+			BuiltAt: buildDate,
+		},
 	}
 	server.Register(r, deps)
 

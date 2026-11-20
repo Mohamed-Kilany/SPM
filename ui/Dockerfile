@@ -6,6 +6,9 @@ ARG NGINX_IMAGE=nginx:1.30.5-alpine-otel
 # Node 24 is the supported LTS required by the current Vite/Vitest toolchain.
 FROM node:24-alpine AS builder
 
+ARG VITE_APP_VERSION=dev
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+
 WORKDIR /app
 
 # Test files and local build output must never leak into the image context.

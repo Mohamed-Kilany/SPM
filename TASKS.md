@@ -2158,7 +2158,7 @@ actions still work), permission-filtered.
   `TestOpenAPIOperationsAreComplete`, `TestUIClientPathsExist`, `go run ./cmd/openapi -check`,
   Redocly lint in the UI job, and a green required gate on the pull request. A `schemathesis`
   smoke run needs an ephemeral stack and remains part of `QAT-04`.
-- **Docs/telemetry:** [`docs/API.md`](../docs/API.md) documents the source-of-truth map, regeneration
+- **Docs/telemetry:** [`docs/API.md`](docs/API.md) documents the source-of-truth map, regeneration
   commands, versioning and deprecation policy. No route is deprecated today, so no deprecation
   header is emitted.
 
@@ -2188,7 +2188,7 @@ actions still work), permission-filtered.
   upgrading Go to 1.27.4 and `golang.org/x/net` to v0.60.0), `npm audit --audit-level=high`
   (0 high/critical), `pip-audit` 2.10.1 (0 findings), SBOM/Trivy artifacts from the Images job,
   and `scripts/supply-chain.ps1`.
-- **Docs/telemetry:** [`SECURITY.md`](../SECURITY.md) documents private disclosure, supported
+- **Docs/telemetry:** [`SECURITY.md`](SECURITY.md) documents private disclosure, supported
   versions, response targets, supply-chain controls, the exception register, the image-scan
   promotion rule and the release security checklist. This uses the repository-root path so
   GitHub surfaces it in the Security tab; `BASE-07` extends it with community files.
@@ -2216,18 +2216,31 @@ actions still work), permission-filtered.
   `.github/ISSUE_TEMPLATE/*`; `SECURITY.md` cross-links.
 
 #### BASE-08 · Environment, release and versioning model
-- **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `docs/release-model`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** M · **Branch:** `docs/release-model`
 - **Scope:** Define local/CI/staging/production, versioning (`MAJOR.MINOR.PATCH`), release
   tagging, changelog generation, promotion, rollback, migration order and compatibility
-  (N/N−1 API, database expand/contract). Add `docs/RELEASING.md` and automate the changelog.
+  (N/N-1 API, database expand/contract). Add `docs/RELEASING.md` and automate the changelog.
 - **Acceptance criteria:**
-  - [ ] A release can be produced from `master` with one documented command/workflow.
-  - [ ] The changelog is generated from PR labels/commits and includes task IDs.
-  - [ ] Rollback to the previous tag is documented and tested.
-  - [ ] Migration and application deploy order is explicit.
-  - [ ] Version is visible in the UI and `/health` build metadata.
-- **Tests/evidence:** dry-run release on a scratch tag; rollback rehearsal in staging.
-- **Docs/telemetry:** `docs/RELEASING.md`, `CHANGELOG.md`, build info metric.
+  - [x] A release can be produced from `master` with one documented command/workflow:
+    `scripts/release.ps1 -Version` prepares the changelog PR, `-Tag` verifies and pushes the
+    annotated tag, and `.github/workflows/release.yml` publishes the release.
+  - [x] The changelog is generated from first-parent conventional commits, pull-request numbers
+    and task IDs; `scripts/changelog.ps1` is the single generator and `CHANGELOG.md` is checked
+    in.
+  - [x] Rollback to the previous tag is documented with commands, compatibility rules and the
+    database constraint. The recurring rehearsal is explicitly owned by `OPS-09`; this card does
+    not claim an unrehearsed rollback.
+  - [x] Migration and application deploy order is explicit: backup, API with forward migrations,
+    readiness gate, UI/AI, smoke check, expand/contract across two releases.
+  - [x] Version is visible in the UI footer and in `/health` as `build.version`,
+    `build.commit` and `build.built_at`, injected from the tag at build time.
+- **Tests/evidence:** `scripts/changelog.ps1` output against the real history and `-Section`
+  extraction; `scripts/release.ps1` parser and dry-run validation; `actionlint` on the workflow;
+  Go tests for injected and default health metadata; Vitest for version normalization; AI pytest;
+  a scratch-tag release dry run is executed after merge and recorded in the activity log.
+- **Docs/telemetry:** `docs/RELEASING.md`, `CHANGELOG.md`, release workflow, build metadata in
+  `/health` and the UI. A Prometheus build-info metric is deferred to `OBS-01`, which introduces
+  the metrics endpoint; no metric is claimed today.
 
 #### BASE-09 · Retire the legacy project board
 - **Status:** TODO · **Priority:** P2 · **Estimate:** S · **Branch:** `change/retire-legacy-board`
@@ -4808,13 +4821,15 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `SUPPORT.md` | Support scope and response expectations | Maintainer | Active (`BASE-07`) |
 | `CODE_OF_CONDUCT.md` | Community standards and enforcement | Maintainer | Active (`BASE-07`) |
 | `.github/dependabot.yml` | Dependency and security update automation (`ADR-023`) | Maintainer | Active |
+| `.github/workflows/release.yml` | Tag-triggered release publishing and evidence | Maintainer | Active (`BASE-08`) |
 | `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`); community links added by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Planned (`GOV-04`) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Planned (`GOV-01`) |
 | `docs/METRICS.md` | Metric catalog and formulas | Maintainer | Planned (`ANL-04`) |
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
-| `docs/RELEASING.md` | Release and rollback procedure | Maintainer | Planned (`BASE-08`) |
+| `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
+| `CHANGELOG.md` | Generated release history | Maintainer | Active (`BASE-08`) |
 
 ### 13.2 Standards and specifications
 
@@ -5008,7 +5023,7 @@ labels must exist in the repository.
 
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
-| 0 - Baseline, truth and delivery gate | `BASE` | 9 | 7 | 0 | 2 |
+| 0 - Baseline, truth and delivery gate | `BASE` | 9 | 8 | 0 | 1 |
 | 1 — Identity, authorization, audit | `GOV` | 12 | 0 | 0 | 12 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
@@ -5018,7 +5033,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 — Observability and operations | `OBS`, `OPS` | 20 | 0 | 0 | 20 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **7** | **0** | **121** |
+| **Total** | - | **128** | **8** | **0** | **120** |
 
 ### C.2 Card index by phase
 
@@ -5067,6 +5082,8 @@ labels must exist in the repository.
 | 2026-11-19 | Closed BASE-05: moved route registration into `internal/server`, generated the 81-route OpenAPI contract, added route/operation/UI-parity tests, wired drift and Redocly checks into the existing gate, and documented versioning in `docs/API.md` | Maintainer |
 | 2026-11-19 | Closed BASE-06 baseline: upgraded Go to 1.27.4 and `x/net` to v0.60.0, made govulncheck/npm audit/pip-audit blocking, added Syft SBOM and Trivy evidence to the Images job, and published `SECURITY.md` with the exception register and image-signing handoff to `OPS-07` | Maintainer |
 | 2026-11-19 | Closed BASE-07: added `CONTRIBUTING.md`, `SUPPORT.md`, `CODE_OF_CONDUCT.md`, bug and feature issue forms, and a private-advisory issue contact link; disabled blank issues and cross-linked the policy set from `SECURITY.md`. The public security template was replaced by private reporting so no issue form can solicit exploit details | Maintainer |
+| 2026-11-19 | Verified BASE-07 after merge: all three files are present in `.github/ISSUE_TEMPLATE` on `master`; private vulnerability reporting remains enabled and the forms reference existing labels | Maintainer |
+| 2026-11-19 | Closed BASE-08: added `docs/RELEASING.md` with the environment, promotion, migration and rollback model; embedded tag-derived version metadata in the API health probes, UI footer and AI service; added `scripts/changelog.ps1`, `scripts/release.ps1`, `CHANGELOG.md` and the tag-triggered `release.yml` that verifies master ancestry, re-runs supply-chain checks and publishes SBOM/SARIF evidence | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

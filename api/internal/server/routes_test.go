@@ -1,6 +1,9 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"sort"
 	"strings"
@@ -105,5 +108,66 @@ func TestNormalizePath(t *testing.T) {
 		if got := normalizePath(input); got != want {
 			t.Errorf("normalizePath(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+// TestHealthReportsBuildMetadata proves the version injected at build time is
+// visible to operators without reading the binary or the container tag.
+func TestHealthReportsBuildMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	Register(r, Handlers{BuildInfo: BuildInfo{
+		Version: "1.2.3",
+		Commit:  "abc123",
+		BuiltAt: "2026-11-19T00:00:00Z",
+	}})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health/live", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /health/live = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Status string `json:"status"`
+		Build  struct {
+			Version string `json:"version"`
+			Commit  string `json:"commit"`
+			BuiltAt string `json:"built_at"`
+		} `json:"build"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Errorf("status = %q, want ok", body.Status)
+	}
+	if body.Build.Version != "1.2.3" || body.Build.Commit != "abc123" || body.Build.BuiltAt != "2026-11-19T00:00:00Z" {
+		t.Errorf("build metadata = %+v", body.Build)
+	}
+}
+
+// TestHealthDefaultsAreHonest prevents a local or test build from claiming a
+// release version.
+func TestHealthDefaultsAreHonest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	Register(r, Handlers{})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health/live", nil))
+
+	var body struct {
+		Build struct {
+			Version string `json:"version"`
+			Commit  string `json:"commit"`
+			BuiltAt string `json:"built_at"`
+		} `json:"build"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if body.Build.Version != "dev" || body.Build.Commit != "none" || body.Build.BuiltAt != "unknown" {
+		t.Errorf("default build metadata = %+v", body.Build)
 	}
 }

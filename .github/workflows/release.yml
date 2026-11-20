@@ -1,0 +1,253 @@
+name: Release
+
+# Publishing workflow for an annotated vMAJOR.MINOR.PATCH tag. It never commits
+# and never opens a pull request; tag creation is a local maintainer action
+# after the release pull request merges.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: "Release: verify tag"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the tag with history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tag is semver and merged to master
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          git fetch origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::Tag commit is not on origin/master"
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)(\.env|kube-config\.yaml|.*\.pem|.*\.key)$'; then
+            echo "::error::Forbidden secret or key file found in the tag"
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          cd ui && npm ci --no-audit --no-fund
+          cd ../ai && python -m pip install --quiet -r requirements-test.txt
+
+      - name: Run supply-chain checks
+        shell: pwsh
+        run: ./scripts/supply-chain.ps1
+
+  images:
+    name: "Release: images and evidence"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs:
+      - verify
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set release metadata
+        shell: bash
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Build the API image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.api
+          push: false
+          load: true
+          tags: spm-api:${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ env.COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build the UI image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./ui
+          file: ./ui/Dockerfile
+          push: false
+          load: true
+          tags: spm-ui:${{ github.ref_name }}
+          build-args: |
+            VITE_APP_VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
+
+      - name: Build the AI image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./ai/Dockerfile
+          push: false
+          load: true
+          tags: spm-ai:${{ github.ref_name }}
+          build-args: |
+            SPM_AI_VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=ai
+          cache-to: type=gha,mode=max,scope=ai
+
+      - name: Generate the API SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: spm-api:${{ github.ref_name }}
+          format: spdx-json
+          output-file: sbom-api.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the UI SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: spm-ui:${{ github.ref_name }}
+          format: spdx-json
+          output-file: sbom-ui.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the AI SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: spm-ai:${{ github.ref_name }}
+          format: spdx-json
+          output-file: sbom-ai.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Scan images
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: spm-api:${{ github.ref_name }}
+          format: sarif
+          output: trivy-api.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Scan the UI image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: spm-ui:${{ github.ref_name }}
+          format: sarif
+          output: trivy-ui.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Scan the AI image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: spm-ai:${{ github.ref_name }}
+          format: sarif
+          output: trivy-ai.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-evidence-${{ github.ref_name }}
+          path: |
+            sbom-*.spdx.json
+            trivy-*.sarif
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: "Release: publish notes and evidence"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - verify
+      - images
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out the tag with history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download release evidence
+        uses: actions/download-artifact@v7
+        with:
+          name: release-evidence-${{ github.ref_name }}
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $previous = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
+          if ($LASTEXITCODE -ne 0) { $previous = $null }
+          $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/changelog.ps1', '-To', "${{ github.ref_name }}", '-Version', $version, '-Output', 'release-notes.md')
+          if ($previous) { $arguments += @('-From', $previous.Trim()) }
+          & pwsh @arguments
+
+      - name: Create or update the GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          prerelease=()
+          case "$tag" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file release-notes.md "${prerelease[@]}"
+          else
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file release-notes.md "${prerelease[@]}"
+          fi
+          gh release upload "$tag" sbom-*.spdx.json trivy-*.sarif --clobber
