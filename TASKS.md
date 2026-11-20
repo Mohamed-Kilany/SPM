@@ -2301,7 +2301,7 @@ actions still work), permission-filtered.
     every capability-gated route.
   - [x] Global admins retain break-glass access on every project route without a membership row.
     Each request logs `authz_break_glass` with request ID, user, project, capability, method and
-    path; durable audit persistence is `GOV-04`.
+    path; durable audit persistence is delivered by `GOV-04`.
   - [x] The UI gates board, planning, code, delivery, reports, tests and settings actions through
     `auth.can(projectId, capability)`. Settings explains the missing `settings.write`/
     `member.write` capability, and the board explains the tester restriction.
@@ -2320,7 +2320,7 @@ actions still work), permission-filtered.
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) summarizes enforcement. Denials log
   `authz_denied`; break-glass logs `authz_break_glass`; caller-controlled project IDs and
   paths have CR/LF stripped so they cannot forge log entries. Audit storage and
-  capability-change audit events are `GOV-04`; session/SSE invalidation is `GOV-02`.
+  capability-change audit events are delivered by `GOV-04`; session/SSE invalidation is `GOV-02`.
 
 #### GOV-02 · Membership and session invalidation
 - **Status:** DONE · **Priority:** P0 · **Estimate:** M · **Branch:** `fix/membership-session-invalidation`
@@ -2349,7 +2349,7 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** [`docs/AUTHZ.md`](docs/AUTHZ.md) defines the invalidation contract and
   [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) lists
   `spm_authz_invalidations_total{scope,reason}`. Membership add/update/remove writes an activity
-  event; durable append-only audit storage is `GOV-04`. Invalidation publish failures log
+  event; durable append-only audit storage is delivered by `GOV-04`. Invalidation publish failures log
   `authz_invalidation_failed` and remain best-effort because the database lookup is the
   enforcement point.
 
@@ -3699,8 +3699,9 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   counters and nil-registry safety; `api/internal/sse` tests the connection gauge. The metric
   catalog and cardinality review are in `docs/OBSERVABILITY.md`.
 - **Docs/telemetry:** `docs/OBSERVABILITY.md`, `/metrics` collectors and the `spm_build_info`
-  gauge. Audit write-failure metrics are deferred to `GOV-04`, which introduces the audit
-  subsystem; exporting a counter that nothing increments would be a false claim.
+  gauge. Audit write-failure metrics arrive with the `GOV-04` audit subsystem as
+  `spm_audit_writes_total{outcome="failure"}`; exporting a counter that nothing increments would
+  be a false claim.
 
 #### OBS-02 · OpenTelemetry tracing
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/observability-tracing`
