@@ -402,6 +402,7 @@ properties:
   version: { type: string }
   status: { type: string }
   planned_at: { type: [string, "null"], format: date-time }
+  milestone_at: { type: [string, "null"], format: date-time }
   notes: { type: string }
   expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
 	"TestResultInput": `type: object
@@ -637,6 +638,123 @@ properties:
   error:
     $ref: '#/components/schemas/Error'
   current_version: { type: integer, format: int64, minimum: 1, description: Revision to send on retry; also returned as the ETag. }`,
+	"SprintStartInput": `type: object
+properties:
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
+	"SprintCloseInput": `type: object
+properties:
+  policy: { type: string, enum: [backlog, next_sprint], default: backlog, description: Where incomplete work moves when the sprint closes. }
+  next_sprint_id: { type: [string, "null"], format: uuid, description: Required when policy is next_sprint; must be a planned or active sprint in the same project. }
+  note: { type: string, maxLength: 1000, description: Optional audit note for the close. }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
+	"ReleaseFreezeInput": `type: object
+required: [reason]
+properties:
+  reason: { type: string, minLength: 1, maxLength: 1000 }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
+	"ReleaseExceptionInput": `type: object
+required: [entity_type, reason]
+properties:
+  entity_type: { type: string, enum: [work_item, feature, epic] }
+  entity_id: { type: [string, "null"], format: uuid, description: Omit to authorize any scope change of this entity type while the release is frozen. }
+  reason: { type: string, minLength: 1, maxLength: 2000 }`,
+	"ReleaseSignOffInput": `type: object
+required: [evidence]
+properties:
+  evidence: { type: string, minLength: 10, maxLength: 5000, description: Sign-off evidence. Its SHA-256 digest is stored in the audit trail. }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
+	"SprintMetrics": `type: object
+properties:
+  sprint_id: { type: string, format: uuid }
+  name: { type: string }
+  status: { type: string, enum: [planned, active, completed, cancelled] }
+  time_zone: { type: string }
+  start_date: { type: [string, "null"], format: date-time }
+  end_date: { type: [string, "null"], format: date-time }
+  capacity: { type: [number, "null"] }
+  committed_points: { type: number }
+  completed_points: { type: number }
+  remaining_points: { type: number }
+  completed_items: { type: integer }
+  total_items: { type: integer }
+  remaining_items: { type: integer }
+  velocity_points: { type: [number, "null"], description: Mean completed points of the latest three completed sprints. }
+  velocity_sample_size: { type: integer }
+  capacity_used_percent: { type: [number, "null"] }
+  days_total: { type: integer }
+  days_elapsed: { type: integer }
+  days_remaining: { type: integer }`,
+	"SprintClosePreview": `type: object
+properties:
+  sprint_id: { type: string, format: uuid }
+  sprint_name: { type: string }
+  status: { type: string }
+  policy: { type: string, enum: [backlog, next_sprint] }
+  next_sprint_id: { type: [string, "null"], format: uuid }
+  next_sprint_name: { type: string }
+  incomplete_items:
+    type: array
+    items:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string }
+        title: { type: string }
+        status: { type: string }
+        estimate_points: { type: [number, "null"] }
+  incomplete_count: { type: integer }
+  incomplete_points: { type: number }
+  completed_count: { type: integer }
+  completed_points: { type: number }`,
+	"SprintLifecycleResult": `type: object
+required: [id, revision, status]
+properties:
+  id: { type: string, format: uuid }
+  revision: { type: integer, format: int64, minimum: 1 }
+  status: { type: string }
+  activated_at: { type: string, format: date-time }`,
+	"SprintCloseResult": `type: object
+required: [id, revision, status]
+properties:
+  id: { type: string, format: uuid }
+  revision: { type: integer, format: int64, minimum: 1 }
+  status: { type: string, enum: [completed] }
+  policy: { type: string, enum: [backlog, next_sprint] }
+  moved_items: { type: integer }
+  moved_points: { type: number }
+  next_sprint_id: { type: [string, "null"], format: uuid }
+  completed_at: { type: string, format: date-time }`,
+	"ReleaseFreezeResult": `type: object
+required: [id, revision, frozen_at]
+properties:
+  id: { type: string, format: uuid }
+  revision: { type: integer, format: int64, minimum: 1 }
+  frozen_at: { type: [string, "null"], format: date-time }
+  freeze_reason: { type: string }`,
+	"ReleaseScopeException": `type: object
+required: [id, release_id, entity_type, reason, created_at]
+properties:
+  id: { type: string, format: uuid }
+  release_id: { type: string, format: uuid }
+  entity_type: { type: string, enum: [work_item, feature, epic] }
+  entity_id: { type: [string, "null"], format: uuid }
+  reason: { type: string }
+  created_by: { type: [string, "null"], format: uuid }
+  created_at: { type: string, format: date-time }`,
+	"ReleaseExceptionList": `type: object
+properties:
+  exceptions:
+    type: array
+    items:
+      $ref: '#/components/schemas/ReleaseScopeException'`,
+	"ReleaseSignOffResult": `type: object
+required: [id, revision, signed_off_at]
+properties:
+  id: { type: string, format: uuid }
+  revision: { type: integer, format: int64, minimum: 1 }
+  signed_off_at: { type: string, format: date-time }
+  signed_off_by: { type: [string, "null"], format: uuid }
+  sign_off_evidence: { type: string }`,
 }
 
 func sortedSchemaNames() []string {
@@ -792,19 +910,41 @@ func isRevisionedMutation(method, path string) bool {
 	}
 }
 
+// isLifecycleMutation reports whether a lifecycle sub-resource consumes a
+// revision token and returns the new revision. These paths sit below a single
+// revisioned resource, so they are not covered by isRevisionedPath.
+func isLifecycleMutation(method, path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 7 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "projects" || parts[3] != "{id}" {
+		return false
+	}
+	switch strings.ToUpper(method) {
+	case "POST":
+		switch parts[4] {
+		case "sprints":
+			return parts[6] == "start" || parts[6] == "close"
+		case "releases":
+			return parts[6] == "freeze" || parts[6] == "sign-off"
+		}
+	case "DELETE":
+		return parts[4] == "releases" && parts[6] == "freeze"
+	}
+	return false
+}
+
 // revisionHeaders documents the strong ETag returned by create and update.
 func revisionHeaders(method, path string) string {
-	if strings.EqualFold(method, "DELETE") {
+	if strings.EqualFold(method, "DELETE") && !isLifecycleMutation(method, path) {
 		return ""
 	}
-	if !isRevisionedCreate(method, path) && !isRevisionedMutation(method, path) {
+	if !isRevisionedCreate(method, path) && !isRevisionedMutation(method, path) && !isLifecycleMutation(method, path) {
 		return ""
 	}
 	return "    headers:\n      ETag:\n        description: The new revision as a strong ETag.\n        schema: { type: string }\n"
 }
 
 func revisionParameters(method, path string) string {
-	if !isRevisionedMutation(method, path) {
+	if !isRevisionedMutation(method, path) && !isLifecycleMutation(method, path) {
 		return ""
 	}
 	return `parameters:
@@ -896,7 +1036,7 @@ func errorCodes(route server.Route, path string) []string {
 	if successCode(route.Method, path) == "201" && !strings.Contains(path, "/auth/login") {
 		codes = appendUnique(codes, "409")
 	}
-	if isRevisionedMutation(route.Method, path) {
+	if isRevisionedMutation(route.Method, path) || isLifecycleMutation(route.Method, path) {
 		codes = appendUnique(codes, "400", "409", "428")
 	}
 	if strings.Contains(path, "/auth/login") {
@@ -973,6 +1113,16 @@ func requestSchema(method, path string) string {
 			return "StateInput"
 		}
 		return "TicketInput"
+	case strings.HasSuffix(path, "/sprints/:sprintId/start"), strings.HasSuffix(path, "/sprints/{sprintId}/start"):
+		return "SprintStartInput"
+	case strings.HasSuffix(path, "/sprints/{sprintId}/close"):
+		return "SprintCloseInput"
+	case strings.HasSuffix(path, "/releases/{releaseId}/freeze"):
+		return "ReleaseFreezeInput"
+	case strings.HasSuffix(path, "/releases/{releaseId}/exceptions"):
+		return "ReleaseExceptionInput"
+	case strings.HasSuffix(path, "/releases/{releaseId}/sign-off"):
+		return "ReleaseSignOffInput"
 	case strings.HasSuffix(path, "/sprints"), strings.Contains(path, "/sprints/"):
 		return "SprintInput"
 	case strings.HasSuffix(path, "/releases"), strings.Contains(path, "/releases/"):
@@ -1020,6 +1170,22 @@ func successSchema(method, path string) string {
 	switch {
 	case isAttachmentDownload(method, path):
 		return ""
+	case strings.HasSuffix(path, "/sprints/{sprintId}/metrics"):
+		return "SprintMetrics"
+	case strings.HasSuffix(path, "/sprints/{sprintId}/close-preview"):
+		return "SprintClosePreview"
+	case strings.HasSuffix(path, "/sprints/{sprintId}/start"):
+		return "SprintLifecycleResult"
+	case strings.HasSuffix(path, "/sprints/{sprintId}/close"):
+		return "SprintCloseResult"
+	case strings.HasSuffix(path, "/releases/{releaseId}/freeze"):
+		return "ReleaseFreezeResult"
+	case strings.HasSuffix(path, "/releases/{releaseId}/exceptions") && strings.EqualFold(method, "POST"):
+		return "ReleaseScopeException"
+	case strings.HasSuffix(path, "/releases/{releaseId}/exceptions"):
+		return "ReleaseExceptionList"
+	case strings.HasSuffix(path, "/releases/{releaseId}/sign-off"):
+		return "ReleaseSignOffResult"
 	case isWorkItemDetailPath(method, path):
 		return "WorkItemDetail"
 	case strings.Contains(path, "/comments/"), strings.HasSuffix(path, "/comments"):

@@ -101,6 +101,8 @@ internally, and test result/step patches do not require a token.
 
 Work item fields and the collaboration endpoints (comments, mentions, watchers,
 links and attachments) are described in [`WORK-ITEMS.md`](WORK-ITEMS.md).
+Sprint start/close, carry-over, velocity, release freeze, scope exceptions and
+sign-off are described in [`PLANNING-LIFECYCLE.md`](PLANNING-LIFECYCLE.md).
 
 The UI sends `If-Match` from the freshest workspace snapshot. On `409` it
 refreshes the project, keeps the edit dialog open and asks the user to review

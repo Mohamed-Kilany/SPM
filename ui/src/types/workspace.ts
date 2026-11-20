@@ -216,9 +216,58 @@ export interface Sprint {
   start_date: string | null
   end_date: string | null
   capacity: number | null
+  activated_at: string | null
+  completed_at: string | null
+  completed_by: string | null
+  close_policy: string
+  carry_over_count: number
   created_at: string
   updated_at: string
   revision: number
+}
+
+export interface SprintCarryItem {
+  id: string
+  key: string
+  title: string
+  status: string
+  estimate_points: number | null
+}
+
+export interface SprintMetrics {
+  sprint_id: string
+  name: string
+  status: string
+  time_zone: string
+  start_date: string | null
+  end_date: string | null
+  capacity: number | null
+  committed_points: number
+  completed_points: number
+  remaining_points: number
+  completed_items: number
+  total_items: number
+  remaining_items: number
+  velocity_points: number | null
+  velocity_sample_size: number
+  capacity_used_percent: number | null
+  days_total: number
+  days_elapsed: number
+  days_remaining: number
+}
+
+export interface SprintClosePreview {
+  sprint_id: string
+  sprint_name: string
+  status: string
+  policy: string
+  next_sprint_id: string | null
+  next_sprint_name: string
+  incomplete_items: SprintCarryItem[]
+  incomplete_count: number
+  incomplete_points: number
+  completed_count: number
+  completed_points: number
 }
 
 export interface Release {
@@ -229,10 +278,27 @@ export interface Release {
   status: string
   planned_at: string | null
   released_at: string | null
+  milestone_at: string | null
+  frozen_at: string | null
+  frozen_by: string | null
+  freeze_reason: string
+  sign_off_evidence: string
+  signed_off_at: string | null
+  signed_off_by: string | null
   notes: string
   created_at: string
   updated_at: string
   revision: number
+}
+
+export interface ReleaseScopeException {
+  id: string
+  release_id: string
+  entity_type: string
+  entity_id: string | null
+  reason: string
+  created_by: string | null
+  created_at: string
 }
 
 export interface Environment {

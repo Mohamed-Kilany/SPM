@@ -127,7 +127,10 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 
 	// Releases
 	relRows, err := s.db.Query(ctx, `
-		SELECT id, project_id, name, version, status, planned_at, released_at, COALESCE(notes, ''), created_at, updated_at, revision
+		SELECT id, project_id, name, version, status, planned_at, released_at, milestone_at,
+		       frozen_at, COALESCE(frozen_by::text, ''), COALESCE(freeze_reason, ''),
+		       COALESCE(sign_off_evidence, ''), signed_off_at, COALESCE(signed_off_by::text, ''),
+		       COALESCE(notes, ''), created_at, updated_at, revision
 		FROM releases WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -136,10 +139,15 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	w.Releases = []Release{}
 	for relRows.Next() {
 		var r Release
+		var frozenBy, signedOffBy string
 		if err := relRows.Scan(&r.ID, &r.ProjectID, &r.Name, &r.Version, &r.Status, &r.PlannedAt,
-			&r.ReleasedAt, &r.Notes, &r.CreatedAt, &r.UpdatedAt, &r.Revision); err != nil {
+			&r.ReleasedAt, &r.MilestoneAt, &r.FrozenAt, &frozenBy, &r.FreezeReason,
+			&r.SignOffEvidence, &r.SignedOffAt, &signedOffBy, &r.Notes, &r.CreatedAt, &r.UpdatedAt,
+			&r.Revision); err != nil {
 			return err
 		}
+		r.FrozenBy = parseUUIDPtr(frozenBy)
+		r.SignedOffBy = parseUUIDPtr(signedOffBy)
 		w.Releases = append(w.Releases, r)
 	}
 	if err := relRows.Err(); err != nil {
@@ -148,7 +156,9 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 
 	// Sprints
 	sprintRows, err := s.db.Query(ctx, `
-		SELECT id, project_id, name, COALESCE(goal, ''), status, start_date, end_date, capacity, created_at, updated_at, revision
+		SELECT id, project_id, name, COALESCE(goal, ''), status, start_date, end_date, capacity,
+		       activated_at, completed_at, COALESCE(completed_by::text, ''),
+		       COALESCE(close_policy, ''), carry_over_count, created_at, updated_at, revision
 		FROM sprints WHERE project_id = $1 ORDER BY start_date DESC NULLS LAST, created_at DESC`, projectID)
 	if err != nil {
 		return err
@@ -157,10 +167,13 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	w.Sprints = []Sprint{}
 	for sprintRows.Next() {
 		var sp Sprint
+		var completedBy string
 		if err := sprintRows.Scan(&sp.ID, &sp.ProjectID, &sp.Name, &sp.Goal, &sp.Status, &sp.StartDate,
-			&sp.EndDate, &sp.Capacity, &sp.CreatedAt, &sp.UpdatedAt, &sp.Revision); err != nil {
+			&sp.EndDate, &sp.Capacity, &sp.ActivatedAt, &sp.CompletedAt, &completedBy,
+			&sp.ClosePolicy, &sp.CarryOverCount, &sp.CreatedAt, &sp.UpdatedAt, &sp.Revision); err != nil {
 			return err
 		}
+		sp.CompletedBy = parseUUIDPtr(completedBy)
 		w.Sprints = append(w.Sprints, sp)
 	}
 	if err := sprintRows.Err(); err != nil {

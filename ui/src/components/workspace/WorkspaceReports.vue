@@ -13,7 +13,7 @@ import { useToastStore } from '../../stores/toastStore'
 import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { dateInputValue, statusLabel } from '../../lib/workspace'
 import { formatDateTime } from '../../lib/format'
-import type { ProjectReport, ReleaseReadiness, Sprint, WorkItem } from '../../types/workspace'
+import type { ProjectReport, ReleaseReadiness, Sprint, SprintClosePreview, SprintMetrics, WorkItem } from '../../types/workspace'
 
 const store = useWorkspaceStore()
 const auth = useAuthStore()
@@ -141,6 +141,183 @@ async function saveSprint(): Promise<void> {
     sprintError.value = error instanceof Error ? error.message : 'Failed to save sprint'
   } finally {
     sprintBusy.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint lifecycle: start, close with carry-over preview, metrics, cancel.
+// ---------------------------------------------------------------------------
+
+const startModal = ref(false)
+const startBusy = ref(false)
+const startError = ref('')
+const startTargetId = ref('')
+
+function openStart(sprint: Sprint): void {
+  if (!canPlan.value || sprint.status !== 'planned') return
+  startTargetId.value = sprint.id
+  startError.value = ''
+  startModal.value = true
+}
+
+async function confirmStart(): Promise<void> {
+  const sprint = sprints.value.find((entry) => entry.id === startTargetId.value)
+  if (!sprint || !canPlan.value) return
+  startBusy.value = true
+  startError.value = ''
+  try {
+    await api.startSprint(store.projectId, sprint.id, sprint.revision)
+    startModal.value = false
+    toast.success(`${sprint.name} is active.`, 'Sprint')
+    await store.refresh()
+    await loadReport()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      startError.value = revisionConflictMessage('sprint')
+      return
+    }
+    startError.value = error instanceof Error ? error.message : 'Failed to start sprint'
+  } finally {
+    startBusy.value = false
+  }
+}
+
+const closeModal = ref(false)
+const closeBusy = ref(false)
+const closeError = ref('')
+const closeTargetId = ref('')
+const closePolicy = ref<'backlog' | 'next_sprint'>('backlog')
+const closeNextSprintId = ref('')
+const closePreview = ref<SprintClosePreview | null>(null)
+const closePreviewBusy = ref(false)
+const closeNote = ref('')
+
+const closeTarget = computed(() => sprints.value.find((sprint) => sprint.id === closeTargetId.value) ?? null)
+const closeCandidates = computed(() =>
+  sprints.value.filter(
+    (sprint) => sprint.id !== closeTargetId.value && ['planned', 'active'].includes(sprint.status),
+  ),
+)
+
+function openClose(sprint: Sprint): void {
+  if (!canPlan.value || sprint.status !== 'active') return
+  closeTargetId.value = sprint.id
+  closePolicy.value = 'backlog'
+  closeNextSprintId.value = ''
+  closePreview.value = null
+  closeNote.value = ''
+  closeError.value = ''
+  closeModal.value = true
+  void loadClosePreview()
+}
+
+async function loadClosePreview(): Promise<void> {
+  if (!closeTargetId.value) return
+  if (closePolicy.value === 'next_sprint' && !closeNextSprintId.value) {
+    closePreview.value = null
+    return
+  }
+  closePreviewBusy.value = true
+  closeError.value = ''
+  try {
+    closePreview.value = await api.previewSprintClose(
+      store.projectId,
+      closeTargetId.value,
+      closePolicy.value,
+      closePolicy.value === 'next_sprint' ? closeNextSprintId.value : null,
+    )
+  } catch (error) {
+    closeError.value = error instanceof Error ? error.message : 'Failed to preview the sprint close'
+  } finally {
+    closePreviewBusy.value = false
+  }
+}
+
+async function confirmClose(): Promise<void> {
+  const sprint = closeTarget.value
+  if (!sprint || !canPlan.value) return
+  if (closePolicy.value === 'next_sprint' && !closeNextSprintId.value) {
+    closeError.value = 'Select the sprint that should receive the incomplete work.'
+    return
+  }
+  closeBusy.value = true
+  closeError.value = ''
+  try {
+    await api.closeSprint(
+      store.projectId,
+      sprint.id,
+      {
+        policy: closePolicy.value,
+        next_sprint_id: closePolicy.value === 'next_sprint' ? closeNextSprintId.value : null,
+        note: closeNote.value.trim(),
+      },
+      sprint.revision,
+    )
+    closeModal.value = false
+    toast.success(`${sprint.name} closed; incomplete work was carried over.`, 'Sprint')
+    await store.refresh()
+    await loadReport()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      closeError.value = revisionConflictMessage('sprint')
+      return
+    }
+    closeError.value = error instanceof Error ? error.message : 'Failed to close sprint'
+  } finally {
+    closeBusy.value = false
+  }
+}
+
+const metricsModal = ref(false)
+const metricsBusy = ref(false)
+const metricsError = ref('')
+const metricsData = ref<SprintMetrics | null>(null)
+const metricsSprintName = ref('')
+
+async function openMetrics(sprint: Sprint): Promise<void> {
+  metricsSprintName.value = sprint.name
+  metricsData.value = null
+  metricsError.value = ''
+  metricsModal.value = true
+  metricsBusy.value = true
+  try {
+    metricsData.value = await api.getSprintMetrics(store.projectId, sprint.id)
+  } catch (error) {
+    metricsError.value = error instanceof Error ? error.message : 'Failed to load sprint metrics'
+  } finally {
+    metricsBusy.value = false
+  }
+}
+
+async function cancelSprint(sprint: Sprint): Promise<void> {
+  if (!canPlan.value || !['planned', 'active'].includes(sprint.status)) return
+  if (!window.confirm(`Cancel ${sprint.name}? Work items keep their assignment.`)) return
+  try {
+    await api.updateSprint(
+      store.projectId,
+      sprint.id,
+      {
+        name: sprint.name,
+        goal: sprint.goal,
+        status: 'cancelled',
+        start_date: sprint.start_date,
+        end_date: sprint.end_date,
+        capacity: sprint.capacity,
+      },
+      sprint.revision,
+    )
+    toast.success(`${sprint.name} cancelled.`, 'Sprint')
+    await store.refresh()
+    await loadReport()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('sprint'))
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to cancel sprint')
   }
 }
 
@@ -545,7 +722,7 @@ const burnPoints = computed(() => {
         <EmptyState icon="clock" title="No sprints planned" />
       </div>
       <div v-else class="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3">
-        <article v-for="sprint in sprints" :key="sprint.id" class="rounded-xl border border-slate-200 p-4">
+        <article v-for="sprint in sprints" :key="sprint.id" data-testid="sprint-row" class="rounded-xl border border-slate-200 p-4">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <p class="truncate text-sm font-semibold text-slate-800">{{ sprint.name }}</p>
@@ -564,9 +741,51 @@ const burnPoints = computed(() => {
             <span>{{ sprintDone(sprint) }}/{{ sprintItems(sprint).length }} items · {{ sprintPoints(sprint) }} pts</span>
             <span v-if="sprint.capacity">{{ sprint.capacity }} capacity</span>
           </div>
-          <button v-if="canPlan" type="button" class="btn-ghost mt-2 px-0 text-xs" @click="openSprint(sprint)">
-            <AppIcon name="edit" :size="12" /> Edit sprint
-          </button>
+          <p v-if="sprint.completed_at" class="mt-1 text-[11px] text-slate-600">
+            Closed {{ formatDateTime(sprint.completed_at) }} · {{ sprint.carry_over_count }} carried over
+          </p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button
+              v-if="canPlan && sprint.status === 'planned'"
+              type="button"
+              class="btn-secondary px-2.5 py-1 text-[11px]"
+              @click="openStart(sprint)"
+            >
+              <AppIcon name="arrowRight" :size="12" /> Start
+            </button>
+            <button
+              v-if="canPlan && sprint.status === 'active'"
+              type="button"
+              class="btn-secondary px-2.5 py-1 text-[11px]"
+              @click="openClose(sprint)"
+            >
+              <AppIcon name="check" :size="12" /> Close
+            </button>
+            <button
+              v-if="['active', 'completed'].includes(sprint.status)"
+              type="button"
+              class="btn-ghost px-2 py-1 text-[11px]"
+              @click="openMetrics(sprint)"
+            >
+              <AppIcon name="chart" :size="12" /> Metrics
+            </button>
+            <button
+              v-if="canPlan && ['planned', 'active'].includes(sprint.status)"
+              type="button"
+              class="btn-ghost px-2 py-1 text-[11px]"
+              @click="openSprint(sprint)"
+            >
+              <AppIcon name="edit" :size="12" /> Edit
+            </button>
+            <button
+              v-if="canPlan && ['planned', 'active'].includes(sprint.status)"
+              type="button"
+              class="btn-ghost px-2 py-1 text-[11px] text-red-600"
+              @click="cancelSprint(sprint)"
+            >
+              Cancel
+            </button>
+          </div>
         </article>
       </div>
     </section>
@@ -628,16 +847,7 @@ const burnPoints = computed(() => {
           <label class="field-label" for="sprint-goal">Goal</label>
           <textarea id="sprint-goal" v-model="sprintForm.goal" class="field-input" rows="2" placeholder="Checkout conversion and release hardening" />
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label class="field-label" for="sprint-status">Status</label>
-            <select id="sprint-status" v-model="sprintForm.status" class="field-input">
-              <option value="planned">Planned</option>
-              <option value="active">Active</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
+        <div class="grid gap-3 sm:grid-cols-3">
           <div>
             <label class="field-label" for="sprint-capacity">Capacity (points)</label>
             <input id="sprint-capacity" v-model="sprintForm.capacity" type="number" min="0" class="field-input" placeholder="40" />
@@ -651,6 +861,10 @@ const burnPoints = computed(() => {
             <input id="sprint-end" v-model="sprintForm.end_date" type="date" class="field-input" />
           </div>
         </div>
+        <p class="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Sprints stay planned until started. Use Start and Close on the sprint card so goals, dates and
+          carry-over are validated together.
+        </p>
         <p v-if="sprintError" class="text-sm text-red-600">{{ sprintError }}</p>
       </form>
       <template #footer>
@@ -659,6 +873,120 @@ const burnPoints = computed(() => {
           <AppIcon v-if="sprintBusy" name="loader" :size="14" class="animate-spin" />
           {{ sprintEditingId ? 'Save sprint' : 'Create sprint' }}
         </button>
+      </template>
+    </BaseModal>
+
+    <BaseModal v-model="startModal" title="Start sprint" max-width="md" :persistent="startBusy">
+      <div class="space-y-3">
+        <p class="text-sm text-slate-700">
+          {{ sprints.find((sprint) => sprint.id === startTargetId)?.name ?? 'Sprint' }} will become active.
+          The sprint must have a goal and start/end dates, and its dates cannot overlap another active sprint.
+        </p>
+        <p v-if="startError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ startError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="startBusy" @click="startModal = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="startBusy" @click="confirmStart">
+          <AppIcon v-if="startBusy" name="loader" :size="14" class="animate-spin" /> Start sprint
+        </button>
+      </template>
+    </BaseModal>
+
+    <BaseModal v-model="closeModal" title="Close sprint" max-width="lg" :persistent="closeBusy">
+      <div class="space-y-4">
+        <p class="text-sm text-slate-700">
+          Closing {{ closeTarget?.name ?? 'the sprint' }} carries incomplete work out of the sprint. Completed,
+          cancelled and verified work stays attached to the closed sprint.
+        </p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="close-policy">Carry incomplete work to</label>
+            <select id="close-policy" v-model="closePolicy" class="field-input" @change="loadClosePreview">
+              <option value="backlog">Backlog</option>
+              <option value="next_sprint">Next sprint</option>
+            </select>
+          </div>
+          <div v-if="closePolicy === 'next_sprint'">
+            <label class="field-label" for="close-next-sprint">Next sprint</label>
+            <select id="close-next-sprint" v-model="closeNextSprintId" class="field-input" @change="loadClosePreview">
+              <option value="">Select sprint</option>
+              <option v-for="candidate in closeCandidates" :key="candidate.id" :value="candidate.id">
+                {{ candidate.name }} ({{ candidate.status }})
+              </option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="field-label" for="close-note">Close note (optional)</label>
+          <input id="close-note" v-model="closeNote" class="field-input" placeholder="Why the sprint is closing now" />
+        </div>
+        <div v-if="closePreviewBusy" class="text-xs text-slate-600">Loading carry-over preview…</div>
+        <div v-else-if="closePreview" class="rounded-xl border border-slate-200 p-4">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-700">
+            <span><span class="font-semibold text-slate-900">{{ closePreview.incomplete_count }}</span> incomplete</span>
+            <span>{{ closePreview.incomplete_points }} pts carried</span>
+            <span>{{ closePreview.completed_count }} completed ({{ closePreview.completed_points }} pts)</span>
+          </div>
+          <ul v-if="closePreview.incomplete_items.length" class="mt-3 max-h-40 space-y-1 overflow-y-auto text-xs text-slate-600">
+            <li v-for="item in closePreview.incomplete_items" :key="item.id" class="flex justify-between gap-2">
+              <span class="truncate">{{ item.key }} · {{ item.title }}</span>
+              <span class="flex-none">{{ item.status }}</span>
+            </li>
+          </ul>
+          <p v-else class="mt-3 text-xs text-slate-600">No incomplete work to carry over.</p>
+        </div>
+        <p v-if="closeError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ closeError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="closeBusy" @click="closeModal = false">Cancel</button>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="closeBusy || closePreviewBusy || (closePolicy === 'next_sprint' && !closeNextSprintId)"
+          @click="confirmClose"
+        >
+          <AppIcon v-if="closeBusy" name="loader" :size="14" class="animate-spin" /> Close sprint
+        </button>
+      </template>
+    </BaseModal>
+
+    <BaseModal v-model="metricsModal" :title="`Sprint metrics · ${metricsSprintName}`" max-width="md">
+      <div v-if="metricsBusy" class="text-sm text-slate-600">Loading metrics…</div>
+      <div v-else-if="metricsError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ metricsError }}</div>
+      <div v-else-if="metricsData" class="space-y-4">
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div class="rounded-xl border border-slate-200 p-3">
+            <p class="text-[11px] uppercase tracking-wide text-slate-600">Committed</p>
+            <p class="mt-1 text-xl font-semibold text-slate-900">{{ metricsData.committed_points }} pts</p>
+            <p class="text-[11px] text-slate-600">{{ metricsData.total_items }} items</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 p-3">
+            <p class="text-[11px] uppercase tracking-wide text-slate-600">Completed</p>
+            <p class="mt-1 text-xl font-semibold text-emerald-700">{{ metricsData.completed_points }} pts</p>
+            <p class="text-[11px] text-slate-600">{{ metricsData.completed_items }} items</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 p-3">
+            <p class="text-[11px] uppercase tracking-wide text-slate-600">Velocity</p>
+            <p class="mt-1 text-xl font-semibold text-slate-900">
+              {{ metricsData.velocity_points != null ? `${metricsData.velocity_points} pts` : '—' }}
+            </p>
+            <p class="text-[11px] text-slate-600">Last {{ metricsData.velocity_sample_size }} completed sprint(s)</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 p-3">
+            <p class="text-[11px] uppercase tracking-wide text-slate-600">Capacity used</p>
+            <p class="mt-1 text-xl font-semibold text-slate-900">
+              {{ metricsData.capacity_used_percent != null ? `${metricsData.capacity_used_percent}%` : '—' }}
+            </p>
+            <p class="text-[11px] text-slate-600">{{ metricsData.capacity ?? 'No capacity' }}</p>
+          </div>
+        </div>
+        <div class="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          {{ metricsData.days_elapsed }} of {{ metricsData.days_total }} days elapsed
+          ({{ metricsData.days_remaining }} remaining) in {{ metricsData.time_zone }}.
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" @click="metricsModal = false">Close</button>
       </template>
     </BaseModal>
 
