@@ -40,6 +40,7 @@ Project
 │               └── Test step
 ├── Sprint
 ├── Release
+│   └── Release scope exception
 ├── Environment
 ├── Git repository
 │   ├── Branch
@@ -82,6 +83,7 @@ unlinked (`SET NULL`).
 | `prds` → `epics` | `SET NULL` | The epic remains in the project but loses its PRD link. |
 | `features` → work items, test cases | `SET NULL` | Delivery and test artifacts survive feature removal and become explicitly unlinked. |
 | `work_items` → child work items | `SET NULL` | A child is promoted to a root item instead of being deleted. |
+| `releases` → `release_scope_exceptions` | `CASCADE` | Freeze exceptions disappear with their release. |
 | users → ownership, authorship, actor columns | `SET NULL` | History is preserved without the user reference. |
 | users → `project_members` | `CASCADE` | Membership ends when the user is deleted. |
 

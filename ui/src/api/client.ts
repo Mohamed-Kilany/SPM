@@ -19,10 +19,13 @@ import type {
   ProjectSettings,
   PullRequestFile,
   ReleaseReadiness,
+  ReleaseScopeException,
   RepositoryBranch,
   RepositoryCommit,
   RepositoryFile,
   RepositoryTreeResponse,
+  SprintClosePreview,
+  SprintMetrics,
   TraceabilityResponse,
   Attachment,
   Comment,
@@ -729,6 +732,49 @@ export const api = {
     )
   },
 
+  async startSprint(projectId: string, sprintId: string, revision: number): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/sprints/${encodeURIComponent(sprintId)}/start`,
+      { method: 'POST', body: {}, headers: ifMatch(revision) },
+    )
+  },
+
+  async getSprintMetrics(
+    projectId: string,
+    sprintId: string,
+    timeZone?: string,
+  ): Promise<SprintMetrics> {
+    const query = timeZone ? `?time_zone=${encodeURIComponent(timeZone)}` : ''
+    return request<SprintMetrics>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/sprints/${encodeURIComponent(sprintId)}/metrics${query}`,
+    )
+  },
+
+  async previewSprintClose(
+    projectId: string,
+    sprintId: string,
+    policy: string,
+    nextSprintId?: string | null,
+  ): Promise<SprintClosePreview> {
+    const params = new URLSearchParams({ policy })
+    if (nextSprintId) params.set('next_sprint_id', nextSprintId)
+    return request<SprintClosePreview>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/sprints/${encodeURIComponent(sprintId)}/close-preview?${params.toString()}`,
+    )
+  },
+
+  async closeSprint(
+    projectId: string,
+    sprintId: string,
+    payload: { policy: string; next_sprint_id?: string | null; note?: string },
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/sprints/${encodeURIComponent(sprintId)}/close`,
+      { method: 'POST', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
   async createRelease(projectId: string, payload: unknown): Promise<RevisionedResult> {
     return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/releases`, {
       method: 'POST',
@@ -745,6 +791,55 @@ export const api = {
     return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}`,
       { method: 'PUT', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
+  async freezeRelease(
+    projectId: string,
+    releaseId: string,
+    reason: string,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}/freeze`,
+      { method: 'POST', body: { reason }, headers: ifMatch(revision) },
+    )
+  },
+
+  async unfreezeRelease(projectId: string, releaseId: string, revision: number): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}/freeze`,
+      { method: 'DELETE', headers: ifMatch(revision) },
+    )
+  },
+
+  async listReleaseExceptions(projectId: string, releaseId: string): Promise<ReleaseScopeException[]> {
+    const result = await request<{ exceptions: ReleaseScopeException[] }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}/exceptions`,
+    )
+    return result.exceptions
+  },
+
+  async createReleaseException(
+    projectId: string,
+    releaseId: string,
+    payload: { entity_type: string; entity_id?: string | null; reason: string },
+  ): Promise<ReleaseScopeException> {
+    return request<ReleaseScopeException>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}/exceptions`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async signOffRelease(
+    projectId: string,
+    releaseId: string,
+    evidence: string,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(releaseId)}/sign-off`,
+      { method: 'POST', body: { evidence }, headers: ifMatch(revision) },
     )
   },
 

@@ -201,32 +201,44 @@ type WorkItem struct {
 
 // Sprint is a time-boxed planning interval.
 type Sprint struct {
-	ID        uuid.UUID  `json:"id"`
-	ProjectID uuid.UUID  `json:"project_id"`
-	Name      string     `json:"name"`
-	Goal      string     `json:"goal"`
-	Status    string     `json:"status"`
-	StartDate *time.Time `json:"start_date"`
-	EndDate   *time.Time `json:"end_date"`
-	Capacity  *float64   `json:"capacity"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	Revision  int64      `json:"revision"`
+	ID             uuid.UUID  `json:"id"`
+	ProjectID      uuid.UUID  `json:"project_id"`
+	Name           string     `json:"name"`
+	Goal           string     `json:"goal"`
+	Status         string     `json:"status"`
+	StartDate      *time.Time `json:"start_date"`
+	EndDate        *time.Time `json:"end_date"`
+	Capacity       *float64   `json:"capacity"`
+	ActivatedAt    *time.Time `json:"activated_at"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	CompletedBy    *uuid.UUID `json:"completed_by"`
+	ClosePolicy    string     `json:"close_policy"`
+	CarryOverCount int        `json:"carry_over_count"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	Revision       int64      `json:"revision"`
 }
 
 // Release is a shippable version.
 type Release struct {
-	ID         uuid.UUID  `json:"id"`
-	ProjectID  uuid.UUID  `json:"project_id"`
-	Name       string     `json:"name"`
-	Version    string     `json:"version"`
-	Status     string     `json:"status"`
-	PlannedAt  *time.Time `json:"planned_at"`
-	ReleasedAt *time.Time `json:"released_at"`
-	Notes      string     `json:"notes"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	Revision   int64      `json:"revision"`
+	ID              uuid.UUID  `json:"id"`
+	ProjectID       uuid.UUID  `json:"project_id"`
+	Name            string     `json:"name"`
+	Version         string     `json:"version"`
+	Status          string     `json:"status"`
+	PlannedAt       *time.Time `json:"planned_at"`
+	ReleasedAt      *time.Time `json:"released_at"`
+	MilestoneAt     *time.Time `json:"milestone_at"`
+	FrozenAt        *time.Time `json:"frozen_at"`
+	FrozenBy        *uuid.UUID `json:"frozen_by"`
+	FreezeReason    string     `json:"freeze_reason"`
+	SignOffEvidence string     `json:"sign_off_evidence"`
+	SignedOffAt     *time.Time `json:"signed_off_at"`
+	SignedOffBy     *uuid.UUID `json:"signed_off_by"`
+	Notes           string     `json:"notes"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	Revision        int64      `json:"revision"`
 }
 
 // Environment is a deployment target.

@@ -11,7 +11,7 @@ import { useToastStore } from '../../stores/toastStore'
 import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { dateInputValue } from '../../lib/workspace'
 import { formatDateTime, shortId, timeAgo } from '../../lib/format'
-import type { Build, Deployment, GitRepository, ProjectSettings, PullRequest, Release } from '../../types/workspace'
+import type { Build, Deployment, GitRepository, ProjectSettings, PullRequest, Release, ReleaseReadiness, ReleaseScopeException } from '../../types/workspace'
 
 const store = useWorkspaceStore()
 const auth = useAuthStore()
@@ -52,6 +52,12 @@ const healthChecks = computed(() => store.workspace?.health_checks ?? [])
 // (builds, deployments, health) are projections and always visible.
 const canManageSettings = computed(() => auth.can(store.projectId, 'settings.write'))
 const canPlan = computed(() => auth.can(store.projectId, 'planning.write'))
+const canModerate = computed(
+  () =>
+    auth.isAdmin ||
+    auth.projectRole(store.projectId) === 'owner' ||
+    auth.projectRole(store.projectId) === 'maintainer',
+)
 const canWriteCode = computed(() => auth.can(store.projectId, 'code.write'))
 const canMerge = computed(() => auth.can(store.projectId, 'pr.merge'))
 const canDeploy = computed(() => auth.can(store.projectId, 'delivery.deploy'))
@@ -482,6 +488,7 @@ const releaseForm = reactive({
   version: '',
   status: 'planned',
   planned_at: '',
+  milestone_at: '',
   notes: '',
 })
 
@@ -493,6 +500,7 @@ function openRelease(release?: Release): void {
     version: release?.version ?? '',
     status: release?.status ?? 'planned',
     planned_at: dateInputValue(release?.planned_at),
+    milestone_at: dateInputValue(release?.milestone_at),
     notes: release?.notes ?? '',
   })
   releaseError.value = ''
@@ -512,6 +520,7 @@ async function saveRelease(): Promise<void> {
       version: releaseForm.version.trim(),
       status: releaseForm.status,
       planned_at: releaseForm.planned_at || null,
+      milestone_at: releaseForm.milestone_at || null,
       notes: releaseForm.notes,
     }
     if (releaseEditingId.value) {
@@ -537,6 +546,233 @@ async function saveRelease(): Promise<void> {
     releaseError.value = error instanceof Error ? error.message : 'Failed to save release'
   } finally {
     releaseBusy.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Release lifecycle: freeze, scope exceptions, sign-off and state changes.
+// ---------------------------------------------------------------------------
+
+const releaseActionBusy = ref('')
+
+function releasePayload(release: Release, status: string) {
+  return {
+    name: release.name,
+    version: release.version,
+    status,
+    planned_at: release.planned_at,
+    milestone_at: release.milestone_at,
+    notes: release.notes,
+  }
+}
+
+async function transitionRelease(release: Release, status: string): Promise<void> {
+  if (!canPlan.value) return
+  releaseActionBusy.value = release.id
+  try {
+    await api.updateRelease(store.projectId, release.id, releasePayload(release, status), release.revision)
+    toast.success(`Release ${release.version} is ${status.replace('_', ' ')}.`, 'Release')
+    await store.refresh()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('release'))
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to update release')
+  } finally {
+    releaseActionBusy.value = ''
+  }
+}
+
+async function cancelRelease(release: Release): Promise<void> {
+  if (!window.confirm(`Cancel release ${release.version}?`)) return
+  await transitionRelease(release, 'cancelled')
+}
+
+const freezeModal = ref(false)
+const freezeBusy = ref(false)
+const freezeError = ref('')
+const freezeTargetId = ref('')
+const freezeReason = ref('')
+
+function openFreeze(release: Release): void {
+  if (!canModerate.value) return
+  freezeTargetId.value = release.id
+  freezeReason.value = ''
+  freezeError.value = ''
+  freezeModal.value = true
+}
+
+async function confirmFreeze(): Promise<void> {
+  const release = releases.value.find((entry) => entry.id === freezeTargetId.value)
+  if (!release || !canModerate.value) return
+  if (!freezeReason.value.trim()) {
+    freezeError.value = 'Describe why the release is frozen.'
+    return
+  }
+  freezeBusy.value = true
+  freezeError.value = ''
+  try {
+    await api.freezeRelease(store.projectId, release.id, freezeReason.value.trim(), release.revision)
+    freezeModal.value = false
+    toast.success(`Release ${release.version} frozen. Scope changes now need an exception.`, 'Release')
+    await store.refresh()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      freezeError.value = revisionConflictMessage('release')
+      return
+    }
+    freezeError.value = error instanceof Error ? error.message : 'Failed to freeze release'
+  } finally {
+    freezeBusy.value = false
+  }
+}
+
+async function unfreezeRelease(release: Release): Promise<void> {
+  if (!canModerate.value || !window.confirm(`Unfreeze release ${release.version}?`)) return
+  releaseActionBusy.value = release.id
+  try {
+    await api.unfreezeRelease(store.projectId, release.id, release.revision)
+    toast.success(`Release ${release.version} unfrozen.`, 'Release')
+    await store.refresh()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('release'))
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to unfreeze release')
+  } finally {
+    releaseActionBusy.value = ''
+  }
+}
+
+const signOffModal = ref(false)
+const signOffBusy = ref(false)
+const signOffLoading = ref(false)
+const signOffError = ref('')
+const signOffTargetId = ref('')
+const signOffEvidence = ref('')
+const signOffReadiness = ref<ReleaseReadiness | null>(null)
+
+const signOffTarget = computed(() => releases.value.find((release) => release.id === signOffTargetId.value) ?? null)
+
+async function openSignOff(release: Release): Promise<void> {
+  if (!canModerate.value) return
+  signOffTargetId.value = release.id
+  signOffEvidence.value = release.sign_off_evidence
+  signOffReadiness.value = null
+  signOffError.value = ''
+  signOffModal.value = true
+  signOffLoading.value = true
+  try {
+    const result = await api.getReleaseReadiness(store.projectId)
+    signOffReadiness.value = result.releases.find((entry) => entry.release_id === release.id) ?? null
+  } catch (error) {
+    signOffError.value = error instanceof Error ? error.message : 'Failed to load release readiness'
+  } finally {
+    signOffLoading.value = false
+  }
+}
+
+async function confirmSignOff(): Promise<void> {
+  const release = signOffTarget.value
+  if (!release || !canModerate.value) return
+  if (signOffEvidence.value.trim().length < 10) {
+    signOffError.value = 'Evidence must be at least 10 characters.'
+    return
+  }
+  if (signOffReadiness.value && !signOffReadiness.value.ready) {
+    signOffError.value = 'Readiness gates must pass before sign-off.'
+    return
+  }
+  signOffBusy.value = true
+  signOffError.value = ''
+  try {
+    await api.signOffRelease(store.projectId, release.id, signOffEvidence.value.trim(), release.revision)
+    signOffModal.value = false
+    toast.success(`Release ${release.version} signed off.`, 'Release')
+    await store.refresh()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      signOffError.value = revisionConflictMessage('release')
+      return
+    }
+    signOffError.value = error instanceof Error ? error.message : 'Failed to sign off release'
+  } finally {
+    signOffBusy.value = false
+  }
+}
+
+const exceptionsModal = ref(false)
+const exceptionsBusy = ref(false)
+const exceptionsError = ref('')
+const exceptionsTargetId = ref('')
+const exceptions = ref<ReleaseScopeException[]>([])
+const exceptionType = ref<'work_item' | 'feature' | 'epic'>('work_item')
+const exceptionEntityId = ref('')
+const exceptionReason = ref('')
+
+const exceptionsTarget = computed(() => releases.value.find((release) => release.id === exceptionsTargetId.value) ?? null)
+const exceptionOptions = computed(() => {
+  if (exceptionType.value === 'work_item') {
+    return workItems.value.map((item) => ({ id: item.id, label: `${item.key} · ${item.title}` }))
+  }
+  if (exceptionType.value === 'feature') {
+    return store.features.map((feature) => ({ id: feature.id, label: feature.title }))
+  }
+  return store.epics.map((epic) => ({ id: epic.id, label: epic.title }))
+})
+
+async function loadExceptions(): Promise<void> {
+  if (!exceptionsTargetId.value) return
+  exceptionsBusy.value = true
+  exceptionsError.value = ''
+  try {
+    exceptions.value = await api.listReleaseExceptions(store.projectId, exceptionsTargetId.value)
+  } catch (error) {
+    exceptionsError.value = error instanceof Error ? error.message : 'Failed to load scope exceptions'
+  } finally {
+    exceptionsBusy.value = false
+  }
+}
+
+function openExceptions(release: Release): void {
+  if (!canModerate.value) return
+  exceptionsTargetId.value = release.id
+  exceptionType.value = 'work_item'
+  exceptionEntityId.value = ''
+  exceptionReason.value = ''
+  exceptions.value = []
+  exceptionsError.value = ''
+  exceptionsModal.value = true
+  void loadExceptions()
+}
+
+async function addException(): Promise<void> {
+  if (!canModerate.value || !exceptionsTargetId.value || !exceptionReason.value.trim()) {
+    exceptionsError.value = 'A reason is required.'
+    return
+  }
+  exceptionsBusy.value = true
+  exceptionsError.value = ''
+  try {
+    await api.createReleaseException(store.projectId, exceptionsTargetId.value, {
+      entity_type: exceptionType.value,
+      entity_id: exceptionEntityId.value || null,
+      reason: exceptionReason.value.trim(),
+    })
+    exceptionEntityId.value = ''
+    exceptionReason.value = ''
+    await loadExceptions()
+    toast.success('Scope exception recorded.', 'Release')
+  } catch (error) {
+    exceptionsError.value = error instanceof Error ? error.message : 'Failed to record scope exception'
+  } finally {
+    exceptionsBusy.value = false
   }
 }
 </script>
@@ -792,18 +1028,91 @@ async function saveRelease(): Promise<void> {
           <button v-if="canPlan" type="button" class="btn-ghost text-xs" @click="openRelease()"><AppIcon name="plus" :size="13" /> Release</button>
         </div>
         <div v-if="releases.length" class="divide-y divide-slate-100">
-          <div v-for="release in releases" :key="release.id" class="px-5 py-3">
+          <div v-for="release in releases" :key="release.id" data-testid="release-row" class="px-5 py-3">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <p class="truncate text-xs font-semibold text-slate-800">{{ release.name }}</p>
                 <p class="mt-0.5 text-[10px] text-slate-600">
                   {{ release.version }} - {{ release.planned_at ? formatDateTime(release.planned_at) : 'No date' }}
                 </p>
+                <p v-if="release.frozen_at" class="mt-1 text-[10px] font-semibold text-amber-700">
+                  Frozen {{ formatDateTime(release.frozen_at) }}<span v-if="release.freeze_reason"> · {{ release.freeze_reason }}</span>
+                </p>
+                <p v-if="release.signed_off_at" class="mt-1 text-[10px] font-semibold text-emerald-700">
+                  Signed off {{ formatDateTime(release.signed_off_at) }}
+                </p>
               </div>
               <StatusPill :status="release.status" />
             </div>
-            <div class="mt-2 flex justify-end">
-              <button v-if="canPlan" type="button" class="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700" @click="openRelease(release)">Edit release</button>
+            <div v-if="canPlan" class="mt-2 flex flex-wrap justify-end gap-2">
+              <button
+                v-if="canModerate && !release.frozen_at && ['planned', 'in_progress'].includes(release.status)"
+                type="button"
+                class="text-[10px] font-semibold text-slate-700 hover:text-slate-900"
+                :disabled="releaseActionBusy === release.id"
+                @click="openFreeze(release)"
+              >
+                Freeze
+              </button>
+              <button
+                v-if="canModerate && release.frozen_at"
+                type="button"
+                class="text-[10px] font-semibold text-amber-700 hover:text-amber-800"
+                :disabled="releaseActionBusy === release.id"
+                @click="unfreezeRelease(release)"
+              >
+                Unfreeze
+              </button>
+              <button
+                v-if="canModerate && release.frozen_at"
+                type="button"
+                class="text-[10px] font-semibold text-slate-700 hover:text-slate-900"
+                @click="openExceptions(release)"
+              >
+                Exceptions
+              </button>
+              <button
+                v-if="canModerate && ['planned', 'in_progress'].includes(release.status)"
+                type="button"
+                class="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700"
+                @click="openSignOff(release)"
+              >
+                {{ release.signed_off_at ? 'Update sign-off' : 'Sign off' }}
+              </button>
+              <button
+                v-if="release.status === 'planned'"
+                type="button"
+                class="text-[10px] font-semibold text-slate-700 hover:text-slate-900"
+                :disabled="releaseActionBusy === release.id"
+                @click="transitionRelease(release, 'in_progress')"
+              >
+                Start progress
+              </button>
+              <button
+                v-if="release.status === 'in_progress' && release.signed_off_at"
+                type="button"
+                class="text-[10px] font-semibold text-emerald-700 hover:text-emerald-800"
+                :disabled="releaseActionBusy === release.id"
+                @click="transitionRelease(release, 'released')"
+              >
+                Mark released
+              </button>
+              <button
+                v-if="['planned', 'in_progress'].includes(release.status)"
+                type="button"
+                class="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700"
+                @click="openRelease(release)"
+              >
+                Edit release
+              </button>
+              <button
+                v-if="['planned', 'in_progress'].includes(release.status)"
+                type="button"
+                class="text-[10px] font-semibold text-red-600 hover:text-red-700"
+                @click="cancelRelease(release)"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -1073,19 +1382,18 @@ async function saveRelease(): Promise<void> {
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
-            <label class="field-label" for="release-status">Status</label>
-            <select id="release-status" v-model="releaseForm.status" class="field-input">
-              <option value="planned">Planned</option>
-              <option value="in_progress">In progress</option>
-              <option value="released">Released</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-          <div>
             <label class="field-label" for="release-date">Planned date</label>
             <input id="release-date" v-model="releaseForm.planned_at" type="date" class="field-input" />
           </div>
+          <div>
+            <label class="field-label" for="release-milestone">Milestone</label>
+            <input id="release-milestone" v-model="releaseForm.milestone_at" type="date" class="field-input" />
+          </div>
         </div>
+        <p class="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Releases start as planned. Use Start progress, Sign off, Freeze and Mark released on the release
+          card so readiness, scope freeze and audit evidence are enforced together.
+        </p>
         <div>
           <label class="field-label" for="release-notes">Notes</label>
           <textarea id="release-notes" v-model="releaseForm.notes" rows="3" class="field-input" />
@@ -1096,6 +1404,141 @@ async function saveRelease(): Promise<void> {
         <button type="button" class="btn-secondary" :disabled="releaseBusy" @click="releaseModal = false">Cancel</button>
         <button type="button" class="btn-primary" :disabled="releaseBusy" @click="saveRelease">
           <AppIcon v-if="releaseBusy" name="loader" :size="14" class="animate-spin" /> {{ releaseEditingId ? 'Save release' : 'Plan release' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Release freeze modal -->
+    <BaseModal v-model="freezeModal" title="Freeze release scope" max-width="md" :persistent="freezeBusy">
+      <div class="space-y-3">
+        <p class="text-sm text-slate-700">
+          While {{ releases.find((release) => release.id === freezeTargetId)?.version ?? 'the release' }} is frozen,
+          moving work items, features or epics into or out of it requires a recorded scope exception.
+        </p>
+        <div>
+          <label class="field-label" for="freeze-reason">Reason</label>
+          <textarea id="freeze-reason" v-model="freezeReason" rows="3" class="field-input" data-autofocus placeholder="Release candidate is in verification" />
+        </div>
+        <p v-if="freezeError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ freezeError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="freezeBusy" @click="freezeModal = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="freezeBusy" @click="confirmFreeze">
+          <AppIcon v-if="freezeBusy" name="loader" :size="14" class="animate-spin" /> Freeze release
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Release sign-off modal -->
+    <BaseModal v-model="signOffModal" title="Release sign-off" max-width="lg" :persistent="signOffBusy">
+      <div class="space-y-4">
+        <p class="text-sm text-slate-700">
+          Sign-off records who approved {{ signOffTarget?.version ?? 'the release' }}, when, and a SHA-256 digest
+          of the evidence in the audit trail. Readiness gates must pass first.
+        </p>
+        <div v-if="signOffLoading" class="text-xs text-slate-600">Evaluating readiness…</div>
+        <div v-else-if="signOffReadiness" class="rounded-xl border border-slate-200 p-4">
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-sm font-semibold text-slate-800">Readiness {{ signOffReadiness.score }}%</p>
+            <span
+              class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              :class="signOffReadiness.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'"
+            >
+              {{ signOffReadiness.ready ? 'Ready' : 'Blocked' }}
+            </span>
+          </div>
+          <ul class="mt-3 space-y-1.5 text-xs">
+            <li v-for="gate in signOffReadiness.gates" :key="gate.key" class="flex items-start gap-2">
+              <span
+                class="mt-1 h-2 w-2 flex-none rounded-full"
+                :class="gate.status === 'pass' ? 'bg-emerald-500' : gate.status === 'warn' ? 'bg-amber-500' : 'bg-red-500'"
+              />
+              <span class="text-slate-600"><span class="font-semibold text-slate-800">{{ gate.label }}:</span> {{ gate.detail }}</span>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <label class="field-label" for="sign-off-evidence">Evidence</label>
+          <textarea
+            id="sign-off-evidence"
+            v-model="signOffEvidence"
+            rows="4"
+            class="field-input"
+            placeholder="QA sign-off on build 1234; regression suite green; no open critical bugs"
+          />
+          <p class="mt-1 text-[11px] text-slate-600">At least 10 characters. The audit trail stores only the digest.</p>
+        </div>
+        <p v-if="signOffTarget?.signed_off_at" class="text-[11px] text-slate-600">
+          Current sign-off: {{ formatDateTime(signOffTarget.signed_off_at) }}
+        </p>
+        <p v-if="signOffError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ signOffError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="signOffBusy" @click="signOffModal = false">Cancel</button>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="signOffBusy || signOffLoading || (signOffReadiness != null && !signOffReadiness.ready)"
+          @click="confirmSignOff"
+        >
+          <AppIcon v-if="signOffBusy" name="loader" :size="14" class="animate-spin" /> Record sign-off
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Release scope exceptions modal -->
+    <BaseModal v-model="exceptionsModal" title="Release scope exceptions" max-width="lg" :persistent="exceptionsBusy">
+      <div class="space-y-4">
+        <p class="text-sm text-slate-700">
+          Exceptions authorize moving scope into or out of
+          {{ exceptionsTarget?.version ?? 'the release' }} while it is frozen. Omit the entity to authorize
+          a whole type.
+        </p>
+        <div v-if="exceptionsBusy && !exceptions.length" class="text-xs text-slate-600">Loading exceptions…</div>
+        <ul v-else-if="exceptions.length" class="max-h-44 space-y-2 overflow-y-auto">
+          <li v-for="exception in exceptions" :key="exception.id" class="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+            <p class="font-semibold text-slate-800">
+              {{ exception.entity_type.replace('_', ' ') }}
+              <span v-if="exception.entity_id" class="font-normal text-slate-600"> · {{ exception.entity_id }}</span>
+              <span v-else class="font-normal text-slate-600"> · all</span>
+            </p>
+            <p class="mt-1 text-slate-600">{{ exception.reason }}</p>
+            <p class="mt-1 text-[10px] text-slate-600">{{ formatDateTime(exception.created_at) }}</p>
+          </li>
+        </ul>
+        <p v-else class="text-xs text-slate-600">No exceptions recorded.</p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="exception-type">Scope type</label>
+            <select
+              id="exception-type"
+              v-model="exceptionType"
+              class="field-input"
+              @change="exceptionEntityId = ''"
+            >
+              <option value="work_item">Work item</option>
+              <option value="feature">Feature</option>
+              <option value="epic">Epic</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="exception-entity">Entity</label>
+            <select id="exception-entity" v-model="exceptionEntityId" class="field-input">
+              <option value="">Any {{ exceptionType.replace('_', ' ') }}</option>
+              <option v-for="option in exceptionOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="field-label" for="exception-reason">Reason</label>
+          <input id="exception-reason" v-model="exceptionReason" class="field-input" placeholder="Approved critical bug fix" />
+        </div>
+        <p v-if="exceptionsError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ exceptionsError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="exceptionsBusy" @click="exceptionsModal = false">Close</button>
+        <button type="button" class="btn-primary" :disabled="exceptionsBusy" @click="addException">
+          <AppIcon v-if="exceptionsBusy" name="loader" :size="14" class="animate-spin" /> Add exception
         </button>
       </template>
     </BaseModal>

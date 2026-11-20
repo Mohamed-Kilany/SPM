@@ -393,6 +393,9 @@ func (h *Handler) CreateEpic(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
+	if req.TargetReleaseID != nil && !h.enforceReleaseFreeze(c, projectID, "epic", nil, nil, req.TargetReleaseID) {
+		return
+	}
 	var id uuid.UUID
 	var revision int64
 	err = h.store.DB().QueryRow(c.Request.Context(), `
@@ -435,8 +438,20 @@ func (h *Handler) UpdateEpic(c *gin.Context) {
 	if !ok {
 		return
 	}
+	currentRelease, err := h.currentScopeRelease(c.Request.Context(), "epics", "target_release_id", projectID, epicID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Epic not found")
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load epic")
+		return
+	}
+	if !h.enforceReleaseFreeze(c, projectID, "epic", &epicID, currentRelease, req.TargetReleaseID) {
+		return
+	}
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE epics SET prd_id=$3, title=$4, description=$5, status=$6, priority=$7, owner_id=$8,
 		target_release_id=$9, start_date=$10, due_date=$11, updated_at=NOW()
 		WHERE id=$1 AND project_id=$2`+revisionClause(12)+`
@@ -547,6 +562,9 @@ func (h *Handler) CreateFeature(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Epic does not belong to this project")
 		return
 	}
+	if req.TargetReleaseID != nil && !h.enforceReleaseFreeze(c, projectID, "feature", nil, nil, req.TargetReleaseID) {
+		return
+	}
 	var id uuid.UUID
 	var revision int64
 	err := h.store.DB().QueryRow(c.Request.Context(), `
@@ -591,8 +609,20 @@ func (h *Handler) UpdateFeature(c *gin.Context) {
 	if !ok {
 		return
 	}
+	currentRelease, err := h.currentScopeRelease(c.Request.Context(), "features", "target_release_id", projectID, featureID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Feature not found")
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load feature")
+		return
+	}
+	if !h.enforceReleaseFreeze(c, projectID, "feature", &featureID, currentRelease, req.TargetReleaseID) {
+		return
+	}
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE features SET epic_id=$3, title=$4, description=$5, acceptance_criteria=$6, status=$7,
 		priority=$8, owner_id=$9, estimate_points=$10, target_release_id=$11, updated_at=NOW()
 		WHERE id=$1 AND project_id=$2`+revisionClause(12)+`
@@ -736,6 +766,9 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusUnprocessableEntity, "HIERARCHY_ERROR", err.Error())
 		return
 	}
+	if req.ReleaseID != nil && !h.enforceReleaseFreeze(c, projectID, "work_item", nil, nil, req.ReleaseID) {
+		return
+	}
 	var id uuid.UUID
 	var number int64
 	var revision int64
@@ -798,6 +831,18 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 	due, _ := parseTimePtr(req.DueDate)
 	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
 	if !ok {
+		return
+	}
+	currentRelease, err := h.currentScopeRelease(c.Request.Context(), "work_items", "release_id", projectID, itemID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Work item not found")
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load work item")
+		return
+	}
+	if !h.enforceReleaseFreeze(c, projectID, "work_item", &itemID, currentRelease, req.ReleaseID) {
 		return
 	}
 	var revision int64
@@ -1115,17 +1160,36 @@ func (h *Handler) CreateSprint(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Sprint name is required")
 		return
 	}
-	if req.Status == "" {
-		req.Status = "planned"
+	// A sprint is created in the planned state. Activation is a separate,
+	// validated transition so dates and a goal cannot be skipped.
+	if req.Status != "" && req.Status != "planned" {
+		apiError(c, http.StatusUnprocessableEntity, "SPRINT_USE_LIFECYCLE", "Create the sprint as planned, then start it through the lifecycle endpoint")
+		return
 	}
-	start, _ := parseTimePtr(req.StartDate)
-	end, _ := parseTimePtr(req.EndDate)
+	if req.Capacity != nil && *req.Capacity < 0 {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Sprint capacity cannot be negative")
+		return
+	}
+	start, err := parseTimePtr(req.StartDate)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	end, err := parseTimePtr(req.EndDate)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	if start != nil && end != nil && end.Before(*start) {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Sprint end date cannot be before its start date")
+		return
+	}
 	var id uuid.UUID
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO sprints (project_id, name, goal, status, start_date, end_date, capacity)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, revision`,
-		projectID, req.Name, req.Goal, req.Status, start, end, req.Capacity).Scan(&id, &revision)
+		VALUES ($1,$2,$3,'planned',$4,$5,$6) RETURNING id, revision`,
+		projectID, strings.TrimSpace(req.Name), strings.TrimSpace(req.Goal), start, end, req.Capacity).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create sprint")
 		return
@@ -1149,17 +1213,77 @@ func (h *Handler) UpdateSprint(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "INVALID_REQUEST", "Request body is not valid JSON")
 		return
 	}
-	start, _ := parseTimePtr(req.StartDate)
-	end, _ := parseTimePtr(req.EndDate)
+	if strings.TrimSpace(req.Name) == "" {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Sprint name is required")
+		return
+	}
+	if req.Capacity != nil && *req.Capacity < 0 {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Sprint capacity cannot be negative")
+		return
+	}
+	start, err := parseTimePtr(req.StartDate)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	end, err := parseTimePtr(req.EndDate)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	if start != nil && end != nil && end.Before(*start) {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Sprint end date cannot be before its start date")
+		return
+	}
 	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
 	if !ok {
 		return
 	}
+	var currentStatus string
+	err = h.store.DB().QueryRow(c.Request.Context(),
+		`SELECT status FROM sprints WHERE id=$1 AND project_id=$2`, sprintID, projectID).Scan(&currentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Sprint not found")
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load sprint")
+		return
+	}
+	nextStatus := strings.TrimSpace(req.Status)
+	if nextStatus == "" {
+		nextStatus = currentStatus
+	}
+	if !validSprintUpdateTransition(currentStatus, nextStatus) {
+		apiError(c, http.StatusUnprocessableEntity, "SPRINT_USE_LIFECYCLE", "Start and close a sprint through the lifecycle endpoints; only cancellation is allowed here")
+		return
+	}
+	if nextStatus == currentStatus && (nextStatus == "active") {
+		// An active sprint must keep a goal and dates; otherwise capacity and
+		// velocity have no well-defined window.
+		if strings.TrimSpace(req.Goal) == "" {
+			apiError(c, http.StatusUnprocessableEntity, "SPRINT_GOAL_REQUIRED", "An active sprint requires a goal")
+			return
+		}
+		if start == nil || end == nil {
+			apiError(c, http.StatusUnprocessableEntity, "SPRINT_DATES_REQUIRED", "An active sprint requires start and end dates")
+			return
+		}
+		overlap, err := h.sprintOverlaps(c.Request.Context(), projectID, sprintID, *start, *end)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check sprint overlap")
+			return
+		}
+		if overlap {
+			apiError(c, http.StatusConflict, "SPRINT_OVERLAP", "Another active sprint overlaps these dates")
+			return
+		}
+	}
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE sprints SET name=$3, goal=$4, status=$5, start_date=$6, end_date=$7, capacity=$8, updated_at=NOW()
 		WHERE id=$1 AND project_id=$2`+revisionClause(9)+`
-		RETURNING revision`, sprintID, projectID, req.Name, req.Goal, req.Status, start, end, req.Capacity,
+		RETURNING revision`, sprintID, projectID, strings.TrimSpace(req.Name), strings.TrimSpace(req.Goal), nextStatus, start, end, req.Capacity,
 		revisionValue(expected)).Scan(&revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		h.revisionFailure(c, "sprint", "sprints", sprintID, projectID)
@@ -1169,7 +1293,11 @@ func (h *Handler) UpdateSprint(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update sprint")
 		return
 	}
-	h.recordActivity(c.Request.Context(), projectID, actorID(c), "sprint", &sprintID, "updated", "Updated sprint "+req.Name, nil)
+	action := "updated"
+	if nextStatus != currentStatus {
+		action = "cancelled"
+	}
+	h.recordActivity(c.Request.Context(), projectID, actorID(c), "sprint", &sprintID, action, "Updated sprint "+req.Name, map[string]interface{}{"status": nextStatus})
 	setRevisionHeader(c, revision)
 	c.JSON(http.StatusOK, gin.H{"id": sprintID, "revision": revision})
 }
@@ -1179,6 +1307,7 @@ type releaseRequest struct {
 	Version         string  `json:"version"`
 	Status          string  `json:"status"`
 	PlannedAt       *string `json:"planned_at"`
+	MilestoneAt     *string `json:"milestone_at"`
 	Notes           string  `json:"notes"`
 	ExpectedVersion *int64  `json:"expected_version"`
 }
@@ -1196,13 +1325,30 @@ func (h *Handler) CreateRelease(c *gin.Context) {
 	if req.Status == "" {
 		req.Status = "planned"
 	}
-	planned, _ := parseTimePtr(req.PlannedAt)
+	if req.Status != "planned" && req.Status != "in_progress" {
+		apiError(c, http.StatusUnprocessableEntity, "RELEASE_USE_LIFECYCLE", "Create the release as planned or in progress; use the lifecycle endpoint to release or cancel it")
+		return
+	}
+	planned, err := parseTimePtr(req.PlannedAt)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	milestone, err := parseTimePtr(req.MilestoneAt)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	if planned != nil && milestone != nil && milestone.Before(*planned) {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Release milestone cannot be before the planned date")
+		return
+	}
 	var id uuid.UUID
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
-		INSERT INTO releases (project_id, name, version, status, planned_at, notes)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, revision`,
-		projectID, req.Name, req.Version, req.Status, planned, req.Notes).Scan(&id, &revision)
+	err = h.store.DB().QueryRow(c.Request.Context(), `
+		INSERT INTO releases (project_id, name, version, status, planned_at, milestone_at, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, revision`,
+		projectID, strings.TrimSpace(req.Name), strings.TrimSpace(req.Version), req.Status, planned, milestone, req.Notes).Scan(&id, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create release")
 		return
@@ -1226,21 +1372,67 @@ func (h *Handler) UpdateRelease(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "INVALID_REQUEST", "Request body is not valid JSON")
 		return
 	}
-	planned, _ := parseTimePtr(req.PlannedAt)
-	var releasedAt interface{}
-	if req.Status == "released" {
-		releasedAt = time.Now().UTC()
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Version) == "" {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Release name and version are required")
+		return
+	}
+	planned, err := parseTimePtr(req.PlannedAt)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	milestone, err := parseTimePtr(req.MilestoneAt)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	if planned != nil && milestone != nil && milestone.Before(*planned) {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Release milestone cannot be before the planned date")
+		return
 	}
 	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
 	if !ok {
 		return
 	}
+	var currentStatus string
+	var signedOffAt *time.Time
+	err = h.store.DB().QueryRow(c.Request.Context(),
+		`SELECT status, signed_off_at FROM releases WHERE id=$1 AND project_id=$2`, releaseID, projectID).
+		Scan(&currentStatus, &signedOffAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Release not found")
+		return
+	}
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load release")
+		return
+	}
+	nextStatus := strings.TrimSpace(req.Status)
+	if nextStatus == "" {
+		nextStatus = currentStatus
+	}
+	if !validReleaseTransition(currentStatus, nextStatus) {
+		apiError(c, http.StatusUnprocessableEntity, "RELEASE_STATE", "Invalid release state transition")
+		return
+	}
+	if nextStatus == "released" && nextStatus != currentStatus && signedOffAt == nil {
+		apiError(c, http.StatusUnprocessableEntity, "RELEASE_SIGN_OFF_REQUIRED", "Record sign-off before releasing")
+		return
+	}
+	var releasedAt interface{}
+	if nextStatus == "released" && currentStatus != "released" {
+		releasedAt = time.Now().UTC()
+	}
+	action := "updated"
+	if nextStatus != currentStatus {
+		action = nextStatus
+	}
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE releases SET name=$3, version=$4, status=$5, planned_at=$6, released_at=COALESCE($7, released_at),
-		notes=$8, updated_at=NOW() WHERE id=$1 AND project_id=$2`+revisionClause(9)+`
+		milestone_at=$8, notes=$9, updated_at=NOW() WHERE id=$1 AND project_id=$2`+revisionClause(10)+`
 		RETURNING revision`,
-		releaseID, projectID, req.Name, req.Version, req.Status, planned, releasedAt, req.Notes,
+		releaseID, projectID, strings.TrimSpace(req.Name), strings.TrimSpace(req.Version), nextStatus, planned, releasedAt, milestone, req.Notes,
 		revisionValue(expected)).Scan(&revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		h.revisionFailure(c, "release", "releases", releaseID, projectID)
@@ -1250,7 +1442,7 @@ func (h *Handler) UpdateRelease(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update release")
 		return
 	}
-	h.recordActivity(c.Request.Context(), projectID, actorID(c), "release", &releaseID, "updated", "Updated release "+req.Version, nil)
+	h.recordActivity(c.Request.Context(), projectID, actorID(c), "release", &releaseID, action, "Updated release "+req.Version, map[string]interface{}{"status": nextStatus})
 	setRevisionHeader(c, revision)
 	c.JSON(http.StatusOK, gin.H{"id": releaseID, "revision": revision})
 }

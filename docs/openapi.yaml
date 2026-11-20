@@ -1465,6 +1465,188 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/releases/{releaseId}/exceptions:
+    get:
+      tags: ["Planning"]
+      summary: "Get exception"
+      operationId: get_api_v1_projects_id_releases_releaseId_exceptions
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseExceptionList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "releaseId"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Planning"]
+      summary: "Create exception"
+      operationId: post_api_v1_projects_id_releases_releaseId_exceptions
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseScopeException'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseExceptionInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "releaseId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/releases/{releaseId}/freeze:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete freeze"
+      operationId: delete_api_v1_projects_id_releases_releaseId_freeze
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "releaseId"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Planning"]
+      summary: "Create freeze"
+      operationId: post_api_v1_projects_id_releases_releaseId_freeze
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseFreezeResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseFreezeInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "releaseId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/releases/{releaseId}/sign-off:
+    post:
+      tags: ["Planning"]
+      summary: "Create sign off"
+      operationId: post_api_v1_projects_id_releases_releaseId_sign_off
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseSignOffResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseSignOffInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "releaseId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/reports:
     get:
       tags: ["Reports"]
@@ -1811,6 +1993,152 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SprintInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sprintId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/sprints/{sprintId}/close:
+    post:
+      tags: ["Planning"]
+      summary: "Create close"
+      operationId: post_api_v1_projects_id_sprints_sprintId_close
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SprintCloseResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SprintCloseInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sprintId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/sprints/{sprintId}/close-preview:
+    get:
+      tags: ["Planning"]
+      summary: "Get close preview"
+      operationId: get_api_v1_projects_id_sprints_sprintId_close_preview
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SprintClosePreview'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sprintId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/sprints/{sprintId}/metrics:
+    get:
+      tags: ["Planning"]
+      summary: "Get metric"
+      operationId: get_api_v1_projects_id_sprints_sprintId_metrics
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SprintMetrics'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sprintId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/sprints/{sprintId}/start:
+    post:
+      tags: ["Planning"]
+      summary: "Create start"
+      operationId: post_api_v1_projects_id_sprints_sprintId_start
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SprintLifecycleResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SprintStartInput'
       parameters:
         - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
         - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
@@ -3285,6 +3613,7 @@ components:
         version: {type: string}
         status: {type: string}
         planned_at: {type: [string, "null"], format: date-time}
+        milestone_at: {type: [string, "null"], format: date-time}
         notes: {type: string}
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     RepositoryInput:
@@ -3518,3 +3847,133 @@ components:
         target_type: {type: string, enum: [prd, epic, feature, work_item, test_case, sprint, release]}
         target_id: {type: string, format: uuid}
         link_type: {type: string, maxLength: 40, default: related, description: 'Lower-case letters, digits, hyphens and underscores.'}
+    ReleaseExceptionInput:
+      type: object
+      required: [entity_type, reason]
+      properties:
+        entity_type: {type: string, enum: [work_item, feature, epic]}
+        entity_id: {type: [string, "null"], format: uuid, description: Omit to authorize any scope change of this entity type while the release is frozen.}
+        reason: {type: string, minLength: 1, maxLength: 2000}
+    ReleaseExceptionList:
+      type: object
+      properties:
+        exceptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseScopeException'
+    ReleaseFreezeInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 1000}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    ReleaseFreezeResult:
+      type: object
+      required: [id, revision, frozen_at]
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        frozen_at: {type: [string, "null"], format: date-time}
+        freeze_reason: {type: string}
+    ReleaseScopeException:
+      type: object
+      required: [id, release_id, entity_type, reason, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        release_id: {type: string, format: uuid}
+        entity_type: {type: string, enum: [work_item, feature, epic]}
+        entity_id: {type: [string, "null"], format: uuid}
+        reason: {type: string}
+        created_by: {type: [string, "null"], format: uuid}
+        created_at: {type: string, format: date-time}
+    ReleaseSignOffInput:
+      type: object
+      required: [evidence]
+      properties:
+        evidence: {type: string, minLength: 10, maxLength: 5000, description: Sign-off evidence. Its SHA-256 digest is stored in the audit trail.}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    ReleaseSignOffResult:
+      type: object
+      required: [id, revision, signed_off_at]
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        signed_off_at: {type: string, format: date-time}
+        signed_off_by: {type: [string, "null"], format: uuid}
+        sign_off_evidence: {type: string}
+    SprintCloseInput:
+      type: object
+      properties:
+        policy: {type: string, enum: [backlog, next_sprint], default: backlog, description: Where incomplete work moves when the sprint closes.}
+        next_sprint_id: {type: [string, "null"], format: uuid, description: Required when policy is next_sprint; must be a planned or active sprint in the same project.}
+        note: {type: string, maxLength: 1000, description: Optional audit note for the close.}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    SprintClosePreview:
+      type: object
+      properties:
+        sprint_id: {type: string, format: uuid}
+        sprint_name: {type: string}
+        status: {type: string}
+        policy: {type: string, enum: [backlog, next_sprint]}
+        next_sprint_id: {type: [string, "null"], format: uuid}
+        next_sprint_name: {type: string}
+        incomplete_items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string, format: uuid}
+              key: {type: string}
+              title: {type: string}
+              status: {type: string}
+              estimate_points: {type: [number, "null"]}
+        incomplete_count: {type: integer}
+        incomplete_points: {type: number}
+        completed_count: {type: integer}
+        completed_points: {type: number}
+    SprintCloseResult:
+      type: object
+      required: [id, revision, status]
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [completed]}
+        policy: {type: string, enum: [backlog, next_sprint]}
+        moved_items: {type: integer}
+        moved_points: {type: number}
+        next_sprint_id: {type: [string, "null"], format: uuid}
+        completed_at: {type: string, format: date-time}
+    SprintLifecycleResult:
+      type: object
+      required: [id, revision, status]
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        status: {type: string}
+        activated_at: {type: string, format: date-time}
+    SprintMetrics:
+      type: object
+      properties:
+        sprint_id: {type: string, format: uuid}
+        name: {type: string}
+        status: {type: string, enum: [planned, active, completed, cancelled]}
+        time_zone: {type: string}
+        start_date: {type: [string, "null"], format: date-time}
+        end_date: {type: [string, "null"], format: date-time}
+        capacity: {type: [number, "null"]}
+        committed_points: {type: number}
+        completed_points: {type: number}
+        remaining_points: {type: number}
+        completed_items: {type: integer}
+        total_items: {type: integer}
+        remaining_items: {type: integer}
+        velocity_points: {type: [number, "null"], description: Mean completed points of the latest three completed sprints.}
+        velocity_sample_size: {type: integer}
+        capacity_used_percent: {type: [number, "null"]}
+        days_total: {type: integer}
+        days_elapsed: {type: integer}
+        days_remaining: {type: integer}
+    SprintStartInput:
+      type: object
+      properties:
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}

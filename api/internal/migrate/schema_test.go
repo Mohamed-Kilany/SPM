@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "017_work_item_collaboration.sql" {
-		t.Fatalf("latest migration = %q, want 017_work_item_collaboration.sql", names[len(names)-1])
+	if names[len(names)-1] != "018_sprint_release_lifecycle.sql" {
+		t.Fatalf("latest migration = %q, want 018_sprint_release_lifecycle.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -198,6 +198,56 @@ func TestWorkItemCollaborationRollbackIsComplete(t *testing.T) {
 	}
 	if !strings.Contains(forward, "scan_status IN ('pending', 'clean', 'rejected')") {
 		t.Error("017 does not constrain attachment scan status")
+	}
+}
+
+func TestSprintReleaseLifecycleRollbackIsComplete(t *testing.T) {
+	forward := readMigration(t, "018_sprint_release_lifecycle.sql")
+	rollback, err := os.ReadFile("rollback/018_sprint_release_lifecycle.sql")
+	if err != nil {
+		t.Fatalf("read lifecycle rollback companion: %v", err)
+	}
+	body := string(rollback)
+
+	if !strings.Contains(forward, "CREATE TABLE IF NOT EXISTS release_scope_exceptions") {
+		t.Error("018 does not create release_scope_exceptions")
+	}
+	if !strings.Contains(body, "DROP TABLE IF EXISTS release_scope_exceptions;") {
+		t.Error("rollback does not drop release_scope_exceptions")
+	}
+	for _, column := range []struct{ table, name string }{
+		{"sprints", "activated_at"},
+		{"sprints", "completed_at"},
+		{"sprints", "completed_by"},
+		{"sprints", "close_policy"},
+		{"sprints", "carry_over_count"},
+		{"releases", "milestone_at"},
+		{"releases", "frozen_at"},
+		{"releases", "frozen_by"},
+		{"releases", "freeze_reason"},
+		{"releases", "sign_off_evidence"},
+		{"releases", "signed_off_at"},
+		{"releases", "signed_off_by"},
+	} {
+		if !strings.Contains(forward, "ADD COLUMN IF NOT EXISTS "+column.name) {
+			t.Errorf("018 does not add %s.%s", column.table, column.name)
+		}
+		if !strings.Contains(body, "DROP COLUMN IF EXISTS "+column.name) {
+			t.Errorf("rollback does not drop %s.%s", column.table, column.name)
+		}
+	}
+	index := regexp.MustCompile(`(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)`)
+	names := index.FindAllStringSubmatch(forward, -1)
+	if len(names) == 0 {
+		t.Fatal("018 creates no indexes")
+	}
+	for _, match := range names {
+		if !strings.Contains(body, "DROP INDEX IF EXISTS "+match[1]+";") {
+			t.Errorf("rollback does not drop index %s", match[1])
+		}
+	}
+	if !strings.Contains(forward, "entity_type IN ('work_item', 'feature', 'epic')") {
+		t.Error("018 does not constrain exception entity types")
 	}
 }
 

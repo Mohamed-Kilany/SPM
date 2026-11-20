@@ -17,6 +17,13 @@ const BUG_TITLE = `Saved card checkout returns 500 ${RUN}`
 const RELEASE_NAME = `Checkout release ${RUN}`
 const RELEASE_VERSION = `1.${new Date().getUTCFullYear() % 100}.0`
 const SPRINT_NAME = `Sprint ${RUN}`
+function isoDate(offsetDays: number): string {
+  const date = new Date()
+  date.setUTCDate(date.getUTCDate() + offsetDays)
+  return date.toISOString().slice(0, 10)
+}
+const SPRINT_START = isoDate(0)
+const SPRINT_END = isoDate(13)
 const BRANCH_NAME = `feature/e2e-${RUN}-checkout`
 const ARGO_APP_FALLBACK = `e2e-${RUN}`
 const CI_WORKFLOW = `name: ci
@@ -294,6 +301,8 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
     if (!['http:', 'https:'].includes(url.protocol)) return
     if (!['localhost', '127.0.0.1'].includes(url.hostname)) externalRequests.push(request.url())
   })
+  // Lifecycle actions such as unfreeze and cancel ask for confirmation.
+  page.on('dialog', (dialog) => dialog.accept())
 
   // -----------------------------------------------------------------------
   // Sign in and provision a clean project through the UI.
@@ -469,10 +478,37 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   const releaseDialog = page.getByRole('dialog', { name: 'Plan release' })
   await releaseDialog.locator('#release-name').fill(RELEASE_NAME)
   await releaseDialog.locator('#release-version').fill(RELEASE_VERSION)
-  await releaseDialog.locator('#release-status').selectOption('in_progress')
+  await releaseDialog.locator('#release-milestone').fill(isoDate(7))
   await releaseDialog.getByRole('button', { name: 'Plan release' }).click()
   await expect(releaseDialog).toBeHidden()
   await expect(page.getByText(RELEASE_NAME, { exact: true }).first()).toBeVisible()
+
+  // Releases start planned. The state changes, freeze, exceptions and sign-off
+  // all run from the release card and never from a free-form status select.
+  const releaseRow = page.getByTestId('release-row').filter({ hasText: RELEASE_NAME }).first()
+  await expect(releaseRow).toContainText('Planned')
+  await releaseRow.getByRole('button', { name: 'Start progress', exact: true }).click()
+  await expect(releaseRow).toContainText('In progress')
+
+  await releaseRow.getByRole('button', { name: 'Freeze', exact: true }).click()
+  const freezeDialog = page.getByRole('dialog', { name: 'Freeze release scope' })
+  await freezeDialog.locator('#freeze-reason').fill('Release candidate verification')
+  await freezeDialog.getByRole('button', { name: 'Freeze release' }).click()
+  await expect(freezeDialog).toBeHidden()
+  await expect(releaseRow).toContainText('Frozen')
+  await expect(releaseRow).toContainText('Release candidate verification')
+
+  await releaseRow.getByRole('button', { name: 'Exceptions', exact: true }).click()
+  const exceptionsDialog = page.getByRole('dialog', { name: 'Release scope exceptions' })
+  await exceptionsDialog.locator('#exception-type').selectOption('feature')
+  await exceptionsDialog.locator('#exception-reason').fill('Attach delivery feature to the release candidate')
+  await exceptionsDialog.getByRole('button', { name: 'Add exception' }).click()
+  await expect(exceptionsDialog.getByText('Attach delivery feature to the release candidate')).toBeVisible()
+  await exceptionsDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(exceptionsDialog).toBeHidden()
+
+  await releaseRow.getByRole('button', { name: 'Unfreeze', exact: true }).click()
+  await expect(releaseRow).not.toContainText('Frozen')
 
   await page.getByRole('button', { name: 'Branch', exact: true }).first().click()
   const branchDialog = page.getByRole('dialog', { name: 'Link branch' })
@@ -577,11 +613,20 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   const sprintDialog = page.getByRole('dialog', { name: 'Plan a sprint' })
   await sprintDialog.locator('#sprint-name').fill(SPRINT_NAME)
   await sprintDialog.locator('#sprint-goal').fill('Ship traceable saved-card checkout.')
-  await sprintDialog.locator('#sprint-status').selectOption('active')
   await sprintDialog.locator('#sprint-capacity').fill('24')
+  await sprintDialog.locator('#sprint-start').fill(SPRINT_START)
+  await sprintDialog.locator('#sprint-end').fill(SPRINT_END)
   await sprintDialog.getByRole('button', { name: 'Create sprint' }).click()
   await expect(sprintDialog).toBeHidden()
-  await expect(page.getByRole('article').filter({ hasText: SPRINT_NAME }).first()).toBeVisible()
+
+  const sprintCard = page.getByTestId('sprint-row').filter({ hasText: SPRINT_NAME }).first()
+  await expect(sprintCard).toBeVisible()
+  await expect(sprintCard).toContainText('Planned')
+  await sprintCard.getByRole('button', { name: 'Start', exact: true }).click()
+  const startDialog = page.getByRole('dialog', { name: 'Start sprint' })
+  await startDialog.getByRole('button', { name: 'Start sprint' }).click()
+  await expect(startDialog).toBeHidden()
+  await expect(sprintCard).toContainText('Active')
 
   await openTab(page, 'board')
   await page.getByText(TASK_TITLE, { exact: true }).first().click()
@@ -591,8 +636,25 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await expect(taskEditDialog).toBeHidden()
 
   await openTab(page, 'reports')
-  await expect(page.getByRole('article').filter({ hasText: SPRINT_NAME }).first()).toBeVisible()
-  await expect(page.getByText(/0\/1 items/)).toBeVisible()
+  await expect(sprintCard).toContainText('Active')
+  await expect(sprintCard.getByText(/0\/1 items/)).toBeVisible()
+
+  await sprintCard.getByRole('button', { name: 'Metrics', exact: true }).click()
+  const metricsDialog = page.getByRole('dialog', { name: `Sprint metrics · ${SPRINT_NAME}` })
+  await expect(metricsDialog.getByText('Committed', { exact: true })).toBeVisible()
+  await expect(metricsDialog.getByText('Completed', { exact: true })).toBeVisible()
+  await expect(metricsDialog.getByText('Velocity', { exact: true })).toBeVisible()
+  await metricsDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(metricsDialog).toBeHidden()
+
+  await sprintCard.getByRole('button', { name: 'Close', exact: true }).click()
+  const closeDialog = page.getByRole('dialog', { name: 'Close sprint' })
+  await expect(closeDialog).toContainText('1 incomplete')
+  await expect(closeDialog).toContainText(TASK_TITLE)
+  await closeDialog.getByRole('button', { name: 'Close sprint' }).click()
+  await expect(closeDialog).toBeHidden()
+  await expect(sprintCard).toContainText('Completed')
+  await expect(sprintCard).toContainText('1 carried over')
 
   await page.getByRole('button', { name: 'Import results' }).click()
   const importDialog = page.getByRole('dialog', { name: 'Import automated test results' })
@@ -638,6 +700,22 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await expect(page.getByText('No open defects in the release scope')).toBeVisible()
   await expect(page.getByText('Delivery evidence', { exact: true })).toBeVisible()
   await expectAccessible(page, 'reports')
+
+  // Sign-off records evidence for the in-progress release, then the release
+  // moves to released without a free-form status edit.
+  await openTab(page, 'delivery')
+  await expect(releaseRow).toContainText('In progress')
+  await releaseRow.getByRole('button', { name: 'Sign off', exact: true }).click()
+  const signOffDialog = page.getByRole('dialog', { name: 'Release sign-off' })
+  await expect(signOffDialog.getByText('Ready', { exact: true })).toBeVisible()
+  await signOffDialog
+    .locator('#sign-off-evidence')
+    .fill('Regression suite green; no open critical bugs; release notes approved.')
+  await signOffDialog.getByRole('button', { name: 'Record sign-off' }).click()
+  await expect(signOffDialog).toBeHidden()
+  await expect(releaseRow).toContainText('Signed off')
+  await releaseRow.getByRole('button', { name: 'Mark released', exact: true }).click()
+  await expect(releaseRow).toContainText('Released')
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: /Coverage CSV/ }).click()

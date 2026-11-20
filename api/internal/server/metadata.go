@@ -153,8 +153,17 @@ func Routes() []Route {
 		p(http.MethodDelete, "/api/v1/projects/:id/work-items/:itemId/links/:linkId", auth.CapWorkItemWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/sprints", auth.CapPlanningWrite),
 		p(http.MethodPut, "/api/v1/projects/:id/sprints/:sprintId", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/sprints/:sprintId/start", auth.CapPlanningWrite),
+		p(http.MethodGet, "/api/v1/projects/:id/sprints/:sprintId/metrics", auth.CapProjectRead),
+		p(http.MethodGet, "/api/v1/projects/:id/sprints/:sprintId/close-preview", auth.CapProjectRead),
+		p(http.MethodPost, "/api/v1/projects/:id/sprints/:sprintId/close", auth.CapPlanningWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/releases", auth.CapPlanningWrite),
 		p(http.MethodPut, "/api/v1/projects/:id/releases/:releaseId", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/releases/:releaseId/freeze", auth.CapPlanningWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/releases/:releaseId/freeze", auth.CapPlanningWrite),
+		p(http.MethodGet, "/api/v1/projects/:id/releases/:releaseId/exceptions", auth.CapProjectRead),
+		p(http.MethodPost, "/api/v1/projects/:id/releases/:releaseId/exceptions", auth.CapPlanningWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/releases/:releaseId/sign-off", auth.CapPlanningWrite),
 
 		// Test management.
 		p(http.MethodPost, "/api/v1/projects/:id/test-cases", auth.CapTestWrite),
