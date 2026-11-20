@@ -5075,7 +5075,6 @@ labels must exist in the repository.
 | `AI-02` | Without a persistent index, AI results are stale and unbounded |
 | `AI-03` | Without permission-aware retrieval, AI can leak cross-project data |
 | `AI-07` | Prompt injection is an unmitigated action/exfiltration risk |
-| `OBS-01` | No metrics endpoint means no SLOs, alerts or capacity evidence |
 | `OPS-01` | Backups exist but restore is unproven |
 | `OPS-02` | The air-gapped install path is undocumented and unverified |
 | `OPS-13` | Project isolation is not proven across search/AI/SSE/exports |
@@ -5098,6 +5097,7 @@ labels must exist in the repository.
 | 2026-11-19 | Verified BASE-07 after merge: all three files are present in `.github/ISSUE_TEMPLATE` on `master`; private vulnerability reporting remains enabled and the forms reference existing labels | Maintainer |
 | 2026-11-19 | Closed BASE-08: added `docs/RELEASING.md` with the environment, promotion, migration and rollback model; embedded tag-derived version metadata in the API health probes, UI footer and AI service; added `scripts/changelog.ps1`, `scripts/release.ps1`, `CHANGELOG.md` and the tag-triggered `release.yml` that verifies master ancestry, re-runs supply-chain checks and publishes SBOM/SARIF evidence | Maintainer |
 | 2026-11-20 | Verified the BASE-08 release dry run: pushed the scratch tag `v0.0.0-rc.1` from `master`; `release.yml` verify, images and publish jobs all succeeded; GitHub created a prerelease with generated changelog notes and six assets (`sbom-api/ui/ai.spdx.json`, `trivy-api/ui/ai.sarif`); the release and both local and remote tags were then deleted, leaving no published release | Maintainer |
+| 2026-11-20 | Closed OBS-01: added a Prometheus endpoint on a separate internal listener with optional bearer auth, RED/Go/process/PostgreSQL/NATS/SSE/Gitea/Argo/AI/reconciliation/build-info collectors, bounded route-template labels and `docs/OBSERVABILITY.md`. Post-merge verification confirmed `api/internal/metrics` and the observability contract on `master`, PR #21 merged with all required checks green, and 0 open Dependabot or secret-scanning alerts | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
