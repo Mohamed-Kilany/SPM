@@ -1,5 +1,6 @@
 import { getStoredToken } from '../lib/storage'
 import type { AdminUser, DirectoryUser, ProjectMember } from '../types/admin'
+import type { AuditEvent, AuditFilters, AuditPage, AuditVerification } from '../types/audit'
 import type { AiAskResponse, AiInsightResponse, AiSearchResponse } from '../types/ai'
 import type { SearchResponse } from '../types/search'
 import type {
@@ -202,9 +203,54 @@ export const api = {
     })
   },
 
+  async adminListAuditEvents(filters: AuditFilters = {}): Promise<AuditPage> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        params.set(key, String(value))
+      }
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    return request<AuditPage>(`/api/v1/admin/audit/events${suffix}`, { timeoutMs: 20_000 })
+  },
+
+  async adminGetAuditEvent(id: string): Promise<AuditEvent> {
+    return request<AuditEvent>(`/api/v1/admin/audit/events/${encodeURIComponent(id)}`, {
+      timeoutMs: 20_000,
+    })
+  },
+
+  async adminVerifyAuditChain(): Promise<AuditVerification> {
+    return request<AuditVerification>('/api/v1/admin/audit/verify', { timeoutMs: 60_000 })
+  },
+
+  async adminExportAudit(
+    filters: AuditFilters,
+    format: 'csv' | 'json',
+  ): Promise<{ blob: Blob; filename: string }> {
+    const params = new URLSearchParams({ format })
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        params.set(key, String(value))
+      }
+    }
+    const token = getStoredToken()
+    const response = await fetch(`${API_BASE}/api/v1/admin/audit/export?${params.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) {
+      throw new ApiError(`Export failed (HTTP ${response.status})`, response.status, 'EXPORT_FAILED')
+    }
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    return {
+      blob: await response.blob(),
+      filename: match?.[1] ?? `audit.${format}`,
+    }
+  },
+
   /** Short-lived, single-use SSE credential; never put the JWT in the URL. */
-  async streamTicket(): Promise<StreamTicketResponse> {
-    return request<StreamTicketResponse>('/api/v1/auth/stream-ticket', {
+  async streamTicket(): Promise<StreamTicketResponse> {    return request<StreamTicketResponse>('/api/v1/auth/stream-ticket', {
       method: 'POST',
       timeoutMs: 10_000,
     })

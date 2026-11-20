@@ -15,9 +15,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/gitengine"
 )
+
+func uuidOrEmpty(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
+}
 
 func oneOf(value string, allowed ...string) bool {
 	for _, candidate := range allowed {
@@ -77,6 +85,10 @@ func (h *Handler) CreateRepository(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "repository", &id, "created", "Linked repository "+req.Name, nil)
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "repository.create", TargetType: "repository", TargetID: id.String(),
+		Result: "success", After: map[string]any{"name": req.Name, "provider": req.Provider, "default_branch": req.DefaultBranch},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": id, "webhook_token": token, "webhook_url": webhookURL})
 }
 
@@ -136,6 +148,10 @@ func (h *Handler) CreateBranch(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "branch", &id, "created", "Created branch "+req.Name, nil)
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "branch.create", TargetType: "branch", TargetID: id.String(),
+		Result: "success", After: map[string]any{"name": req.Name, "repository_id": req.RepositoryID.String()},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": id, "name": req.Name, "head_commit_sha": req.HeadCommitSHA})
 }
 
@@ -244,6 +260,12 @@ func (h *Handler) CreatePullRequest(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "pull_request", &id, "created", "Opened PR #"+itoa(req.Number)+": "+req.Title, nil)
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "pull_request.create", TargetType: "pull_request", TargetID: id.String(),
+		Result: "success", After: map[string]any{
+			"number": req.Number, "title": req.Title, "source_branch": sourceBranch, "target_branch": req.TargetBranch,
+		},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": id, "number": req.Number, "html_url": htmlURL, "source_branch": sourceBranch})
 }
 
@@ -356,6 +378,10 @@ func (h *Handler) MergePullRequest(c *gin.Context) {
 	// Builds are created only by the Gitea Actions reconciliation path.
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "pull_request", &prID, "merged",
 		"Merged PR #"+itoa(number), nil)
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "pull_request.merge", TargetType: "pull_request", TargetID: prID.String(),
+		Result: "success", After: map[string]any{"number": number, "merge_commit_sha": req.MergeCommitSHA},
+	})
 	c.JSON(http.StatusOK, gin.H{"id": prID, "status": "merged", "number": number})
 }
 
@@ -638,6 +664,10 @@ func (h *Handler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "environment", &id, "created", "Created environment "+req.Name, nil)
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "environment.create", TargetType: "environment", TargetID: id.String(),
+		Result: "success", After: map[string]any{"name": req.Name, "type": req.Type},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
@@ -745,6 +775,13 @@ func (h *Handler) CreateDeployment(c *gin.Context) {
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "deployment", &id, "created",
 		"Deployment "+req.Version+" is "+req.Status, map[string]interface{}{"environment_id": req.EnvironmentID})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "deployment.create", TargetType: "deployment", TargetID: id.String(),
+		Result: "success", After: map[string]any{
+			"environment_id": req.EnvironmentID.String(), "status": req.Status,
+			"version": req.Version, "release_id": uuidOrEmpty(req.ReleaseID),
+		},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
@@ -823,6 +860,10 @@ func (h *Handler) UpdateDeployment(c *gin.Context) {
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "deployment", &deploymentID, "status_changed",
 		"Deployment is now "+req.Status, map[string]interface{}{"status": req.Status})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "deployment.status", TargetType: "deployment", TargetID: deploymentID.String(),
+		Result: "success", After: map[string]any{"status": req.Status, "health_status": req.HealthStatus},
+	})
 	c.JSON(http.StatusOK, gin.H{"id": deploymentID, "status": req.Status})
 }
 
@@ -946,6 +987,11 @@ func (h *Handler) RollbackDeployment(c *gin.Context) {
 	_, _ = h.store.DB().Exec(c.Request.Context(), `UPDATE deployments SET status='rolled_back', updated_at=NOW() WHERE id=$1`, deploymentID)
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "deployment", &newID, "rollback_started",
 		"Rolled back deployment to "+version+": "+req.Reason, map[string]interface{}{"rollback_of": deploymentID, "previous": *previousID})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "deployment.rollback", TargetType: "deployment", TargetID: newID.String(),
+		Result: "success", Reason: req.Reason, Before: map[string]any{"deployment_id": deploymentID.String(), "status": failedStatus},
+		After: map[string]any{"rollback_of": deploymentID.String(), "previous": previousID.String(), "version": version},
+	})
 	c.JSON(http.StatusCreated, gin.H{"id": newID, "rollback_of": deploymentID})
 }
 

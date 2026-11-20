@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
+
+	"spm-platform/api/internal/audit"
 )
 
 // UserInvalidator revokes existing JWTs for a user. NATS KV is the production
@@ -53,6 +55,13 @@ type Handler struct {
 	expiryHours int
 	ticketStore *TicketStore
 	invalidator UserInvalidator
+	audit       *audit.Logger
+}
+
+// SetAuditLogger attaches the audit log. The API wires this at startup; tests
+// and tools may leave it nil, in which case audit writes are no-ops.
+func (h *Handler) SetAuditLogger(logger *audit.Logger) {
+	h.audit = logger
 }
 
 // NewHandler creates a Handler. Reads JWT_SECRET (required) and
@@ -110,6 +119,10 @@ func (h *Handler) Login(c *gin.Context) {
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
+			h.recordAuth(c, audit.Entry{
+				ActorRole: "anonymous", Action: "auth.login", TargetType: "user",
+				TargetID: req.Username, Result: "failure", Reason: "unknown_user",
+			})
 			abortUnauthorized(c, "INVALID_CREDENTIALS", "Invalid username or password")
 			return
 		}
@@ -120,6 +133,10 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	if !active {
+		h.recordAuth(c, audit.Entry{
+			ActorID: userID, ActorRole: role, Action: "auth.login", TargetType: "user",
+			TargetID: userID, Result: "denied", Reason: "account_disabled",
+		})
 		c.JSON(http.StatusForbidden, errorResponse{
 			Error: errorBody{Code: "ACCOUNT_DISABLED", Message: "This account has been disabled"},
 		})
@@ -127,6 +144,10 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+		h.recordAuth(c, audit.Entry{
+			ActorID: userID, ActorRole: role, Action: "auth.login", TargetType: "user",
+			TargetID: userID, Result: "failure", Reason: "invalid_password",
+		})
 		abortUnauthorized(c, "INVALID_CREDENTIALS", "Invalid username or password")
 		return
 	}
@@ -148,6 +169,11 @@ func (h *Handler) Login(c *gin.Context) {
 		})
 		return
 	}
+
+	h.recordAuth(c, audit.Entry{
+		ActorID: userID, ActorRole: role, Action: "auth.login", TargetType: "user",
+		TargetID: userID, Result: "success",
+	})
 
 	c.JSON(http.StatusOK, LoginResponse{
 		Token:     token,
@@ -339,6 +365,10 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	if h.invalidator != nil {
 		_ = h.invalidator.InvalidateUser(c.Request.Context(), userID)
 	}
+	h.recordAuth(c, audit.Entry{
+		ActorID: userID, ActorRole: claims.Role, Action: "auth.password.change",
+		TargetType: "user", TargetID: userID, Result: "success",
+	})
 	c.Status(http.StatusNoContent)
 }
 
@@ -357,7 +387,20 @@ func (h *Handler) StreamTicket(c *gin.Context) {
 		})
 		return
 	}
+	h.recordAuth(c, audit.Entry{
+		ActorID: claims.CanonicalUserID(), ActorRole: claims.Role, Action: "auth.stream_ticket.issue",
+		TargetType: "user", TargetID: claims.CanonicalUserID(), Result: "success",
+	})
 	c.JSON(http.StatusOK, gin.H{"ticket": ticketID, "expires_in": 30})
+}
+
+// recordAuth writes an audit event without failing the request. The audit
+// logger already logs write failures and exposes them as metrics.
+func (h *Handler) recordAuth(c *gin.Context, entry audit.Entry) {
+	if h.audit == nil {
+		return
+	}
+	h.audit.RecordRequest(c, entry)
 }
 
 func (h *Handler) memberships(ctx context.Context, userID, globalRole string) ([]ProjectAccess, []string, error) {

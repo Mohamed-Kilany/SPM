@@ -488,6 +488,42 @@ properties:
   expires_in: { type: integer }
   user:
     $ref: '#/components/schemas/User'`,
+	"AuditEvent": `type: object
+properties:
+  id: { type: string, format: uuid }
+  occurred_at: { type: string, format: date-time }
+  actor_id: { type: [string, "null"], format: uuid }
+  actor_username: { type: string }
+  actor_role: { type: string }
+  action: { type: string }
+  target_type: { type: string }
+  target_id: { type: string }
+  project_id: { type: [string, "null"], format: uuid }
+  project_name: { type: string }
+  result: { type: string, enum: [success, failure, denied] }
+  reason: { type: string }
+  ip: { type: string }
+  user_agent: { type: string }
+  request_id: { type: string }
+  before: { type: object, additionalProperties: true }
+  after: { type: object, additionalProperties: true }
+  prev_hash: { type: string }
+  hash: { type: string }`,
+	"AuditPage": `type: object
+properties:
+  events:
+    type: array
+    items:
+      $ref: '#/components/schemas/AuditEvent'
+  next_cursor: { type: string }`,
+	"AuditVerification": `type: object
+required: [ok, checked, checked_at]
+properties:
+  ok: { type: boolean }
+  checked: { type: integer, format: int64 }
+  first_bad_id: { type: string }
+  first_bad_cause: { type: string, enum: [missing_anchor, broken_link, hash_mismatch] }
+  checked_at: { type: string, format: date-time }`,
 }
 
 func sortedSchemaNames() []string {
@@ -529,7 +565,9 @@ func operationYAML(route server.Route, openAPIPath string) string {
 		}
 	default:
 		fmt.Fprintf(&b, "  '200':\n    description: OK\n")
-		if schema := successSchema(openAPIPath); schema != "" {
+		if strings.HasSuffix(openAPIPath, "/admin/audit/export") {
+			b.WriteString("    content:\n      text/csv:\n        schema: { type: string }\n      application/json:\n        schema:\n          type: array\n          items:\n            $ref: '#/components/schemas/AuditEvent'\n")
+		} else if schema := successSchema(openAPIPath); schema != "" {
 			fmt.Fprintf(&b, "    content:\n      application/json:\n        schema:\n          $ref: '#/components/schemas/%s'\n", schema)
 		} else {
 			b.WriteString("    content:\n      application/json:\n        schema: { type: object, additionalProperties: true }\n")
@@ -557,6 +595,33 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	}
 
 	// Path parameters are added separately by ensurePathParameters.
+	if params := auditQueryParameters(openAPIPath); params != "" {
+		b.WriteString(params)
+	}
+	return b.String()
+}
+
+// auditQueryParameters documents the admin audit filters. Other list routes
+// deliberately keep the generic success shape until they gain a typed schema.
+func auditQueryParameters(path string) string {
+	isList := strings.HasSuffix(path, "/admin/audit/events")
+	isExport := strings.HasSuffix(path, "/admin/audit/export")
+	if !isList && !isExport {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("parameters:\n")
+	b.WriteString("  - {name: action, in: query, schema: {type: string, maxLength: 100}, description: Action prefix}\n")
+	b.WriteString("  - {name: actor_id, in: query, schema: {type: string, format: uuid}}\n")
+	b.WriteString("  - {name: project_id, in: query, schema: {type: string, format: uuid}}\n")
+	b.WriteString("  - {name: result, in: query, schema: {type: string, enum: [success, failure, denied]}}\n")
+	b.WriteString("  - {name: from, in: query, schema: {type: string}, description: RFC3339 or YYYY-MM-DD}\n")
+	b.WriteString("  - {name: to, in: query, schema: {type: string}, description: RFC3339 or YYYY-MM-DD; a date is inclusive of the whole day}\n")
+	b.WriteString("  - {name: cursor, in: query, schema: {type: string}, description: Opaque keyset cursor}\n")
+	b.WriteString("  - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}\n")
+	if isExport {
+		b.WriteString("  - {name: format, in: query, schema: {type: string, enum: [csv, json], default: csv}}\n")
+	}
 	return b.String()
 }
 
@@ -711,6 +776,12 @@ func successSchema(path string) string {
 		return "LoginResponse"
 	case strings.HasSuffix(path, "/auth/me"):
 		return "User"
+	case strings.HasSuffix(path, "/admin/audit/events"):
+		return "AuditPage"
+	case strings.Contains(path, "/admin/audit/events/"):
+		return "AuditEvent"
+	case strings.HasSuffix(path, "/admin/audit/verify"):
+		return "AuditVerification"
 	case strings.HasSuffix(path, "/admin/users"), strings.HasSuffix(path, "/users"):
 		return "User"
 	case strings.HasSuffix(path, "/search"):
@@ -776,6 +847,10 @@ var summaryOverrides = map[string]string{
 	"GET /api/v1/admin/users":                                    "List users",
 	"POST /api/v1/admin/users":                                   "Create a user",
 	"PATCH /api/v1/admin/users/{userId}":                         "Update a user",
+	"GET /api/v1/admin/audit/events":                             "List audit events",
+	"GET /api/v1/admin/audit/events/{auditId}":                   "Get an audit event",
+	"GET /api/v1/admin/audit/export":                             "Export audit events",
+	"GET /api/v1/admin/audit/verify":                             "Verify the audit hash chain",
 	"GET /api/v1/projects":                                       "List projects",
 	"POST /api/v1/projects":                                      "Create a project",
 	"GET /api/v1/projects/{id}":                                  "Get a project",

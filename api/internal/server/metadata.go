@@ -73,6 +73,10 @@ func Routes() []Route {
 		r(http.MethodGet, "/api/v1/admin/users", AuthAdmin),
 		r(http.MethodPost, "/api/v1/admin/users", AuthAdmin),
 		r(http.MethodPatch, "/api/v1/admin/users/:userId", AuthAdmin),
+		r(http.MethodGet, "/api/v1/admin/audit/events", AuthAdmin),
+		r(http.MethodGet, "/api/v1/admin/audit/events/:auditId", AuthAdmin),
+		r(http.MethodGet, "/api/v1/admin/audit/export", AuthAdmin),
+		r(http.MethodGet, "/api/v1/admin/audit/verify", AuthAdmin),
 
 		// Projects.
 		r(http.MethodGet, "/api/v1/projects", AuthBearer),

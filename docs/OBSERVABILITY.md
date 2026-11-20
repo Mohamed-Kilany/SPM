@@ -99,6 +99,22 @@ join key between a metric anomaly and a released tag.
 | `spm_sse_connections_active` | gauge | - | Live project update streams |
 | `spm_authz_invalidations_total` | counter | `scope`, `reason` | Published token/project invalidations (`user`/`project`, fixed reasons) |
 
+### Audit
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `spm_audit_writes_total` | counter | `outcome` (`success`, `failure`) | Audit persistence attempts |
+| `spm_audit_write_duration_seconds` | histogram | - | Audit insert latency |
+| `spm_audit_chain_valid` | gauge | - | `1` when the last chain verification passed |
+| `spm_audit_chain_rows_checked` | gauge | - | Rows examined by the last verification |
+| `spm_audit_chain_last_verified_timestamp_seconds` | gauge | - | Time of the last verification |
+| `spm_audit_partitions_pruned_total` | counter | - | Expired audit partitions dropped |
+
+A failed audit write is a security signal. Alert on any
+`spm_audit_writes_total{outcome="failure"}` increment and on
+`spm_audit_chain_valid == 0`. The audit schema, retention and incident runbook
+are in [`docs/AUDIT.md`](AUDIT.md).
+
 ### Outbound dependencies
 
 | Metric | Type | Labels | Meaning |
@@ -159,13 +175,14 @@ sum by (dependency) (rate(spm_dependency_requests_total{status=~"error|5.."}[5m]
 
 # Stale reconciliation
 time() - spm_delivery_reconcile_last_success_timestamp_seconds > 300
+
+# Audit writes failing, or a broken audit chain
+sum(rate(spm_audit_writes_total{outcome="failure"}[5m])) > 0
+spm_audit_chain_valid == 0
 ```
 
 ## 6. Deliberately deferred
 
-- **Audit write failures.** There is no audit-log subsystem yet (`GOV-04`). A
-  counter that nothing increments would be a false claim, so it is not
-  exported. `GOV-04` adds the counter with the audit table.
 - **Tracing and exemplars.** `OBS-02` adds OpenTelemetry traces; the histograms
   here are ready for exemplars when tracing lands.
 - **Dashboards and alert rules.** `OBS-03`..`OBS-05` own the packaged

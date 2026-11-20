@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/gitengine"
@@ -35,11 +36,17 @@ type Handler struct {
 	snapRepo     *snapshot.Repo
 	eventsClient *events.Client
 	gitEngine    gitengine.Provisioner
+	audit        *audit.Logger
 }
 
 // NewHandler constructs a project Handler.
 func NewHandler(db *pgxpool.Pool, snapRepo *snapshot.Repo, eventsClient *events.Client, gitEngine gitengine.Provisioner) *Handler {
 	return &Handler{db: db, snapRepo: snapRepo, eventsClient: eventsClient, gitEngine: gitEngine}
+}
+
+// SetAuditLogger attaches the audit log.
+func (h *Handler) SetAuditLogger(logger *audit.Logger) {
+	h.audit = logger
 }
 
 type errorBody struct {
@@ -374,6 +381,14 @@ func (h *Handler) Create(c *gin.Context) {
 	if err := tx.Commit(ctx); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit project")
 		return
+	}
+
+	if h.audit != nil {
+		h.audit.RecordRequest(c, audit.Entry{
+			ActorID: ownerID.String(), ActorRole: claims.Role, Action: "project.create",
+			TargetType: "project", TargetID: projectID.String(), ProjectID: projectID.String(),
+			Result: "success", After: map[string]any{"name": req.Name, "repo_name": repoName},
+		})
 	}
 
 	// Publish only after the relational row is committed. Publishing inside the
