@@ -296,6 +296,11 @@ description: Single-use ticket issued by POST /api/v1/auth/stream-ticket.`))
 	setMap(responses, "Forbidden", errorResponse("The caller is authenticated but not authorized"))
 	setMap(responses, "Conflict", errorResponse("The resource already exists or conflicts with current state"))
 	setMap(responses, "PreconditionRequired", errorResponse("A mutation of a revisioned planning resource requires the current revision in If-Match or expected_version"))
+	setMap(responses, "RevisionConflict", nodeFromYAML(`description: "The revision is stale; current_version is the value to retry from"
+content:
+  application/json:
+    schema:
+      $ref: '#/components/schemas/RevisionConflict'`))
 	setMap(responses, "UnprocessableEntity", errorResponse("The request is valid but violates a business rule"))
 	setMap(responses, "TooManyRequests", errorResponse("Rate limit exceeded"))
 	setMap(responses, "InternalError", errorResponse("Unexpected server error"))
@@ -535,6 +540,12 @@ properties:
   id: { type: string, format: uuid }
   revision: { type: integer, format: int64, minimum: 1 }
   deleted: { type: boolean, description: Present and true on a successful delete. }`,
+	"RevisionConflict": `type: object
+required: [error, current_version]
+properties:
+  error:
+    $ref: '#/components/schemas/Error'
+  current_version: { type: integer, format: int64, minimum: 1, description: Revision to send on retry; also returned as the ETag. }`,
 }
 
 func sortedSchemaNames() []string {
@@ -594,6 +605,9 @@ func operationYAML(route server.Route, openAPIPath string) string {
 			"404": "NotFound", "409": "Conflict", "422": "UnprocessableEntity",
 			"428": "PreconditionRequired", "429": "TooManyRequests", "500": "InternalError",
 		}[code]
+		if code == "409" && isRevisionedMutation(route.Method, openAPIPath) {
+			ref = "RevisionConflict"
+		}
 		fmt.Fprintf(&b, "  '%s': { $ref: '#/components/responses/%s' }\n", code, ref)
 	}
 

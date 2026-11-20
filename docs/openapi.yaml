@@ -649,7 +649,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
@@ -686,7 +686,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -763,7 +763,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
@@ -800,7 +800,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -1050,7 +1050,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
@@ -1087,7 +1087,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -1323,7 +1323,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -1680,7 +1680,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -1782,7 +1782,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
@@ -1819,7 +1819,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -2238,7 +2238,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       parameters:
@@ -2275,7 +2275,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -2319,7 +2319,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
         '500': {$ref: '#/components/responses/InternalError'}
       requestBody:
@@ -2636,6 +2636,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    RevisionConflict:
+      description: "The revision is stale; current_version is the value to retry from"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RevisionConflict'
   schemas:
     Error:
       type: object
@@ -3054,3 +3060,10 @@ components:
         id: {type: string, format: uuid}
         revision: {type: integer, format: int64, minimum: 1}
         deleted: {type: boolean, description: Present and true on a successful delete.}
+    RevisionConflict:
+      type: object
+      required: [error, current_version]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+        current_version: {type: integer, format: int64, minimum: 1, description: Revision to send on retry; also returned as the ETag.}
