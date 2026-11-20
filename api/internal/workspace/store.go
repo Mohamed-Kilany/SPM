@@ -226,7 +226,7 @@ func (s *Store) loadWorkItems(ctx context.Context, projectID uuid.UUID, w *Works
 		       severity, COALESCE(assignee_id::text, ''), COALESCE(reporter_id::text, ''), estimate_points,
 		       COALESCE(sprint_id::text, ''), COALESCE(release_id::text, ''), COALESCE(environment_id::text, ''),
 		       due_date, COALESCE(reproduction_steps, ''), COALESCE(expected_result, ''), COALESCE(actual_result, ''),
-		       created_at, updated_at, closed_at, revision
+		       labels, created_at, updated_at, closed_at, revision
 		FROM work_items WHERE project_id = $1 ORDER BY item_number DESC`
 	rows, err := s.db.Query(ctx, q, projectID)
 	if err != nil {
@@ -240,7 +240,7 @@ func (s *Store) loadWorkItems(ctx context.Context, projectID uuid.UUID, w *Works
 		if err := rows.Scan(&it.ID, &it.ProjectID, &it.ItemNumber, &feature, &parent, &it.Type,
 			&it.Title, &it.Description, &it.AcceptanceCriteria, &it.Status, &it.Priority, &it.Severity,
 			&assignee, &reporter, &it.EstimatePoints, &sprint, &release, &env, &it.DueDate,
-			&it.ReproductionSteps, &it.ExpectedResult, &it.ActualResult, &it.CreatedAt, &it.UpdatedAt,
+			&it.ReproductionSteps, &it.ExpectedResult, &it.ActualResult, &it.Labels, &it.CreatedAt, &it.UpdatedAt,
 			&it.ClosedAt, &it.Revision); err != nil {
 			return err
 		}
