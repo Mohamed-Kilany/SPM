@@ -3017,22 +3017,51 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 ### Phase 4 — Planning, board and test management depth
 
 #### PLN-01 · Data integrity, constraints and optimistic locking
-- **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/planning-data-integrity`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/planning-data-integrity`
 - **Depends on:** BASE-05
 - **Scope:** Add `version` columns and `If-Match`/`expected_version` handling to PRDs, epics,
   features, work items, test cases, runs, sprints and releases. Enforce foreign keys, cascade
   rules, unique keys and indexes. Add a schema-drift test and an expand/contract migration
   template.
 - **Acceptance criteria:**
-  - [ ] Concurrent edits return `409 CONFLICT` with the current version.
-  - [ ] The UI reloads or merges explicitly; no silent overwrite.
-  - [ ] Orphaned child rows are impossible or explicitly soft-deleted.
-  - [ ] Every foreign key has an index where the query path needs it.
-  - [ ] Migrations follow expand/contract and are tested forward/backward.
-  - [ ] A schema snapshot test fails on unintended drift.
-- **Tests/evidence:** Concurrency integration tests, migration up/down tests, constraint tests,
-  query plans for the top 10 lists.
-- **Docs/telemetry:** `docs/DATA-MODEL.md`, migration guide, conflict metric.
+  - [x] Concurrent edits return `409 CONFLICT` with the current version. A stale `If-Match`,
+    `expected_version` query parameter or body field is rejected with `409 REVISION_CONFLICT`,
+    `current_version` and the current strong `ETag`; a missing token is `428
+    REVISION_REQUIRED` and a malformed one is `400 INVALID_REVISION`.
+  - [x] The UI reloads or merges explicitly; no silent overwrite. Board, planning, delivery and
+    test mutations send the freshest stored `revision`; on `409` the workspace refreshes, the
+    modal stays open and the user gets an explicit retry message.
+  - [x] Orphaned child rows are impossible or explicitly soft-deleted. `ON DELETE CASCADE` and
+    `SET NULL` are explicit on all 73 foreign keys; `work_items_no_self_parent` rejects direct
+    self-parent writes.
+  - [x] Every foreign key has an index where the query path needs it. `016_planning_revisions`
+    adds the 33 missing indexes; `schema_test.go` fails if any of the 73 foreign keys lacks a
+    leading index.
+  - [x] Migrations follow expand/contract and are tested forward/backward. The forward script is
+    idempotent and additive; `rollback/016_planning_revisions.sql` is the contract companion.
+    A PGlite run applied 001–016, re-applied 016, verified the objects, applied the contract
+    script and re-expanded successfully.
+  - [x] A schema snapshot test fails on unintended drift. `schema_test.go` asserts migration
+    order, the eight revision columns, every trigger, the self-parent check, rollback
+    completeness and FK-index coverage; schema changes must update the test and rollback
+    companion in the same PR.
+- **Tests/evidence:** `api/internal/workspace/revision_test.go` covers token parsing
+  (`"N"`, `N`, `W/"N"`, `*`, negatives, garbage), precedence (header → query → body), the
+  `428`/`400` paths and conflict metric labels; `handler_tests.go` covers revisioned test-case
+  and test-run mutations. `api/internal/migrate/schema_test.go` covers migration order,
+  revision columns/triggers, rollback completeness and all foreign-key indexes;
+  `api/internal/metrics` covers `spm_planning_conflicts_total`. The PGlite forward/rollback
+  harness proved eight revisioned tables, 33 new indexes, stale update/delete rejection,
+  wildcard `If-Match`, forced client revision overwritten by the trigger, self-parent rejection,
+  rollback and re-expand. Full `go build ./...`, `go vet ./...`, `go test ./... -count=1`,
+  OpenAPI `-check`, Redocly lint, and UI `typecheck`, `test` and `build` pass. Merged as PR #26
+  at `07ecdae`.
+- **Docs/telemetry:** [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) documents the hierarchy,
+  cascade rules, revision semantics and index invariants;
+  [`docs/MIGRATION-GUIDE.md`](docs/MIGRATION-GUIDE.md) documents expand/contract, the `016`
+  walkthrough, forward/backward validation and the planned-rollback procedure.
+  `spm_planning_conflicts_total{resource}` counts rejected stale writes with bounded lowercase
+  resource labels and is documented in [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
 
 #### PLN-02 · Work item detail, comments, links and watchers
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/planning-work-item-detail`
@@ -5115,13 +5144,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 — Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 0 | 0 | 13 |
+| 4 — Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 1 | 0 | 12 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **12** | **0** | **116** |
+| **Total** | - | **128** | **13** | **0** | **115** |
 
 ### C.2 Card index by phase
 
@@ -5143,7 +5172,6 @@ labels must exist in the repository.
 | Task | Why it blocks release |
 |---|---|
 | `GOV-03` | Self-approval and client-supplied review state make reviews meaningless |
-| `PLN-01` | Last-write-wins causes silent data loss |
 | `AI-02` | Without a persistent index, AI results are stale and unbounded |
 | `AI-03` | Without permission-aware retrieval, AI can leak cross-project data |
 | `AI-07` | Prompt injection is an unmitigated action/exfiltration risk |
@@ -5173,6 +5201,7 @@ labels must exist in the repository.
 | 2026-11-20 | Closed GOV-01: replaced the coarse project-write gate with 14 explicit capabilities resolved from `project_members` on every request; added DB-backed `RequireProjectCapability`, global viewer/admin overlays, tester and developer restrictions, owner-grant protection, `/auth/me` per-project capabilities, `x-spm-capability` OpenAPI metadata and capability-gated UI actions. Added `docs/AUTHZ.md`, CR/LF sanitization for caller-controlled authorization log fields and exhaustive route × role authorization tests | Maintainer |
 | 2026-11-20 | Closed GOV-02: archived projects now deny non-admin access through the per-request membership join and disappear from `/projects` and `/auth/me`; membership add/update/remove/ownership-transfer and admin role changes invalidate JWTs through the NATS-backed KV (one-second boundary covers same-second tokens) and publish `spm.authz.invalidation` so every replica evicts the affected SSE streams, including project-wide eviction on archive. Added `spm_authz_invalidations_total`, two-replica invalidation, eviction and archived-project tests, and updated `docs/AUTHZ.md`, `docs/OBSERVABILITY.md` and `docs/ARCHITECTURE.md` | Maintainer |
 | 2026-11-20 | Closed GOV-04: added a monthly-partitioned `audit_events` table whose database trigger owns the `sha256(prev_hash + '|' + payload)` chain and rejects update/delete/truncate; added a fail-open audit writer with recursive redaction, `AUDIT_RETENTION_DAYS`, audited whole-partition drops with chain anchors, admin list/detail/export/verify API and `/admin/audit` UI. Wired auth, admin, project, membership, settings, repository, branch, pull-request, environment, deployment and Argo CD producers; added audit write/chain/prune metrics with failure alerts and published `docs/AUDIT.md` | Maintainer |
+| 2026-11-20 | Closed PLN-01: added `revision` tokens and trigger-owned bumps to the eight planning tables, `If-Match`/`expected_version` conditional mutations with `428`/`409`/`400` responses, explicit retry UX, self-parent and all 73 foreign-key indexes, `schema_test.go` drift guards, a `migration_template.sql` and contract companion, and `docs/DATA-MODEL.md`/`docs/MIGRATION-GUIDE.md`; added `spm_planning_conflicts_total`. Merged as PR #26 (`07ecdae`) after a forward/rollback PGlite rehearsal and all required checks | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
