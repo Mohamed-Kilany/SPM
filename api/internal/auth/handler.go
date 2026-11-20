@@ -362,7 +362,11 @@ func (h *Handler) StreamTicket(c *gin.Context) {
 
 func (h *Handler) memberships(ctx context.Context, userID, globalRole string) ([]ProjectAccess, []string, error) {
 	rows, err := h.db.Query(ctx,
-		`SELECT project_id, role FROM project_members WHERE user_id = $1 ORDER BY project_id`,
+		`SELECT pm.project_id, pm.role
+		 FROM project_members pm
+		 JOIN projects p ON p.id = pm.project_id
+		 WHERE pm.user_id = $1 AND p.status = 'active'
+		 ORDER BY pm.project_id`,
 		userID,
 	)
 	if err != nil {

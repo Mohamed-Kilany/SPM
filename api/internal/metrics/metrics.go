@@ -45,6 +45,8 @@ type Registry struct {
 	reconcileRuns        *prometheus.CounterVec
 	reconcileDuration    *prometheus.HistogramVec
 	reconcileLastSuccess *prometheus.GaugeVec
+
+	authzInvalidations *prometheus.CounterVec
 }
 
 var defaultRegistry atomic.Pointer[Registry]
@@ -111,6 +113,10 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_delivery_reconcile_last_success_timestamp_seconds",
 			Help: "Unix timestamp of the last successful delivery reconciliation by source.",
 		}, []string{"source"}),
+		authzInvalidations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "spm_authz_invalidations_total",
+			Help: "Authorization invalidations published by scope and reason.",
+		}, []string{"scope", "reason"}),
 	}
 
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -138,6 +144,7 @@ func New(info BuildInfo) *Registry {
 		metrics.reconcileRuns,
 		metrics.reconcileDuration,
 		metrics.reconcileLastSuccess,
+		metrics.authzInvalidations,
 	)
 	return metrics
 }
@@ -211,6 +218,15 @@ func (r *Registry) ObserveReconcile(source string, elapsed time.Duration, err er
 	if err == nil {
 		r.reconcileLastSuccess.WithLabelValues(source).SetToCurrentTime()
 	}
+}
+
+// ObserveAuthzInvalidation records one published authorization invalidation.
+// Both labels are bounded enumerations chosen by the caller, never user input.
+func (r *Registry) ObserveAuthzInvalidation(scope, reason string) {
+	if r == nil {
+		return
+	}
+	r.authzInvalidations.WithLabelValues(scope, reason).Inc()
 }
 
 // RegisterPool exports pgx pool saturation and acquire statistics.

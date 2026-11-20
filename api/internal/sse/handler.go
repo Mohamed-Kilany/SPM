@@ -32,10 +32,16 @@ type Manager struct {
 	nc     *nats.Conn
 	pool   *pgxpool.Pool
 	sub    *nats.Subscription
+	authz  *nats.Subscription
 	mu     sync.Mutex
 	bufs   map[string]*RingBuffer
-	subs   map[string]map[int64]chan SSEEvent
+	subs   map[string]map[int64]*subscriber
 	nextID int64
+}
+
+type subscriber struct {
+	userID string
+	ch     chan SSEEvent
 }
 
 // NewManager creates an SSE Manager. Start must be called to consume updates.
@@ -47,11 +53,11 @@ func NewManager(nc *nats.Conn, pool *pgxpool.Pool) *Manager {
 		nc:   nc,
 		pool: pool,
 		bufs: make(map[string]*RingBuffer),
-		subs: make(map[string]map[int64]chan SSEEvent),
+		subs: make(map[string]map[int64]*subscriber),
 	}
 }
 
-// Start subscribes the hub to the UI update subject space.
+// Start subscribes the hub to UI updates and authorization invalidations.
 func (m *Manager) Start(ctxDone <-chan struct{}) error {
 	ch := make(chan *nats.Msg, 1024)
 	sub, err := m.nc.ChanSubscribe(events.UpdateSubjectPrefix, ch)
@@ -60,17 +66,31 @@ func (m *Manager) Start(ctxDone <-chan struct{}) error {
 	}
 	m.sub = sub
 
+	authzCh := make(chan *nats.Msg, 256)
+	authzSub, err := m.nc.ChanSubscribe(events.InvalidationSubject, authzCh)
+	if err != nil {
+		_ = sub.Drain()
+		return fmt.Errorf("sse: subscribe %s: %w", events.InvalidationSubject, err)
+	}
+	m.authz = authzSub
+
 	go func() {
 		for {
 			select {
 			case <-ctxDone:
 				_ = sub.Drain()
+				_ = authzSub.Drain()
 				return
 			case msg, ok := <-ch:
 				if !ok {
 					return
 				}
 				m.handleUpdate(msg.Data)
+			case msg, ok := <-authzCh:
+				if !ok {
+					return
+				}
+				m.handleInvalidation(msg.Data)
 			}
 		}
 	}()
@@ -81,6 +101,9 @@ func (m *Manager) Start(ctxDone <-chan struct{}) error {
 func (m *Manager) Close() {
 	if m.sub != nil {
 		_ = m.sub.Drain()
+	}
+	if m.authz != nil {
+		_ = m.authz.Drain()
 	}
 }
 
@@ -120,24 +143,82 @@ func (m *Manager) handleUpdate(data []byte) {
 	}
 	buf.Append(ev)
 
-	for id, ch := range m.subs[projectID] {
+	for id, sub := range m.subs[projectID] {
 		select {
-		case ch <- ev:
+		case sub.ch <- ev:
 		default:
 			// Disconnect slow clients rather than silently losing a patch.
-			close(ch)
+			close(sub.ch)
 			delete(m.subs[projectID], id)
 		}
 	}
 	m.mu.Unlock()
 }
 
+// handleInvalidation evicts streams when a token or project loses access.
+func (m *Manager) handleInvalidation(data []byte) {
+	var invalidation events.AuthzInvalidation
+	if err := json.Unmarshal(data, &invalidation); err != nil {
+		log.Printf("sse: invalid authz invalidation envelope: %v", err)
+		return
+	}
+	switch invalidation.Scope {
+	case "user":
+		m.evictUser(invalidation.UserID)
+	case "project":
+		m.evictProject(invalidation.ProjectID)
+	default:
+		log.Printf("sse: unknown authz invalidation scope %q", invalidation.Scope)
+	}
+}
+
+// evictUser closes every stream owned by userID and returns the number of
+// connections that were disconnected.
+func (m *Manager) evictUser(userID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	evicted := 0
+	for projectID, subs := range m.subs {
+		for id, sub := range subs {
+			if sub.userID != userID {
+				continue
+			}
+			close(sub.ch)
+			delete(subs, id)
+			evicted++
+		}
+		if len(subs) == 0 {
+			delete(m.subs, projectID)
+		}
+	}
+	return evicted
+}
+
+// evictProject closes every stream subscribed to projectID and returns the
+// number of connections that were disconnected.
+func (m *Manager) evictProject(projectID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subs := m.subs[projectID]
+	evicted := len(subs)
+	for id, sub := range subs {
+		close(sub.ch)
+		delete(subs, id)
+	}
+	if subs != nil {
+		delete(m.subs, projectID)
+	}
+	return evicted
+}
+
 // Stream handles GET /api/v1/projects/:id/stream.
 func (m *Manager) Stream(c *gin.Context) {
-	if _, ok := auth.ClaimsFrom(c); !ok {
+	claims, ok := auth.ClaimsFrom(c)
+	if !ok {
 		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
 		return
 	}
+	userID := claims.CanonicalUserID()
 
 	projectID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -153,7 +234,7 @@ func (m *Manager) Stream(c *gin.Context) {
 			latestSeq = seq
 		}
 	}
-	replay, ch, unsubscribe, ok := m.subscribe(key, fromID, hasFromID, latestSeq)
+	replay, ch, unsubscribe, ok := m.subscribe(key, userID, fromID, hasFromID, latestSeq)
 	if !ok {
 		writeSSEHeaders(c)
 		c.Status(http.StatusOK)
@@ -199,7 +280,7 @@ func (m *Manager) Stream(c *gin.Context) {
 	}
 }
 
-func (m *Manager) subscribe(projectID string, fromID int64, replay bool, latestSeq int64) ([]SSEEvent, chan SSEEvent, func(), bool) {
+func (m *Manager) subscribe(projectID, userID string, fromID int64, replay bool, latestSeq int64) ([]SSEEvent, chan SSEEvent, func(), bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -231,17 +312,17 @@ func (m *Manager) subscribe(projectID string, fromID int64, replay bool, latestS
 
 	ch := make(chan SSEEvent, subscriberBuffer)
 	if m.subs[projectID] == nil {
-		m.subs[projectID] = make(map[int64]chan SSEEvent)
+		m.subs[projectID] = make(map[int64]*subscriber)
 	}
 	m.nextID++
 	subID := m.nextID
-	m.subs[projectID][subID] = ch
+	m.subs[projectID][subID] = &subscriber{userID: userID, ch: ch}
 
 	unsubscribe := func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if subs := m.subs[projectID]; subs != nil {
-			if existing, ok := subs[subID]; ok && existing == ch {
+			if existing, ok := subs[subID]; ok && existing.ch == ch {
 				delete(subs, subID)
 			}
 			if len(subs) == 0 {

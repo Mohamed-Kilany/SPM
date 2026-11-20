@@ -97,6 +97,7 @@ join key between a metric anomaly and a released tag.
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `spm_sse_connections_active` | gauge | - | Live project update streams |
+| `spm_authz_invalidations_total` | counter | `scope`, `reason` | Published token/project invalidations (`user`/`project`, fixed reasons) |
 
 ### Outbound dependencies
 

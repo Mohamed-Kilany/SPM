@@ -109,15 +109,16 @@ func TestEffectiveCapabilities(t *testing.T) {
 }
 
 type fakeResolver struct {
-	role   string
-	member bool
-	err    error
-	calls  int
+	role     string
+	member   bool
+	archived bool
+	err      error
+	calls    int
 }
 
-func (f *fakeResolver) RoleForProject(_ context.Context, _, _ string) (string, bool, error) {
+func (f *fakeResolver) RoleForProject(_ context.Context, _, _ string) (string, bool, bool, error) {
 	f.calls++
-	return f.role, f.member, f.err
+	return f.role, f.member, !f.archived, f.err
 }
 
 func capabilityRouter(t *testing.T, resolver auth.MembershipResolver, capability auth.Capability) *gin.Engine {
@@ -220,6 +221,19 @@ func TestRequireProjectCapabilityRoleChangeIsImmediate(t *testing.T) {
 	settings := capabilityRouter(t, resolver, auth.CapSettingsWrite)
 	assert.Equal(t, http.StatusOK, callCapabilityRouter(t, settings, token).Code,
 		"a role upgrade must apply on the next request")
+}
+
+func TestRequireProjectCapabilityArchivedProject(t *testing.T) {
+	resolver := &fakeResolver{role: auth.ProjectRoleOwner, member: true, archived: true}
+	r := capabilityRouter(t, resolver, auth.CapProjectRead)
+	w := callCapabilityRouter(t, r, tokenFor(t, "user-1", auth.RoleMember))
+	assert.Equal(t, http.StatusForbidden, w.Code, "archived projects stop granting access immediately")
+	assert.Contains(t, w.Body.String(), "project.read")
+
+	// Break-glass access is intentionally unaffected by the archive state.
+	admin := capabilityRouter(t, &fakeResolver{archived: true}, auth.CapProjectRead)
+	assert.Equal(t, http.StatusOK,
+		callCapabilityRouter(t, admin, tokenFor(t, "admin-1", auth.RoleAdmin)).Code)
 }
 
 func TestRequireProjectCapabilityFailsClosed(t *testing.T) {
