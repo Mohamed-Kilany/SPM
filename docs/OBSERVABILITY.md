@@ -99,6 +99,17 @@ join key between a metric anomaly and a released tag.
 | `spm_sse_connections_active` | gauge | - | Live project update streams |
 | `spm_authz_invalidations_total` | counter | `scope`, `reason` | Published token/project invalidations (`user`/`project`, fixed reasons) |
 
+### Planning
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `spm_planning_conflicts_total` | counter | `resource` | Rejected stale writes on revisioned planning resources |
+
+`resource` is a fixed lowercase name (`prd`, `epic`, `feature`, `work item`, `test case`,
+`sprint`, `release`), never an ID. A sustained conflict rate means clients hold
+stale revisions; investigate the UI/API snapshot path before raising it. Revision and ETag
+semantics are in [`docs/DATA-MODEL.md`](DATA-MODEL.md).
+
 ### Audit
 
 | Metric | Type | Labels | Meaning |
