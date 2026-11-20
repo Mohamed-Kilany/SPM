@@ -164,3 +164,27 @@ A phase is complete only when its Docker build, automated API/UI tests and requi
 coverage are green. Until `QAT-02` and `QAT-03` land, phase checkboxes in
 [`ENTERPRISE_SPEC.md`](ENTERPRISE_SPEC.md) mark implemented slices with code/test evidence, not
 fully gated phases.
+
+## 10. Release and versioning
+
+`master` is the integration line; a release is an annotated `vMAJOR.MINOR.PATCH` tag on a merged
+`master` commit. Staging and production deploy that same tag, never a branch head.
+
+Build metadata is injected from the tag at image build time:
+
+- API: `-ldflags -X main.version/commit/buildDate`; every health probe returns
+  `build.version`, `build.commit` and `build.built_at`.
+- UI: `VITE_APP_VERSION` is embedded at Vite build time and shown in the navigation footer.
+- AI: `SPM_AI_VERSION` is read at process start and returned by `/health`.
+
+`scripts/release.ps1` prepares the changelog pull request and tags the merged version.
+`scripts/changelog.ps1` generates grouped entries from first-parent conventional commits, pull
+request numbers and task IDs. Pushing a tag starts
+[`.github/workflows/release.yml`](../.github/workflows/release.yml), which verifies the tag is on
+`master`, re-runs the supply-chain checks, builds and scans the images, archives SBOM/SARIF
+evidence and publishes the GitHub release. It never commits or opens pull requests.
+
+Schema migrations are embedded in the API and applied at startup. Releases follow expand/contract:
+the previous tag must remain compatible with the expanded schema for the rollback window. The
+deploy order, rollback procedure, compatibility rules and the `OPS-09` rehearsal handoff are in
+[`RELEASING.md`](RELEASING.md).

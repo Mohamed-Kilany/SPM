@@ -274,6 +274,7 @@ services:
       dockerfile: ai/Dockerfile
       args:
         AI_LLM: "${AI_LLM:-0}"
+        SPM_AI_VERSION: "${SPM_VERSION:-dev}"
     image: spm-ai:local
     restart: unless-stopped
     environment:
@@ -281,6 +282,7 @@ services:
       SPM_AI_DISABLE_LLM: "${SPM_AI_DISABLE_LLM:-1}"
       SPM_AI_MODEL_PATH: "${SPM_AI_MODEL_PATH:-}"
       SPM_AI_THREADS: "${SPM_AI_THREADS:-2}"
+      SPM_AI_VERSION: "${SPM_VERSION:-dev}"
     networks:
       - spm_net
     healthcheck:
@@ -295,6 +297,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      args:
+        VERSION: "${SPM_VERSION:-dev}"
+        COMMIT: "${SPM_COMMIT:-unknown}"
+        BUILD_DATE: "${SPM_BUILD_DATE:-unknown}"
     restart: unless-stopped
     environment:
       DATABASE_URL:              "postgres://${POSTGRES_USER:-spm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spm}?sslmode=disable"
@@ -344,6 +350,7 @@ services:
       dockerfile: Dockerfile
       args:
         NGINX_IMAGE: nginx:1.30.5-alpine-otel
+        VITE_APP_VERSION: "${SPM_VERSION:-dev}"
     image: spm-ui:local
     restart: unless-stopped
     networks:

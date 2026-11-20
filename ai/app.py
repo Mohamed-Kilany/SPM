@@ -21,7 +21,7 @@ from typing import Any, Iterable
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-APP_VERSION = "2.0.0"
+APP_VERSION = os.environ.get("SPM_AI_VERSION", "2.0.0").strip() or "2.0.0"
 STARTED_AT = time.time()
 
 WORD_RE = re.compile(r"[a-zA-Z0-9_#./-]+")
