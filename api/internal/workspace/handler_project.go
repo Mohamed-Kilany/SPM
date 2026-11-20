@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -77,12 +79,14 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 		}
 		sets = append(sets, "default_branch = "+arg(branch))
 	}
+	statusArchived := false
 	if req.Status != nil {
 		status := strings.ToLower(strings.TrimSpace(*req.Status))
 		if status != "active" && status != "archived" {
 			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Status must be active or archived")
 			return
 		}
+		statusArchived = status == "archived"
 		sets = append(sets, "status = "+arg(status))
 	}
 	sets = append(sets, "updated_at = NOW()")
@@ -100,6 +104,9 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 	if tag.RowsAffected() == 0 {
 		apiError(c, http.StatusNotFound, "NOT_FOUND", "Project not found")
 		return
+	}
+	if statusArchived {
+		h.invalidateProjectSessions(c.Request.Context(), projectID, "project_archived")
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project", &projectID, "updated", "Updated project settings", nil)
 	c.JSON(http.StatusOK, gin.H{"id": projectID})
@@ -170,10 +177,27 @@ func (h *Handler) AddMember(c *gin.Context) {
 	}
 	defer func() { _ = tx.Rollback(c.Request.Context()) }()
 
+	demotedOwners := make([]uuid.UUID, 0, 1)
 	if role == auth.ProjectRoleOwner {
-		if _, err := tx.Exec(c.Request.Context(),
+		rows, qerr := tx.Query(c.Request.Context(),
 			`UPDATE project_members SET role = 'maintainer', updated_at = NOW()
-			 WHERE project_id = $1 AND role = 'owner' AND user_id <> $2`, projectID, userID); err != nil {
+			 WHERE project_id = $1 AND role = 'owner' AND user_id <> $2
+			 RETURNING user_id`, projectID, userID)
+		if qerr != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
+			return
+		}
+		for rows.Next() {
+			var demoted uuid.UUID
+			if err := rows.Scan(&demoted); err != nil {
+				rows.Close()
+				apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
+				return
+			}
+			demotedOwners = append(demotedOwners, demoted)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
 			return
 		}
@@ -189,6 +213,10 @@ func (h *Handler) AddMember(c *gin.Context) {
 	if err := tx.Commit(c.Request.Context()); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit membership")
 		return
+	}
+	h.invalidateMemberSessions(c.Request.Context(), userID, projectID, "member_added")
+	for _, demoted := range demotedOwners {
+		h.invalidateMemberSessions(c.Request.Context(), demoted, projectID, "ownership_transferred")
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "added", "Added project member", map[string]interface{}{"role": role})
 	c.JSON(http.StatusCreated, gin.H{"user_id": userID, "role": role})
@@ -248,10 +276,27 @@ func (h *Handler) UpdateMember(c *gin.Context) {
 		return
 	}
 	defer func() { _ = tx.Rollback(c.Request.Context()) }()
+	demotedOwners := make([]uuid.UUID, 0, 1)
 	if role == auth.ProjectRoleOwner {
-		if _, err := tx.Exec(c.Request.Context(),
+		rows, qerr := tx.Query(c.Request.Context(),
 			`UPDATE project_members SET role = 'maintainer', updated_at = NOW()
-			 WHERE project_id = $1 AND role = 'owner' AND user_id <> $2`, projectID, userID); err != nil {
+			 WHERE project_id = $1 AND role = 'owner' AND user_id <> $2
+			 RETURNING user_id`, projectID, userID)
+		if qerr != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
+			return
+		}
+		for rows.Next() {
+			var demoted uuid.UUID
+			if err := rows.Scan(&demoted); err != nil {
+				rows.Close()
+				apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
+				return
+			}
+			demotedOwners = append(demotedOwners, demoted)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
 			return
 		}
@@ -265,6 +310,10 @@ func (h *Handler) UpdateMember(c *gin.Context) {
 	if err := tx.Commit(c.Request.Context()); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit membership")
 		return
+	}
+	h.invalidateMemberSessions(c.Request.Context(), userID, projectID, "member_role_changed")
+	for _, demoted := range demotedOwners {
+		h.invalidateMemberSessions(c.Request.Context(), demoted, projectID, "ownership_transferred")
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "updated", "Updated project member role", map[string]interface{}{"role": role})
 	c.JSON(http.StatusOK, gin.H{"user_id": userID, "role": role})
@@ -316,8 +365,46 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 		apiError(c, http.StatusNotFound, "NOT_FOUND", "Project member not found")
 		return
 	}
+	h.invalidateMemberSessions(c.Request.Context(), userID, projectID, "member_removed")
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_member", &userID, "removed", "Removed project member", nil)
 	c.Status(http.StatusNoContent)
+}
+
+// invalidateMemberSessions makes a membership change effective beyond the
+// database lookup: the target's JWTs are rejected on the next request and every
+// replica evicts their live SSE streams. Failures are logged but do not fail the
+// committed membership change; the per-request database lookup still enforces
+// the new role.
+func (h *Handler) invalidateMemberSessions(ctx context.Context, userID, projectID uuid.UUID, reason string) {
+	if h.events == nil {
+		return
+	}
+	if err := h.events.InvalidateMembership(ctx, userID.String(), projectID.String(), reason); err != nil {
+		slog.Warn("authz_invalidation_failed",
+			"scope", "membership",
+			"reason", reason,
+			"user_id", userID.String(),
+			"project_id", projectID.String(),
+			"error", err,
+		)
+	}
+}
+
+// invalidateProjectSessions closes every replica's SSE streams after a project
+// is archived. Access itself is denied by the membership resolver, which reads
+// the project status on every request.
+func (h *Handler) invalidateProjectSessions(ctx context.Context, projectID uuid.UUID, reason string) {
+	if h.events == nil {
+		return
+	}
+	if err := h.events.InvalidateProject(ctx, projectID.String(), reason); err != nil {
+		slog.Warn("authz_invalidation_failed",
+			"scope", "project",
+			"reason", reason,
+			"project_id", projectID.String(),
+			"error", err,
+		)
+	}
 }
 
 // canGrantOwnership reports whether the actor may grant, change or revoke the

@@ -191,6 +191,27 @@ func TestReconcileAndAIOutcomes(t *testing.T) {
 	}
 }
 
+func TestAuthzInvalidationCounter(t *testing.T) {
+	registry := newTestRegistry()
+	registry.ObserveAuthzInvalidation("user", "member_removed")
+	registry.ObserveAuthzInvalidation("user", "member_removed")
+	registry.ObserveAuthzInvalidation("project", "project_archived")
+
+	invalidations := family(t, registry, "spm_authz_invalidations_total")
+	if len(invalidations.GetMetric()) != 2 {
+		t.Fatalf("invalidation series = %d, want 2", len(invalidations.GetMetric()))
+	}
+	var userTotal float64
+	for _, metric := range invalidations.GetMetric() {
+		if labelValue(metric, "scope") == "user" && labelValue(metric, "reason") == "member_removed" {
+			userTotal = metric.GetCounter().GetValue()
+		}
+	}
+	if userTotal != 2 {
+		t.Fatalf("user/member_removed total = %v, want 2", userTotal)
+	}
+}
+
 func TestInstrumentTransportRecordsDependency(t *testing.T) {
 	registry := newTestRegistry()
 	previous := Default()

@@ -115,7 +115,7 @@ func (h *Handler) List(c *gin.Context) {
 		}
 		rows, err = h.db.Query(ctx, baseSelect+`
 			JOIN project_members pm ON pm.project_id = p.id
-			WHERE pm.user_id = $1
+			WHERE pm.user_id = $1 AND p.status = 'active'
 			ORDER BY p.created_at DESC`, userID)
 	}
 	if err != nil {

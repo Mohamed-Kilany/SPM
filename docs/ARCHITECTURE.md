@@ -58,11 +58,13 @@ Every project route declares one capability (`project.read`, `planning.write`,
 `work_item.write`, `test.write`, `code.read`, `code.write`, `pr.review`,
 `pr.merge`, `delivery.read`, `delivery.deploy`, `delivery.rollback`,
 `settings.write`, `member.write`, `audit.read`). `RequireProjectCapability`
-resolves the membership from PostgreSQL on every request, so role changes and
-removals take effect immediately. Global admins keep break-glass access and
-log each use. Global viewers remain read-only even when they hold a project
-role. The full matrix, tester restrictions and ownership rules are in
-[`AUTHZ.md`](AUTHZ.md).
+joins `project_members` to `projects` on every request, so role changes,
+removals and project archival take effect immediately. Global admins keep
+break-glass access and log each use. Global viewers remain read-only even when
+they hold a project role. Membership changes invalidate the user's JWTs through
+the NATS-backed KV and publish an SSE eviction so every API replica drops the
+affected streams. The full matrix, tester restrictions, ownership rules and
+invalidation contract are in [`AUTHZ.md`](AUTHZ.md).
 
 ## 5. Real-time model
 
@@ -70,6 +72,8 @@ role. The full matrix, tester restrictions and ownership rules are in
 - `workspace.changed` is published to NATS JetStream.
 - The worker updates the project snapshot and publishes SSE updates.
 - The Vue workspace refreshes on every SSE connect/reconnect and on domain events.
+- Authorization invalidations publish `spm.authz.invalidation`; every replica
+  closes the affected streams, so removed members stop receiving project data.
 - Normal operation has no manual refresh controls or live-status chrome.
 
 ## 6. AI service

@@ -207,9 +207,10 @@ func HasProjectCapability(c *gin.Context, capability Capability) bool {
 
 // MembershipResolver resolves the authoritative project role for a user. The
 // PostgreSQL implementation is PoolMembershipResolver; tests may supply a
-// deterministic fake.
+// deterministic fake. projectActive reports whether the project is still
+// active: archived projects deny access to every non-admin immediately.
 type MembershipResolver interface {
-	RoleForProject(ctx context.Context, projectID, userID string) (role string, member bool, err error)
+	RoleForProject(ctx context.Context, projectID, userID string) (role string, member bool, projectActive bool, err error)
 }
 
 // PoolMembershipResolver reads project_members on every request.
@@ -218,7 +219,7 @@ type PoolMembershipResolver struct {
 }
 
 // RoleForProject implements MembershipResolver.
-func (r PoolMembershipResolver) RoleForProject(ctx context.Context, projectID, userID string) (string, bool, error) {
+func (r PoolMembershipResolver) RoleForProject(ctx context.Context, projectID, userID string) (string, bool, bool, error) {
 	return MembershipLookup(ctx, r.Pool, projectID, userID)
 }
 
@@ -280,7 +281,7 @@ func RequireProjectCapabilityWithResolver(resolver MembershipResolver, capabilit
 			denyCapability(c, claims.CanonicalUserID(), projectID, "", capability, "membership resolver unavailable")
 			return
 		}
-		role, member, err := resolver.RoleForProject(c.Request.Context(), projectID, claims.CanonicalUserID())
+		role, member, projectActive, err := resolver.RoleForProject(c.Request.Context(), projectID, claims.CanonicalUserID())
 		if err != nil {
 			safeProjectID := strings.ReplaceAll(projectID, "\n", "")
 			safeProjectID = strings.ReplaceAll(safeProjectID, "\r", "")
@@ -295,6 +296,10 @@ func RequireProjectCapabilityWithResolver(resolver MembershipResolver, capabilit
 		}
 		if !member {
 			denyCapability(c, claims.CanonicalUserID(), projectID, "", capability, "not a project member")
+			return
+		}
+		if !projectActive {
+			denyCapability(c, claims.CanonicalUserID(), projectID, role, capability, "project is not active")
 			return
 		}
 
@@ -337,20 +342,26 @@ func denyCapability(c *gin.Context, userID, projectID, role string, capability C
 
 // MembershipLookup resolves a user's project membership directly from
 // PostgreSQL. A missing row is not an error; a database failure is, so the
-// caller can fail closed and log the cause.
-func MembershipLookup(ctx context.Context, pool *pgxpool.Pool, projectID, userID string) (role string, member bool, err error) {
+// caller can fail closed and log the cause. The project status is returned so
+// archived projects stop granting access on the next request.
+func MembershipLookup(ctx context.Context, pool *pgxpool.Pool, projectID, userID string) (role string, member bool, projectActive bool, err error) {
 	if pool == nil {
-		return "", false, nil
+		return "", false, false, nil
 	}
-	const q = `SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2`
-	if err := pool.QueryRow(ctx, q, projectID, userID).Scan(&role); err != nil {
+	const q = `
+		SELECT pm.role, p.status
+		FROM project_members pm
+		JOIN projects p ON p.id = pm.project_id
+		WHERE pm.project_id = $1 AND pm.user_id = $2`
+	var status string
+	if err := pool.QueryRow(ctx, q, projectID, userID).Scan(&role, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", false, nil
+			return "", false, false, nil
 		}
-		return "", false, err
+		return "", false, false, err
 	}
 	if !ValidProjectRole(role) {
-		return "", false, errors.New("project member has an unsupported role")
+		return "", false, false, errors.New("project member has an unsupported role")
 	}
-	return role, true, nil
+	return role, true, status == "active", nil
 }

@@ -269,6 +269,35 @@ func TestMiddleware_TokenNotInvalidated_Passes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestMiddleware_SharedInvalidationAcrossReplicas proves two API replicas that
+// share the NATS invalidation bucket both reject the token as soon as one
+// replica records the invalidation.
+func TestMiddleware_SharedInvalidationAcrossReplicas(t *testing.T) {
+	tokenStr, err := auth.IssueToken("user-replica", "member", nil, testSecret, 1)
+	require.NoError(t, err)
+
+	kv := newFakeKV(map[string][]byte{})
+	replicaA := newTestRouter(t, testSecret, kv)
+	replicaB := newTestRouter(t, testSecret, kv)
+
+	call := func(router *gin.Engine) int {
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenStr)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	assert.Equal(t, http.StatusOK, call(replicaA))
+	assert.Equal(t, http.StatusOK, call(replicaB))
+
+	// One replica publishes the invalidation through the shared NATS KV.
+	kv.entries["user-replica"] = []byte(strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+
+	assert.Equal(t, http.StatusUnauthorized, call(replicaA))
+	assert.Equal(t, http.StatusUnauthorized, call(replicaB))
+}
+
 func TestMiddleware_NoKVEntry_Passes(t *testing.T) {
 	tokenStr, err := auth.IssueToken("user-new", "member", nil, testSecret, 1)
 	require.NoError(t, err)

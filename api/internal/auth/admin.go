@@ -260,7 +260,7 @@ func (h *Handler) AdminUpdateUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, errorResponse{Error: errorBody{Code: "INTERNAL_ERROR", Message: "Failed to update user"}})
 		return
 	}
-	if req.Password != nil && h.invalidator != nil {
+	if (req.Password != nil || req.Role != nil || req.IsActive != nil) && h.invalidator != nil {
 		_ = h.invalidator.InvalidateUser(c.Request.Context(), targetID.String())
 	}
 	c.JSON(http.StatusOK, gin.H{"id": targetID.String()})

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 
+	"spm-platform/api/internal/metrics"
 	"spm-platform/api/internal/models"
 )
 
@@ -30,6 +31,22 @@ const (
 	minRetentionDays     = 1
 	maxRetentionDays     = 3650
 )
+
+// InvalidationSubject is the core NATS subject used to evict live resources
+// (currently SSE streams) when a token or project loses access. Every API
+// replica subscribes to it, so an event raised by one replica reaches all.
+const InvalidationSubject = "spm.authz.invalidation"
+
+// AuthzInvalidation is the control message published on InvalidationSubject.
+// Scope selects the eviction: "user" closes every stream owned by UserID;
+// "project" closes every stream subscribed to ProjectID. Reasons are fixed
+// operational strings, never user input, because they become metric labels.
+type AuthzInvalidation struct {
+	Scope     string `json:"scope"`
+	UserID    string `json:"user_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+	Reason    string `json:"reason"`
+}
 
 // Update is the envelope published on core NATS for SSE fan-out.
 type Update struct {
@@ -226,13 +243,73 @@ func mapPublishError(err error) error {
 func (c *Client) UserInvalidation() nats.KeyValue { return c.userInvalidation }
 
 // InvalidateUser records the current Unix timestamp for a user. JWTs issued
-// before this timestamp are rejected by the auth middleware.
+// before this timestamp are rejected by the auth middleware. The invalidation
+// is also published through NATS so every replica evicts the user's SSE
+// streams.
 func (c *Client) InvalidateUser(ctx context.Context, userID string) error {
-	if c.userInvalidation == nil {
+	return c.invalidateUser(ctx, userID, "", "token")
+}
+
+// InvalidateMembership invalidates a user's tokens after their project
+// membership changes, and publishes the project scope so other replicas can
+// close that user's streams.
+func (c *Client) InvalidateMembership(ctx context.Context, userID, projectID, reason string) error {
+	return c.invalidateUser(ctx, userID, projectID, reason)
+}
+
+// InvalidateProject publishes a project-wide invalidation. Every replica closes
+// the affected SSE streams; project access itself is denied by the membership
+// resolver as soon as the archive commits.
+func (c *Client) InvalidateProject(ctx context.Context, projectID, reason string) error {
+	if c == nil {
 		return nil
 	}
-	_, err := c.userInvalidation.Put(userID, []byte(strconv.FormatInt(time.Now().Unix(), 10)))
-	return err
+	inv := AuthzInvalidation{Scope: "project", ProjectID: projectID, Reason: reason}
+	if err := c.publishInvalidation(ctx, inv); err != nil {
+		return err
+	}
+	metrics.Default().ObserveAuthzInvalidation("project", reason)
+	return nil
+}
+
+func (c *Client) invalidateUser(ctx context.Context, userID, projectID, reason string) error {
+	if c == nil {
+		return nil
+	}
+	var errs []error
+	if c.userInvalidation != nil {
+		// Add one second so a token issued in the same wall-clock second as
+		// the change is also rejected; a token issued after the boundary is
+		// accepted. JWTs carry second-precision iat.
+		ts := strconv.FormatInt(time.Now().Unix()+1, 10)
+		if _, err := c.userInvalidation.Put(userID, []byte(ts)); err != nil {
+			errs = append(errs, fmt.Errorf("events: persist user invalidation: %w", err))
+		}
+	}
+	inv := AuthzInvalidation{Scope: "user", UserID: userID, ProjectID: projectID, Reason: reason}
+	if err := c.publishInvalidation(ctx, inv); err != nil {
+		errs = append(errs, err)
+	} else {
+		metrics.Default().ObserveAuthzInvalidation("user", reason)
+	}
+	return errors.Join(errs...)
+}
+
+func (c *Client) publishInvalidation(ctx context.Context, inv AuthzInvalidation) error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(inv)
+	if err != nil {
+		return fmt.Errorf("events: marshal authz invalidation: %w", err)
+	}
+	if err := c.conn.Publish(InvalidationSubject, payload); err != nil {
+		return fmt.Errorf("events: publish authz invalidation: %w", err)
+	}
+	return nil
 }
 
 // JetStream returns the JetStream context used by the worker.

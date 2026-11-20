@@ -2323,20 +2323,35 @@ actions still work), permission-filtered.
   capability-change audit events are `GOV-04`; session/SSE invalidation is `GOV-02`.
 
 #### GOV-02 · Membership and session invalidation
-- **Status:** TODO · **Priority:** P0 · **Estimate:** M · **Branch:** `fix/membership-session-invalidation`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** M · **Branch:** `fix/membership-session-invalidation`
 - **Depends on:** GOV-01
 - **Scope:** Make membership changes effective immediately. Invalidate the user's tokens on
   add/update/remove/role change; stop trusting JWT project IDs for reads unless backed by a
   current membership check or token epoch; close/invalidate SSE streams for removed members.
 - **Acceptance criteria:**
-  - [ ] Removing a member makes their existing token return 403 on the next read.
-  - [ ] Changing a role changes capabilities on the next request.
-  - [ ] SSE stream closes and does not replay data after removal.
-  - [ ] Project archive/delete invalidates access.
-  - [ ] Token invalidation is published through NATS and survives multiple API replicas.
-- **Tests/evidence:** integration test with two tokens, membership removal and immediate
-  read/write/stream checks; multi-replica test.
-- **Docs/telemetry:** authz invalidation metric, audit event for membership changes.
+  - [x] Removing a member denies the next read. The membership resolver reads PostgreSQL on every
+    request and returns `403`; the same change also invalidates the user's JWTs, so the next
+    request normally returns `401 TOKEN_INVALIDATED` first. Both paths fail closed.
+  - [x] Changing a role changes capabilities on the next request without re-issuing the token.
+  - [x] SSE streams for a removed member close immediately through the NATS authorization
+    invalidation subject; reconnecting is denied by the membership check, so no data is replayed.
+  - [x] Archiving a project denies every non-admin request (the membership lookup joins
+    `projects.status`), removes it from `/projects` and `/auth/me`, and closes every SSE stream.
+    A deleted project fails closed because the membership row no longer resolves.
+  - [x] Token invalidation is written to the NATS-backed `user_invalidation` KV and enforced by
+    every API replica; the SSE eviction is published on core NATS, which fans out to every
+    replica. A two-replica middleware test proves the shared KV rejects the token on both.
+- **Tests/evidence:** `api/internal/auth` covers archived-project denial, admin break-glass on an
+  archived project, immediate role changes and shared invalidation across two replicas.
+  `api/internal/sse` covers user-scope and project-scope eviction, replay safety and connection
+  accounting. `api/internal/metrics` covers the invalidation counter. Full `go test ./...`,
+  `go vet ./...` and OpenAPI `-check` pass.
+- **Docs/telemetry:** [`docs/AUTHZ.md`](docs/AUTHZ.md) defines the invalidation contract and
+  [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) lists
+  `spm_authz_invalidations_total{scope,reason}`. Membership add/update/remove writes an activity
+  event; durable append-only audit storage is `GOV-04`. Invalidation publish failures log
+  `authz_invalidation_failed` and remain best-effort because the database lookup is the
+  enforcement point.
 
 #### GOV-03 · Reviewer identity and anti-self-approval
 - **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/code-reviews-identity`
@@ -5063,7 +5078,7 @@ labels must exist in the repository.
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
 | 0 - Baseline, truth and delivery gate | `BASE` | 9 | 8 | 0 | 1 |
-| 1 — Identity, authorization, audit | `GOV` | 12 | 1 | 0 | 11 |
+| 1 - Identity, authorization, audit | `GOV` | 12 | 2 | 0 | 10 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
 | 4 — Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 0 | 0 | 13 |
@@ -5072,7 +5087,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **10** | **0** | **118** |
+| **Total** | - | **128** | **11** | **0** | **117** |
 
 ### C.2 Card index by phase
 
@@ -5093,7 +5108,6 @@ labels must exist in the repository.
 
 | Task | Why it blocks release |
 |---|---|
-| `GOV-02` | Removed members retain read access until token expiry |
 | `GOV-03` | Self-approval and client-supplied review state make reviews meaningless |
 | `GOV-04` | No tamper-evident audit means incidents cannot be investigated |
 | `PLN-01` | Last-write-wins causes silent data loss |
@@ -5124,6 +5138,7 @@ labels must exist in the repository.
 | 2026-11-20 | Verified the BASE-08 release dry run: pushed the scratch tag `v0.0.0-rc.1` from `master`; `release.yml` verify, images and publish jobs all succeeded; GitHub created a prerelease with generated changelog notes and six assets (`sbom-api/ui/ai.spdx.json`, `trivy-api/ui/ai.sarif`); the release and both local and remote tags were then deleted, leaving no published release | Maintainer |
 | 2026-11-20 | Closed OBS-01: added a Prometheus endpoint on a separate internal listener with optional bearer auth, RED/Go/process/PostgreSQL/NATS/SSE/Gitea/Argo/AI/reconciliation/build-info collectors, bounded route-template labels and `docs/OBSERVABILITY.md`. Post-merge verification confirmed `api/internal/metrics` and the observability contract on `master`, PR #21 merged with all required checks green, and 0 open Dependabot or secret-scanning alerts | Maintainer |
 | 2026-11-20 | Closed GOV-01: replaced the coarse project-write gate with 14 explicit capabilities resolved from `project_members` on every request; added DB-backed `RequireProjectCapability`, global viewer/admin overlays, tester and developer restrictions, owner-grant protection, `/auth/me` per-project capabilities, `x-spm-capability` OpenAPI metadata and capability-gated UI actions. Added `docs/AUTHZ.md`, CR/LF sanitization for caller-controlled authorization log fields and exhaustive route × role authorization tests | Maintainer |
+| 2026-11-20 | Closed GOV-02: archived projects now deny non-admin access through the per-request membership join and disappear from `/projects` and `/auth/me`; membership add/update/remove/ownership-transfer and admin role changes invalidate JWTs through the NATS-backed KV (one-second boundary covers same-second tokens) and publish `spm.authz.invalidation` so every replica evicts the affected SSE streams, including project-wide eviction on archive. Added `spm_authz_invalidations_total`, two-replica invalidation, eviction and archived-project tests, and updated `docs/AUTHZ.md`, `docs/OBSERVABILITY.md` and `docs/ARCHITECTURE.md` | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every

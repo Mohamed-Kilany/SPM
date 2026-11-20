@@ -150,8 +150,8 @@ type staticRoleResolver struct {
 	member bool
 }
 
-func (s staticRoleResolver) RoleForProject(context.Context, string, string) (string, bool, error) {
-	return s.role, s.member, nil
+func (s staticRoleResolver) RoleForProject(context.Context, string, string) (string, bool, bool, error) {
+	return s.role, s.member, true, nil
 }
 
 // capabilityRequest exercises one registered route with one token and resolver.
