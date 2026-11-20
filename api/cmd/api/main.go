@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spm-platform/api/internal/ai"
+	"spm-platform/api/internal/attachments"
 	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/cdengine"
@@ -114,10 +115,19 @@ func main() {
 	projectHandler := project.NewHandler(pool, snapRepo, eventsClient, gitEngineClient)
 	projectHandler.SetAuditLogger(auditLogger)
 	ticketHandler := ticket.NewHandler(snapRepo, eventsClient, gitEngineClient, pool)
+	attachmentStore, err := attachments.New(
+		envOr("ATTACHMENTS_DIR", "./data/attachments"),
+		int64(envInt("ATTACHMENT_MAX_BYTES", int(attachments.DefaultMaxBytes))),
+		os.Getenv("CLAMAV_ADDR"),
+	)
+	if err != nil {
+		log.Fatalf("attachments: %v", err)
+	}
 	workspaceHandler := workspace.NewHandler(pool, eventsClient)
 	workspaceHandler.SetAIClient(ai.New())
 	workspaceHandler.SetGitClient(gitEngineClient)
 	workspaceHandler.SetAuditLogger(auditLogger)
+	workspaceHandler.SetAttachmentStore(attachmentStore)
 	searchHandler := search.NewHandler(pool)
 
 	sseManager := sse.NewManager(eventsClient.Conn(), pool)

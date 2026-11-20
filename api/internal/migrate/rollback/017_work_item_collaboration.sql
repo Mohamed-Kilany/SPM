@@ -10,10 +10,13 @@ ALTER TABLE attachments DROP COLUMN IF EXISTS scan_detail;
 ALTER TABLE attachments DROP COLUMN IF EXISTS scan_engine;
 ALTER TABLE attachments DROP COLUMN IF EXISTS scan_status;
 ALTER TABLE attachments DROP COLUMN IF EXISTS checksum_sha256;
+DROP INDEX IF EXISTS comment_mentions_user_idx;
 
 DROP TABLE IF EXISTS comment_mentions;
 ALTER TABLE comments DROP COLUMN IF EXISTS edited_at;
 
+DROP INDEX IF EXISTS work_item_watchers_project_idx;
+DROP INDEX IF EXISTS work_item_watchers_user_idx;
 DROP TABLE IF EXISTS work_item_watchers;
 
 DROP INDEX IF EXISTS work_items_labels_idx;

@@ -528,6 +528,68 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/attachments/{attachmentId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete an attachment"
+      operationId: delete_api_v1_projects_id_attachments_attachmentId
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "attachmentId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/attachments/{attachmentId}/download:
+    get:
+      tags: ["Planning"]
+      summary: "Download an attachment"
+      operationId: get_api_v1_projects_id_attachments_attachmentId_download
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              description: Attachment filename.
+              schema: {type: string}
+            ETag:
+              description: SHA-256 checksum of the stored bytes.
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "attachmentId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/branches:
     post:
       tags: ["Code"]
@@ -557,6 +619,66 @@ paths:
               $ref: '#/components/schemas/BranchInput'
       parameters:
         - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/comments/{commentId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete a comment"
+      operationId: delete_api_v1_projects_id_comments_commentId
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "commentId"
+          in: path
+          required: true
+          schema: {type: string}
+    patch:
+      tags: ["Planning"]
+      summary: "Edit a comment"
+      operationId: patch_api_v1_projects_id_comments_commentId
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "commentId"
           in: path
           required: true
           schema: {type: string}
@@ -2252,6 +2374,34 @@ paths:
           in: path
           required: true
           schema: {type: string}
+    get:
+      tags: ["Planning"]
+      summary: "Get a work item detail"
+      operationId: get_api_v1_projects_id_work_items_itemId
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItemDetail'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
     put:
       tags: ["Planning"]
       summary: "Update work item"
@@ -2295,6 +2445,150 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/attachments:
+    post:
+      tags: ["Planning"]
+      summary: "Upload a work item attachment"
+      operationId: post_api_v1_projects_id_work_items_itemId_attachments
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/comments:
+    post:
+      tags: ["Planning"]
+      summary: "Comment on a work item"
+      operationId: post_api_v1_projects_id_work_items_itemId_comments
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/links:
+    post:
+      tags: ["Planning"]
+      summary: "Link a work item"
+      operationId: post_api_v1_projects_id_work_items_itemId_links
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedArtifact'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkItemLinkInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/links/{linkId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Unlink a work item"
+      operationId: delete_api_v1_projects_id_work_items_itemId_links_linkId
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "linkId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/work-items/{itemId}/status:
     patch:
       tags: ["Planning"]
@@ -2331,6 +2625,64 @@ paths:
       parameters:
         - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
         - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/watch:
+    delete:
+      tags: ["Planning"]
+      summary: "Stop watching a work item"
+      operationId: delete_api_v1_projects_id_work_items_itemId_watch
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Planning"]
+      summary: "Watch a work item"
+      operationId: post_api_v1_projects_id_work_items_itemId_watch
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchState'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      parameters:
         - name: "id"
           in: path
           required: true
@@ -3067,3 +3419,102 @@ components:
         error:
           $ref: '#/components/schemas/Error'
         current_version: {type: integer, format: int64, minimum: 1, description: Revision to send on retry; also returned as the ETag.}
+    Attachment:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        entity_type: {type: string}
+        entity_id: {type: string, format: uuid}
+        filename: {type: string}
+        mime_type: {type: string}
+        size_bytes: {type: integer, format: int64}
+        checksum_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        scan_status: {type: string, enum: [pending, clean, rejected]}
+        scan_engine: {type: string}
+        scan_detail: {type: string}
+        uploaded_by: {type: [string, "null"], format: uuid}
+        uploader_name: {type: string}
+        created_at: {type: string, format: date-time}
+        download_url: {type: string}
+    Comment:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        entity_type: {type: string}
+        entity_id: {type: string, format: uuid}
+        author_id: {type: [string, "null"], format: uuid}
+        author_name: {type: string}
+        body: {type: string, description: 'Plain text; render escaped.'}
+        mentions: {type: array, items: {$ref: '#/components/schemas/Mention'}}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        edited_at: {type: [string, "null"], format: date-time}
+    CommentInput:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: 'Plain text. Control characters are stripped and clients must render it escaped, never as HTML.'
+    LinkedArtifact:
+      type: object
+      properties:
+        link_id: {type: string, format: uuid}
+        link_type: {type: string}
+        direction: {type: string, enum: [inbound, outbound]}
+        artifact_type: {type: string, enum: [prd, epic, feature, work_item, test_case, sprint, release]}
+        artifact_id: {type: string, format: uuid}
+        artifact_key: {type: string}
+        title: {type: string}
+        status: {type: string}
+    Mention:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        username: {type: string}
+        display_name: {type: string}
+    WatchState:
+      type: object
+      properties:
+        watching: {type: boolean}
+    WorkItemDetail:
+      type: object
+      description: A work item plus the collaboration collections rendered by the detail drawer.
+      additionalProperties: true
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        key: {type: string}
+        item_number: {type: integer, format: int64}
+        type: {type: string}
+        title: {type: string}
+        description: {type: string}
+        acceptance_criteria: {type: string}
+        status: {type: string}
+        priority: {type: string}
+        labels: {type: array, items: {type: string}}
+        revision: {type: integer, format: int64}
+        children: {type: array, items: {type: object, additionalProperties: true}}
+        comments: {type: array, items: {$ref: '#/components/schemas/Comment'}}
+        attachments: {type: array, items: {$ref: '#/components/schemas/Attachment'}}
+        watchers: {type: array, items: {type: object, additionalProperties: true}}
+        watching: {type: boolean}
+        links: {type: array, items: {$ref: '#/components/schemas/LinkedArtifact'}}
+        activity: {type: array, items: {type: object, additionalProperties: true}}
+        branches: {type: array, items: {type: object, additionalProperties: true}}
+        pull_requests: {type: array, items: {type: object, additionalProperties: true}}
+        child_count: {type: integer}
+        comment_count: {type: integer}
+        attachment_count: {type: integer}
+        watcher_count: {type: integer}
+    WorkItemLinkInput:
+      type: object
+      required: [target_type, target_id]
+      properties:
+        target_type: {type: string, enum: [prd, epic, feature, work_item, test_case, sprint, release]}
+        target_id: {type: string, format: uuid}
+        link_type: {type: string, maxLength: 40, default: related, description: 'Lower-case letters, digits, hyphens and underscores.'}

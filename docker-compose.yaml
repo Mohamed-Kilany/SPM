@@ -23,6 +23,7 @@ volumes:
   act_runner_data:
   k3s_data:
   k3s_kubeconfig:
+  attachments_data:
 
 services:
 
@@ -330,10 +331,17 @@ services:
       # published to the host; METRICS_TOKEN optionally requires a bearer token.
       METRICS_ADDR:              "${METRICS_ADDR:-0.0.0.0:9090}"
       METRICS_TOKEN:             "${METRICS_TOKEN:-}"
+      # Work item attachments. Files are validated, scanned and stored outside
+      # the container filesystem; ClamAV is optional and fails closed when set.
+      ATTACHMENTS_DIR:           "/data/attachments"
+      ATTACHMENT_MAX_BYTES:      "${ATTACHMENT_MAX_BYTES:-10485760}"
+      CLAMAV_ADDR:               "${CLAMAV_ADDR:-}"
     ports:
       - "${API_PORT:-8080}:8080"
     expose:
       - "9090"
+    volumes:
+      - attachments_data:/data/attachments
     networks:
       - spm_net
     depends_on:

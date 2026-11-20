@@ -219,38 +219,50 @@ func (s *Store) loadPlanning(ctx context.Context, projectID uuid.UUID, w *Worksp
 	return featureRows.Err()
 }
 
+const workItemColumns = `id, project_id, item_number, COALESCE(feature_id::text, ''), COALESCE(parent_id::text, ''),
+	       type, title, COALESCE(description, ''), COALESCE(acceptance_criteria, ''), status, priority,
+	       severity, COALESCE(assignee_id::text, ''), COALESCE(reporter_id::text, ''), estimate_points,
+	       COALESCE(sprint_id::text, ''), COALESCE(release_id::text, ''), COALESCE(environment_id::text, ''),
+	       due_date, COALESCE(reproduction_steps, ''), COALESCE(expected_result, ''), COALESCE(actual_result, ''),
+	       labels, created_at, updated_at, closed_at, revision`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanWorkItem(row rowScanner) (WorkItem, error) {
+	var it WorkItem
+	var feature, parent, assignee, reporter, sprint, release, env string
+	if err := row.Scan(&it.ID, &it.ProjectID, &it.ItemNumber, &feature, &parent, &it.Type,
+		&it.Title, &it.Description, &it.AcceptanceCriteria, &it.Status, &it.Priority, &it.Severity,
+		&assignee, &reporter, &it.EstimatePoints, &sprint, &release, &env, &it.DueDate,
+		&it.ReproductionSteps, &it.ExpectedResult, &it.ActualResult, &it.Labels, &it.CreatedAt, &it.UpdatedAt,
+		&it.ClosedAt, &it.Revision); err != nil {
+		return WorkItem{}, err
+	}
+	it.FeatureID = parseUUIDPtr(feature)
+	it.ParentID = parseUUIDPtr(parent)
+	it.AssigneeID = parseUUIDPtr(assignee)
+	it.ReporterID = parseUUIDPtr(reporter)
+	it.SprintID = parseUUIDPtr(sprint)
+	it.ReleaseID = parseUUIDPtr(release)
+	it.EnvironmentID = parseUUIDPtr(env)
+	return it, nil
+}
+
 func (s *Store) loadWorkItems(ctx context.Context, projectID uuid.UUID, w *Workspace) error {
-	const q = `
-		SELECT id, project_id, item_number, COALESCE(feature_id::text, ''), COALESCE(parent_id::text, ''),
-		       type, title, COALESCE(description, ''), COALESCE(acceptance_criteria, ''), status, priority,
-		       severity, COALESCE(assignee_id::text, ''), COALESCE(reporter_id::text, ''), estimate_points,
-		       COALESCE(sprint_id::text, ''), COALESCE(release_id::text, ''), COALESCE(environment_id::text, ''),
-		       due_date, COALESCE(reproduction_steps, ''), COALESCE(expected_result, ''), COALESCE(actual_result, ''),
-		       labels, created_at, updated_at, closed_at, revision
-		FROM work_items WHERE project_id = $1 ORDER BY item_number DESC`
-	rows, err := s.db.Query(ctx, q, projectID)
+	rows, err := s.db.Query(ctx, `SELECT `+workItemColumns+`
+		FROM work_items WHERE project_id = $1 ORDER BY item_number DESC`, projectID)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	w.WorkItems = []WorkItem{}
 	for rows.Next() {
-		var it WorkItem
-		var feature, parent, assignee, reporter, sprint, release, env string
-		if err := rows.Scan(&it.ID, &it.ProjectID, &it.ItemNumber, &feature, &parent, &it.Type,
-			&it.Title, &it.Description, &it.AcceptanceCriteria, &it.Status, &it.Priority, &it.Severity,
-			&assignee, &reporter, &it.EstimatePoints, &sprint, &release, &env, &it.DueDate,
-			&it.ReproductionSteps, &it.ExpectedResult, &it.ActualResult, &it.Labels, &it.CreatedAt, &it.UpdatedAt,
-			&it.ClosedAt, &it.Revision); err != nil {
+		it, err := scanWorkItem(rows)
+		if err != nil {
 			return err
 		}
-		it.FeatureID = parseUUIDPtr(feature)
-		it.ParentID = parseUUIDPtr(parent)
-		it.AssigneeID = parseUUIDPtr(assignee)
-		it.ReporterID = parseUUIDPtr(reporter)
-		it.SprintID = parseUUIDPtr(sprint)
-		it.ReleaseID = parseUUIDPtr(release)
-		it.EnvironmentID = parseUUIDPtr(env)
 		it.Key = w.Project.KeyPrefix + "-" + strconv.FormatInt(it.ItemNumber, 10)
 		w.WorkItems = append(w.WorkItems, it)
 	}

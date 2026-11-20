@@ -7,6 +7,7 @@ import AppIcon from '../AppIcon.vue'
 import StatusPill from './StatusPill.vue'
 import PriorityPill from './PriorityPill.vue'
 import EmptyState from './EmptyState.vue'
+import WorkItemDrawer from './WorkItemDrawer.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
@@ -97,8 +98,7 @@ function parentItem(parentId: string | null): WorkItem | undefined {
 }
 
 function openParent(parentId: string | null): void {
-  const parent = parentItem(parentId)
-  if (parent) openEditItem(parent)
+  if (parentId) openDrawerById(parentId)
 }
 
 function filterByFeature(featureId: string | null): void {
@@ -246,6 +246,7 @@ const itemForm = reactive({
   reproduction_steps: '',
   expected_result: '',
   actual_result: '',
+  labels: '',
 })
 
 const selectedItem = computed(() =>
@@ -312,6 +313,7 @@ function resetItemForm(): void {
     reproduction_steps: '',
     expected_result: '',
     actual_result: '',
+    labels: '',
   })
 }
 
@@ -346,6 +348,7 @@ function openEditItem(item: WorkItem): void {
     reproduction_steps: item.reproduction_steps,
     expected_result: item.expected_result,
     actual_result: item.actual_result,
+    labels: (item.labels ?? []).join(', '),
   })
   itemError.value = ''
   branchRepoId.value = store.repositories[0]?.id ?? ''
@@ -353,15 +356,75 @@ function openEditItem(item: WorkItem): void {
   itemModal.value = true
 }
 
+// ---------------------------------------------------------------------------
+// Work item detail drawer
+// ---------------------------------------------------------------------------
+
+const drawerOpen = ref(false)
+const drawerItemId = ref(typeof route.query.item === 'string' ? route.query.item : '')
+
+function setItemQuery(id: string | null): void {
+  const query = { ...route.query }
+  if (id) query.item = id
+  else delete query.item
+  void router.replace({ query })
+}
+
+function openItemDrawer(item: WorkItem): void {
+  drawerItemId.value = item.id
+  drawerOpen.value = true
+  if (route.query.item !== item.id) setItemQuery(item.id)
+}
+
+function openDrawerById(id: string): void {
+  const item = store.workItemById(id)
+  if (item) {
+    openItemDrawer(item)
+    return
+  }
+  drawerItemId.value = id
+  drawerOpen.value = true
+  setItemQuery(id)
+}
+
+function closeDrawer(): void {
+  drawerOpen.value = false
+  if (route.query.item) setItemQuery(null)
+}
+
+function onDrawerVisibility(value: boolean): void {
+  if (value) {
+    drawerOpen.value = true
+    return
+  }
+  closeDrawer()
+}
+
+function editFromDrawer(item: WorkItem): void {
+  drawerOpen.value = false
+  if (route.query.item) setItemQuery(null)
+  openEditItem(item)
+}
+
 watch(
-  [() => route.query.item, () => store.workItems.length],
-  () => {
-    const id = typeof route.query.item === 'string' ? route.query.item : ''
-    if (!id) return
-    const item = store.workItemById(id)
-    if (item && !itemModal.value) openEditItem(item)
+  () => route.query.item,
+  (value) => {
+    const id = typeof value === 'string' ? value : ''
+    drawerItemId.value = id
+    drawerOpen.value = Boolean(id)
   },
   { immediate: true },
+)
+
+watch(
+  () => store.workItems.length,
+  () => {
+    const id = typeof route.query.item === 'string' ? route.query.item : ''
+    if (id && store.workItemById(id)) {
+      drawerItemId.value = id
+      drawerOpen.value = true
+    }
+  },
 )
 
 function onTypeChange(): void {
@@ -420,6 +483,10 @@ async function saveItem(): Promise<void> {
       reproduction_steps: itemForm.reproduction_steps,
       expected_result: itemForm.expected_result,
       actual_result: itemForm.actual_result,
+      labels: itemForm.labels
+        .split(',')
+        .map((label) => label.trim())
+        .filter(Boolean),
     }
     if (itemEditingId.value) {
       const current = store.workItemById(itemEditingId.value)
@@ -624,7 +691,7 @@ function openDelivery(): void {
               :draggable="canWriteWorkItems"
               @dragstart="onDragStart(item, $event)"
               @dragend="draggingId = null; dropColumn = null"
-              @click="openEditItem(item)"
+              @click="openItemDrawer(item)"
             >
               <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5">
@@ -811,6 +878,17 @@ function openDelivery(): void {
           <label class="field-label" for="item-ac">Acceptance criteria</label>
           <textarea id="item-ac" v-model="itemForm.acceptance_criteria" rows="2" class="field-input" placeholder="What must be true for this to be done?" />
         </div>
+        <div>
+          <label class="field-label" for="item-labels">Labels</label>
+          <input
+            id="item-labels"
+            v-model="itemForm.labels"
+            class="field-input"
+            maxlength="240"
+            placeholder="Comma separated, for example: backend, needs qa"
+          />
+          <p class="mt-1 text-[11px] text-slate-500">Up to 10 labels, each 24 characters or fewer.</p>
+        </div>
 
         <div v-if="itemForm.type === 'bug'" class="rounded-xl border border-red-100 bg-red-50/50 p-4">
           <p class="flex items-center gap-2 text-xs font-semibold text-red-700">
@@ -965,6 +1043,15 @@ function openDelivery(): void {
       :busy="itemBusy"
       confirm-label="Delete work item"
       @confirm="deleteItem"
+    />
+
+    <WorkItemDrawer
+      :model-value="drawerOpen"
+      :item-id="drawerItemId || null"
+      @update:model-value="onDrawerVisibility"
+      @edit="editFromDrawer"
+      @open-item="openDrawerById"
+      @changed="store.refresh()"
     />
   </div>
 </template>

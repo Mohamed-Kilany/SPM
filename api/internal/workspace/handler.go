@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spm-platform/api/internal/ai"
+	"spm-platform/api/internal/attachments"
 	"spm-platform/api/internal/audit"
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/events"
@@ -25,11 +26,12 @@ import (
 
 // Handler serves the normalized workspace API.
 type Handler struct {
-	store  *Store
-	events *events.Client
-	ai     *ai.Client
-	git    *gitengine.Client
-	audit  *audit.Logger
+	store       *Store
+	events      *events.Client
+	ai          *ai.Client
+	git         *gitengine.Client
+	audit       *audit.Logger
+	attachments *attachments.Store
 }
 
 // NewHandler creates a workspace handler.
@@ -50,6 +52,11 @@ func (h *Handler) SetGitClient(client *gitengine.Client) {
 // SetAuditLogger attaches the audit log to security-relevant workspace actions.
 func (h *Handler) SetAuditLogger(logger *audit.Logger) {
 	h.audit = logger
+}
+
+// SetAttachmentStore enables validated, scanned work item attachments.
+func (h *Handler) SetAttachmentStore(store *attachments.Store) {
+	h.attachments = store
 }
 
 // recordAudit writes one audit event for the supplied project when a logger is
@@ -667,6 +674,7 @@ type workItemRequest struct {
 	ReproductionSteps  string     `json:"reproduction_steps"`
 	ExpectedResult     string     `json:"expected_result"`
 	ActualResult       string     `json:"actual_result"`
+	Labels             []string   `json:"labels"`
 	ExpectedVersion    *int64     `json:"expected_version"`
 }
 
@@ -714,6 +722,11 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid priority")
 		return
 	}
+	labels, err := normalizeLabels(req.Labels)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
 	due, err := parseTimePtr(req.DueDate)
 	if err != nil {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
@@ -729,13 +742,13 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 	err = h.store.DB().QueryRow(c.Request.Context(), `
 		INSERT INTO work_items (project_id, feature_id, parent_id, type, title, description, acceptance_criteria,
 		status, priority, severity, assignee_id, reporter_id, estimate_points, sprint_id, release_id, environment_id,
-		due_date, reproduction_steps, expected_result, actual_result)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		due_date, reproduction_steps, expected_result, actual_result, labels)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING id, item_number, revision`,
 		projectID, req.FeatureID, req.ParentID, req.Type, req.Title, req.Description, req.AcceptanceCriteria,
 		req.Status, req.Priority, req.Severity, req.AssigneeID, req.ReporterID, req.EstimatePoints,
 		req.SprintID, req.ReleaseID, req.EnvironmentID, due, req.ReproductionSteps, req.ExpectedResult,
-		req.ActualResult).Scan(&id, &number, &revision)
+		req.ActualResult, labels).Scan(&id, &number, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create work item")
 		return
@@ -773,6 +786,11 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid work item type or status")
 		return
 	}
+	labels, err := normalizeLabels(req.Labels)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
 	if err := h.validateWorkItem(c.Request.Context(), projectID, itemID, &req); err != nil {
 		apiError(c, http.StatusUnprocessableEntity, "HIERARCHY_ERROR", err.Error())
 		return
@@ -783,19 +801,19 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 		return
 	}
 	var revision int64
-	err := h.store.DB().QueryRow(c.Request.Context(), `
+	err = h.store.DB().QueryRow(c.Request.Context(), `
 		UPDATE work_items SET feature_id=$3, parent_id=$4, type=$5, title=$6, description=$7,
 		acceptance_criteria=$8, status=$9, priority=$10, severity=$11, assignee_id=$12, reporter_id=$13,
 		estimate_points=$14, sprint_id=$15, release_id=$16, environment_id=$17, due_date=$18,
-		reproduction_steps=$19, expected_result=$20, actual_result=$21,
+		reproduction_steps=$19, expected_result=$20, actual_result=$21, labels=$22,
 		closed_at = CASE WHEN $9::varchar IN ('done','closed','verified','cancelled') THEN COALESCE(closed_at, NOW()) ELSE NULL END,
 		updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`+revisionClause(22)+`
+		WHERE id=$1 AND project_id=$2`+revisionClause(23)+`
 		RETURNING revision`,
 		itemID, projectID, req.FeatureID, req.ParentID, req.Type, req.Title, req.Description,
 		req.AcceptanceCriteria, req.Status, req.Priority, req.Severity, req.AssigneeID, req.ReporterID,
 		req.EstimatePoints, req.SprintID, req.ReleaseID, req.EnvironmentID, due, req.ReproductionSteps,
-		req.ExpectedResult, req.ActualResult, revisionValue(expected)).Scan(&revision)
+		req.ExpectedResult, req.ActualResult, labels, revisionValue(expected)).Scan(&revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		h.revisionFailure(c, "work item", "work_items", itemID, projectID)
 		return
