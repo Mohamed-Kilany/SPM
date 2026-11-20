@@ -62,10 +62,10 @@ BEGIN
         pend := (base + ((i + 1) || ' months')::interval)::timestamptz;
         pname := 'audit_events_' || to_char(pstart, 'YYYYMM');
         EXECUTE format(
-            'CREATE TABLE IF NOT EXISTS %I PARTITION OF audit_events FOR VALUES FROM (%L) TO (%L)',
+            'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.audit_events FOR VALUES FROM (%L) TO (%L)',
             pname, pstart, pend
         );
-        INSERT INTO audit_partitions (partition_name, starts_at, ends_at)
+        INSERT INTO public.audit_partitions (partition_name, starts_at, ends_at)
         VALUES (pname, pstart, pend)
         ON CONFLICT (partition_name) DO NOTHING;
     END LOOP;
@@ -80,7 +80,7 @@ BEGIN
 
     NEW.occurred_at := COALESCE(NEW.occurred_at, NOW());
     SELECT hash INTO previous
-    FROM audit_events
+    FROM public.audit_events
     ORDER BY occurred_at DESC, id DESC
     LIMIT 1;
 
@@ -151,10 +151,10 @@ BEGIN
         pend := (base + ((i + 1) || ' months')::interval)::timestamptz;
         pname := 'audit_events_' || to_char(pstart, 'YYYYMM');
         EXECUTE format(
-            'CREATE TABLE IF NOT EXISTS %I PARTITION OF audit_events FOR VALUES FROM (%L) TO (%L)',
+            'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.audit_events FOR VALUES FROM (%L) TO (%L)',
             pname, pstart, pend
         );
-        INSERT INTO audit_partitions (partition_name, starts_at, ends_at)
+        INSERT INTO public.audit_partitions (partition_name, starts_at, ends_at)
         VALUES (pname, pstart, pend)
         ON CONFLICT (partition_name) DO NOTHING;
     END LOOP;
@@ -175,18 +175,18 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('spm.audit_events.chain'));
 
     SELECT starts_at, ends_at INTO v_start, v_end
-    FROM audit_partitions
+    FROM public.audit_partitions
     WHERE partition_name = p_name AND dropped_at IS NULL
     FOR UPDATE;
     IF NOT FOUND THEN
         RETURN FALSE;
     END IF;
 
-    EXECUTE format('SELECT hash FROM %I ORDER BY occurred_at DESC, id DESC LIMIT 1', p_name)
+    EXECUTE format('SELECT hash FROM public.%I ORDER BY occurred_at DESC, id DESC LIMIT 1', p_name)
         INTO v_last;
-    EXECUTE format('SELECT count(*) FROM %I', p_name) INTO v_rows;
+    EXECUTE format('SELECT count(*) FROM public.%I', p_name) INTO v_rows;
 
-    INSERT INTO audit_events
+    INSERT INTO public.audit_events
         (actor_id, actor_role, action, target_type, target_id, result, reason, after_state)
     VALUES
         (NULL, 'system', 'audit.retention.partition_dropped', 'audit_partition', p_name,
@@ -199,10 +199,10 @@ BEGIN
              'last_hash', COALESCE(v_last, '')
          ));
 
-    EXECUTE format('DROP TABLE %I', p_name);
-    UPDATE audit_partitions SET dropped_at = NOW() WHERE partition_name = p_name;
+    EXECUTE format('DROP TABLE public.%I', p_name);
+    UPDATE public.audit_partitions SET dropped_at = NOW() WHERE partition_name = p_name;
     IF v_last IS NOT NULL THEN
-        INSERT INTO audit_chain_anchors (anchor_hash, partition_name)
+        INSERT INTO public.audit_chain_anchors (anchor_hash, partition_name)
         VALUES (v_last, p_name)
         ON CONFLICT (anchor_hash) DO NOTHING;
     END IF;
@@ -224,11 +224,11 @@ BEGIN
     cutoff := NOW() - make_interval(days => p_retention_days);
     FOR part IN
         SELECT partition_name
-        FROM audit_partitions
+        FROM public.audit_partitions
         WHERE dropped_at IS NULL AND ends_at <= cutoff
         ORDER BY starts_at
     LOOP
-        IF audit_drop_partition(part.partition_name) THEN
+        IF public.audit_drop_partition(part.partition_name) THEN
             dropped := dropped + 1;
         END IF;
     END LOOP;
@@ -245,8 +245,8 @@ CREATE INDEX IF NOT EXISTS audit_events_result_idx ON audit_events (result, occu
 -- supported single-role deployment; a split-role deployment must grant the two
 -- maintenance entry points explicitly (see docs/AUDIT.md). Callers must never
 -- receive EXECUTE on audit_drop_partition().
-REVOKE ALL ON FUNCTION audit_ensure_partitions(INT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION audit_prune(INT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION audit_drop_partition(TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION audit_events_hash_chain() FROM PUBLIC;
-REVOKE ALL ON FUNCTION audit_events_deny_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.audit_ensure_partitions(INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.audit_prune(INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.audit_drop_partition(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.audit_events_hash_chain() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.audit_events_deny_mutation() FROM PUBLIC;

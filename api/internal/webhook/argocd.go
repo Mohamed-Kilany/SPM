@@ -122,6 +122,11 @@ func (h *ArgoCDHandler) process(ctx context.Context, body []byte) error {
 	if appName == "" {
 		appName = project.AppName
 	}
+	// The app name is caller-controlled through the webhook payload. Strip CR
+	// and LF before logging so a forged event cannot create log entries
+	// (CWE-117).
+	safeAppName := strings.ReplaceAll(appName, "\n", "")
+	safeAppName = strings.ReplaceAll(safeAppName, "\r", "")
 
 	now := time.Now().UTC()
 	payloadMap := map[string]interface{}{
@@ -167,7 +172,7 @@ func (h *ArgoCDHandler) process(ctx context.Context, body []byte) error {
 		CommitSHA: notification.CommitSHA, Message: notification.Message,
 		Details: map[string]interface{}{"source": "argocd", "namespace": notification.App.Metadata.Namespace},
 	}); syncErr != nil && !errors.Is(syncErr, ErrProjectNotFound) {
-		log.Printf("webhook: normalized Argo CD sync failed for %s: %v", appName, syncErr)
+		log.Printf("webhook: normalized Argo CD sync failed for %s: %v", safeAppName, syncErr)
 	}
 	if h.audit != nil {
 		entry := audit.Entry{
@@ -184,7 +189,7 @@ func (h *ArgoCDHandler) process(ctx context.Context, body []byte) error {
 			entry.Reason = "argo_health_degraded"
 		}
 		if err := h.audit.Record(ctx, entry); err != nil {
-			log.Printf("webhook: audit deployment observation failed for %s: %v", appName, err)
+			log.Printf("webhook: audit deployment observation failed for %s: %v", safeAppName, err)
 		}
 	}
 	return nil
