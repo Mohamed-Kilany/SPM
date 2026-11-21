@@ -3224,18 +3224,36 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   and [`README.md`](README.md) cross-link the new tables, cascades and endpoints.
 
 #### TST-02 · Test case versioning and step editor
-- **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/tests-case-editor`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/tst-02-case-versions`
 - **Depends on:** TST-01
 - **Scope:** Add versioned test cases, an ordered step editor (action, expected, data), shared
   steps, preconditions, priority, type, feature link and change history.
 - **Acceptance criteria:**
-  - [ ] Editing a case creates a new version; runs keep the old version.
-  - [ ] Steps reorder with keyboard and pointer; no data loss.
-  - [ ] Validation requires at least one step with an action and expected result.
-  - [ ] History shows who changed what and when.
-  - [ ] Import/export round-trips without losing steps.
-- **Tests/evidence:** Versioning tests, editor Playwright, import/export tests.
-- **Docs/telemetry:** Test case versioning guide.
+  - [x] Editing a case creates a new version; runs keep the old version.
+  - [x] Steps reorder with keyboard and pointer; no data loss.
+  - [x] Validation requires at least one step with an action and expected result.
+  - [x] History shows who changed what and when.
+  - [x] Import/export round-trips without losing steps.
+- **Tests/evidence:** Migration `020_test_case_versions` adds immutable
+  `test_case_versions`/`test_case_version_steps`, project-scoped `test_shared_steps`,
+  `test_steps.shared_step_id`, and `case_revision`/`position`/`action`/`expected_result`/`test_data`
+  snapshot columns on `test_step_results`, with `test_step_id` nullable and `ON DELETE SET NULL`.
+  It backfills the current revision of every existing case and replays safely. A PGlite rehearsal
+  applied migrations through `019`, seeded legacy cases/runs, applied `020`, and proved backfill,
+  re-application, revision uniqueness, edit-history survival, shared-step copy-on-use, cascades and
+  the full rollback (66 checks). `snapshotTestCaseVersion` runs in the same transaction as create,
+  update, import and run-created cases; `ListTestCaseVersions` returns newest-first snapshots with
+  steps, `before`/`limit` paging and `total`; shared-step create/update/delete enforce revisions and
+  duplicate-name conflicts; `spm.test-cases.v1` export/import validates and writes all-or-nothing,
+  resolving `feature_title` when needed. The UI adds a version-history modal with author/time and
+  steps, step reorder buttons plus `Alt+↑`/`Alt+↓`, shared-template insertion/managers and JSON
+  import/export, and renders run step results from snapshots. Full `go build ./...`, `go vet ./...`,
+  `go test ./... -count=1`, OpenAPI `-check`, and UI `typecheck`, `test` (23 passed) and `build`
+  pass. Merged as PR #34 at `188c385` after all required checks passed.
+- **Docs/telemetry:** [`docs/TEST-MANAGEMENT.md`](docs/TEST-MANAGEMENT.md) documents versions,
+  shared templates, JSON portability, step ordering and snapshot rendering.
+  [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) and [`docs/API.md`](docs/API.md) record the new
+  tables, cascade rules, revision coverage and 118-operation contract.
 
 #### TST-03 · Focused test run execution
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/tests-run-mode`
@@ -5189,13 +5207,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 4 | 0 | 9 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 5 | 0 | 8 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **16** | **0** | **112** |
+| **Total** | - | **128** | **17** | **0** | **111** |
 
 ### C.2 Card index by phase
 
@@ -5250,6 +5268,7 @@ labels must exist in the repository.
 | 2026-11-21 | Closed PLN-02: added the work item detail drawer with labels, comments/mentions, watchers, bidirectional links, scanned attachments, activity and traceability; migrated `017_work_item_collaboration` with a contract companion and hardened upload validation (type/magic/size, active markup, EICAR, optional ClamAV with fail-closed scanning); documented fields and endpoints in `docs/WORK-ITEMS.md`. Verified with Go/UI tests, OpenAPI drift, Compose config and a PGlite forward/rollback rehearsal. Merged as PR #28 (`0c7c020`) after all nine required checks passed | Maintainer |
 | 2026-11-21 | Closed PLN-03: added explicit sprint start/close with goal and non-overlapping date validation, carry-over preview to backlog or a next sprint, capacity/velocity metrics with IANA timezone day counts, release `planned -> in_progress -> released\|cancelled` transitions, owner/maintainer scope freeze with exact or type-wide exceptions, milestone dates and readiness-gated sign-off that records actor, evidence and time. Added `018_sprint_release_lifecycle` with a contract companion, `If-Match`/ETag coverage for lifecycle routes, the UI actions, and `docs/PLANNING-LIFECYCLE.md`. Verified with Go/UI tests, OpenAPI drift and a PGlite forward/rollback rehearsal. Merged as PR #30 (`8181828`) after all nine required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-01: added `test_plans`, ordered `test_suites` and `test_suite_cases` with revision triggers, archived-terminal plan state and suite archive/restore; added plan/suite CRUD, complete-set suite reordering, membership by explicit IDs, filter or CSV with all-or-nothing validation and duplicate skipping, and project-member owner/assignee checks. Runs now resolve explicit cases, filter, suite or plan scope and snapshot `plan_id`/`suite_id`/`plan_name`/`suite_name` plus each result's `case_revision`; historical runs survive renames and plan deletion. Added the plan board and suite dialogs to the Test lab, 7 routes (112 operations) with revision metadata, `019_test_plans_suites` and its contract companion, and `docs/TEST-MANAGEMENT.md`. Verified with Go/UI tests, OpenAPI drift, a 56-check PGlite forward/rollback rehearsal and the Playwright plan/suite/run flow. Merged as PR #32 (`495419d`) after all nine required checks passed | Maintainer |
+| 2026-11-21 | Closed TST-02: added immutable `test_case_versions`/`test_case_version_steps`, shared step templates with copy-on-use semantics, and step-result snapshots tied to the executed case revision. Case create/edit/import now snapshot in the same transaction; `GET /test-cases/{caseId}/versions` exposes newest-first history with steps, and `spm.test-cases.v1` export/import is all-or-nothing with `feature_title` resolution. Added shared-step revisioned CRUD, the history modal, step reordering (`Alt+↑`/`Alt+↓`), template manager and import/export controls, 6 routes (118 operations), `020_test_case_versions` and its contract companion, and updated `docs/TEST-MANAGEMENT.md`/`DATA-MODEL.md`/`API.md`. Verified with Go/UI tests, OpenAPI drift and a 66-check PGlite forward/reapply/rollback rehearsal. Merged as PR #34 (`188c385`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
