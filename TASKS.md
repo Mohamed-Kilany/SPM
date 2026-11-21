@@ -3256,18 +3256,39 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   tables, cascade rules, revision coverage and 118-operation contract.
 
 #### TST-03 · Focused test run execution
-- **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/tests-run-mode`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/tst-03-focused-runner`
 - **Depends on:** TST-02
 - **Scope:** Build the focused runner: progress, step pass/fail/blocked/skip, actual result,
   evidence upload, notes, previous/next, finish summary and resume.
 - **Acceptance criteria:**
-  - [ ] Keyboard shortcuts (P/F/B/S, arrows) work without a mouse.
-  - [ ] Partial results save automatically and resume after reload.
-  - [ ] Evidence is stored with type/size limits and linked to the step.
-  - [ ] Finishing with incomplete steps requires confirmation.
-  - [ ] A failed step can create a linked bug in one action.
-- **Tests/evidence:** Playwright run flow, autosave test, keyboard test, upload test.
-- **Docs/telemetry:** Test execution runbook + pass-rate metric.
+  - [x] Keyboard shortcuts (P/F/B/S, arrows) work without a mouse.
+  - [x] Partial results save automatically and resume after reload.
+  - [x] Evidence is stored with type/size limits and linked to the step.
+  - [x] Finishing with incomplete steps requires confirmation.
+  - [x] A failed step can create a linked bug in one action.
+- **Tests/evidence:** `handler_test_runner_test.go` proves the outcome precedence
+  (`not_run` → `incomplete`, then any failure → `failed`, otherwise `passed`), and
+  `TestTestRunCompletionCounter` proves the bounded `outcome` label and one-time increment. The
+  runner is a separate modal with a step list, snapshot context, progress and P/F/B/S buttons;
+  `testRunner.test.ts` adds 14 tests for step flattening, counts, shortcut mapping, navigation,
+  pass rate, tolerant resume parsing and debounce collapse/flush. `TestRunRunner.test.ts` mounts
+  the component and adds 5 tests: the `P` shortcut saves the step immediately, notes autosave
+  after 700 ms, a `409 RUN_INCOMPLETE` opens the confirmation instead of finishing, the summary
+  renders and clears the resume key, and a previous session resumes at its saved step.
+  `POST /test-runs/{runId}/finish` is idempotent and returns `already_completed: true` on repeat;
+  step evidence reuses the scanned attachment pipeline and sets `evidence_url`; downloads stay
+  gated on `scan_status='clean'`. The OpenAPI contract has 120 operations with the finish input,
+  finish result and step evidence schemas. Full `go build ./...`, `go vet ./...`,
+  `go test ./... -count=1`, OpenAPI `-check`, Redocly lint, and UI `typecheck`, `test` (42 passed)
+  and `build` pass. The linked-SDLC Playwright flow now opens the focused runner, records a step
+  with `P` and advances; the full-stack spec was extended but not executed locally because the
+  Docker environment is unavailable. Merged as PR #36 at `bf86651` after all required checks
+  passed.
+- **Docs/telemetry:** [`docs/TEST-MANAGEMENT.md`](docs/TEST-MANAGEMENT.md) documents the focused
+  runner, shortcuts, autosave/resume, deep link, evidence pipeline and finish/pass-rate rules.
+  [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) records
+  `spm_test_runs_completed_total{outcome}` and its run-level trend query;
+  [`docs/API.md`](docs/API.md) records the 120-operation contract.
 
 #### TST-04 · Defect creation and traceability
 - **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/tests-defect-links`
@@ -5207,13 +5228,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 5 | 0 | 8 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 6 | 0 | 7 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **17** | **0** | **111** |
+| **Total** | - | **128** | **18** | **0** | **110** |
 
 ### C.2 Card index by phase
 
@@ -5269,6 +5290,7 @@ labels must exist in the repository.
 | 2026-11-21 | Closed PLN-03: added explicit sprint start/close with goal and non-overlapping date validation, carry-over preview to backlog or a next sprint, capacity/velocity metrics with IANA timezone day counts, release `planned -> in_progress -> released\|cancelled` transitions, owner/maintainer scope freeze with exact or type-wide exceptions, milestone dates and readiness-gated sign-off that records actor, evidence and time. Added `018_sprint_release_lifecycle` with a contract companion, `If-Match`/ETag coverage for lifecycle routes, the UI actions, and `docs/PLANNING-LIFECYCLE.md`. Verified with Go/UI tests, OpenAPI drift and a PGlite forward/rollback rehearsal. Merged as PR #30 (`8181828`) after all nine required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-01: added `test_plans`, ordered `test_suites` and `test_suite_cases` with revision triggers, archived-terminal plan state and suite archive/restore; added plan/suite CRUD, complete-set suite reordering, membership by explicit IDs, filter or CSV with all-or-nothing validation and duplicate skipping, and project-member owner/assignee checks. Runs now resolve explicit cases, filter, suite or plan scope and snapshot `plan_id`/`suite_id`/`plan_name`/`suite_name` plus each result's `case_revision`; historical runs survive renames and plan deletion. Added the plan board and suite dialogs to the Test lab, 7 routes (112 operations) with revision metadata, `019_test_plans_suites` and its contract companion, and `docs/TEST-MANAGEMENT.md`. Verified with Go/UI tests, OpenAPI drift, a 56-check PGlite forward/rollback rehearsal and the Playwright plan/suite/run flow. Merged as PR #32 (`495419d`) after all nine required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-02: added immutable `test_case_versions`/`test_case_version_steps`, shared step templates with copy-on-use semantics, and step-result snapshots tied to the executed case revision. Case create/edit/import now snapshot in the same transaction; `GET /test-cases/{caseId}/versions` exposes newest-first history with steps, and `spm.test-cases.v1` export/import is all-or-nothing with `feature_title` resolution. Added shared-step revisioned CRUD, the history modal, step reordering (`Alt+↑`/`Alt+↓`), template manager and import/export controls, 6 routes (118 operations), `020_test_case_versions` and its contract companion, and updated `docs/TEST-MANAGEMENT.md`/`DATA-MODEL.md`/`API.md`. Verified with Go/UI tests, OpenAPI drift and a 66-check PGlite forward/reapply/rollback rehearsal. Merged as PR #34 (`188c385`) after all required checks passed | Maintainer |
+| 2026-11-21 | Closed TST-03: added the idempotent run finish endpoint with forced incomplete confirmation (`409 RUN_INCOMPLETE`), deterministic `passed`/`failed`/`incomplete` outcomes capped by `not_run`, and `spm_test_runs_completed_total{outcome}` with exactly one increment per completion. Step evidence reuses the scanned attachment pipeline and links through `test_step_results.evidence_url`. Added the focused runner (P/F/B/S, arrows, G bug handoff, E evidence, 700 ms autosave, localStorage resume, progress and summary), 2 routes (120 operations), OpenAPI schemas and runner/evidence/finish documentation. Verified with Go tests, 42 UI tests including mounted shortcut/autosave/finish/resume cases, `go vet`, OpenAPI drift and Redocly lint; the linked-SDLC Playwright path was extended but not run locally because the Docker stack is unavailable. Merged as PR #36 (`bf86651`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
