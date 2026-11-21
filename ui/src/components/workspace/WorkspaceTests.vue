@@ -12,7 +12,7 @@ import { useToastStore } from '../../stores/toastStore'
 import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { percent, statusLabel } from '../../lib/workspace'
 import { formatDateTime, timeAgo } from '../../lib/format'
-import type { TestCase, TestResult, TestRun, TestStep, TestStepResult } from '../../types/workspace'
+import type { TestCase, TestPlan, TestResult, TestRun, TestSuite, TestStep, TestStepResult } from '../../types/workspace'
 
 const store = useWorkspaceStore()
 const auth = useAuthStore()
@@ -57,8 +57,84 @@ const bugForm = reactive({
 
 const testCases = computed(() => store.testCases)
 const testRuns = computed(() => store.testRuns)
+const testPlans = computed(() => store.testPlans)
+const testSuites = computed(() => store.testSuites)
 const features = computed(() => store.features)
 const members = computed(() => store.workspace?.members ?? [])
+
+const selectedPlanId = ref('')
+const selectedSuiteId = ref('')
+
+const orderedPlans = computed(() =>
+  [...testPlans.value].sort((a, b) => {
+    const rank = (plan: TestPlan) => (plan.status === 'archived' ? 2 : plan.status === 'active' ? 0 : 1)
+    return rank(a) - rank(b) || new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  }),
+)
+
+const selectedPlan = computed<TestPlan | null>(
+  () => testPlans.value.find((plan) => plan.id === selectedPlanId.value) ?? null,
+)
+
+const planSuites = computed<TestSuite[]>(() =>
+  testSuites.value
+    .filter((suite) => suite.plan_id === selectedPlanId.value)
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name)),
+)
+
+const activeSuites = computed(() => planSuites.value.filter((suite) => !suite.archived_at))
+
+const selectedSuite = computed<TestSuite | null>(
+  () => planSuites.value.find((suite) => suite.id === selectedSuiteId.value) ?? null,
+)
+
+const selectedSuiteCases = computed(() => {
+  if (!selectedSuite.value) return []
+  return store.testSuiteCases
+    .filter((member) => member.suite_id === selectedSuite.value?.id)
+    .sort((a, b) => a.position - b.position)
+    .map((member) => caseById.value.get(member.test_case_id))
+    .filter((testCase): testCase is TestCase => Boolean(testCase))
+})
+
+function suiteCaseIds(suiteId: string): string[] {
+  return store.testSuiteCases
+    .filter((member) => member.suite_id === suiteId)
+    .map((member) => member.test_case_id)
+}
+
+function planCaseIds(planId: string): string[] {
+  const suiteIds = new Set(
+    testSuites.value.filter((suite) => suite.plan_id === planId && !suite.archived_at).map((suite) => suite.id),
+  )
+  return [
+    ...new Set(
+      store.testSuiteCases
+        .filter((member) => suiteIds.has(member.suite_id))
+        .map((member) => member.test_case_id),
+    ),
+  ]
+}
+
+watch(
+  orderedPlans,
+  (plans) => {
+    if (!plans.some((plan) => plan.id === selectedPlanId.value)) {
+      selectedPlanId.value = plans.find((plan) => plan.status !== 'archived')?.id ?? plans[0]?.id ?? ''
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  planSuites,
+  (suites) => {
+    if (!suites.some((suite) => suite.id === selectedSuiteId.value)) {
+      selectedSuiteId.value = suites.find((suite) => !suite.archived_at)?.id ?? suites[0]?.id ?? ''
+    }
+  },
+  { immediate: true },
+)
 
 const selectedRun = computed(() =>
   selectedRunId.value ? store.testRuns.find((run) => run.id === selectedRunId.value) ?? null : null,
@@ -294,6 +370,268 @@ async function saveCase(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Test plans and suites
+// ---------------------------------------------------------------------------
+
+const planModal = ref(false)
+const planBusy = ref(false)
+const planError = ref('')
+const planForm = reactive({
+  name: '',
+  description: '',
+  owner_id: '',
+  start_date: '',
+  end_date: '',
+})
+
+function openCreatePlan(): void {
+  if (!canTest.value) return
+  Object.assign(planForm, {
+    name: `Test plan · ${new Date().toISOString().slice(0, 10)}`,
+    description: '',
+    owner_id: '',
+    start_date: '',
+    end_date: '',
+  })
+  planError.value = ''
+  planModal.value = true
+}
+
+async function savePlan(): Promise<void> {
+  if (!canTest.value) return
+  if (!planForm.name.trim()) {
+    planError.value = 'A test plan name is required.'
+    return
+  }
+  planBusy.value = true
+  planError.value = ''
+  try {
+    const result = await api.createTestPlan(store.projectId, {
+      name: planForm.name.trim(),
+      description: planForm.description,
+      status: 'draft',
+      owner_id: planForm.owner_id || null,
+      start_date: planForm.start_date || null,
+      end_date: planForm.end_date || null,
+    })
+    planModal.value = false
+    await store.refresh()
+    selectedPlanId.value = result.id
+    toast.success('Test plan created. Add suites and cases next.', 'Test plan')
+  } catch (error) {
+    planError.value = error instanceof Error ? error.message : 'Failed to create test plan'
+  } finally {
+    planBusy.value = false
+  }
+}
+
+async function setPlanStatus(plan: TestPlan, status: 'draft' | 'active' | 'archived'): Promise<void> {
+  if (!canTest.value || plan.status === status) return
+  try {
+    await api.updateTestPlan(
+      store.projectId,
+      plan.id,
+      {
+        name: plan.name,
+        description: plan.description,
+        status,
+        owner_id: plan.owner_id,
+        start_date: plan.start_date,
+        end_date: plan.end_date,
+      },
+      plan.revision,
+    )
+    await store.refresh()
+    toast.success(status === 'archived' ? 'Test plan archived. Historical runs keep their snapshot.' : `Test plan marked ${status}.`, 'Test plan')
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('test plan'), 'Test plan')
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to update test plan', 'Test plan')
+  }
+}
+
+const suiteModal = ref(false)
+const suiteBusy = ref(false)
+const suiteError = ref('')
+const suiteForm = reactive({
+  name: '',
+  description: '',
+  assignee_id: '',
+})
+
+function openCreateSuite(): void {
+  if (!canTest.value || !selectedPlan.value || selectedPlan.value.status === 'archived') return
+  Object.assign(suiteForm, { name: '', description: '', assignee_id: '' })
+  suiteError.value = ''
+  suiteModal.value = true
+}
+
+async function saveSuite(): Promise<void> {
+  if (!canTest.value || !selectedPlan.value) return
+  if (!suiteForm.name.trim()) {
+    suiteError.value = 'A suite name is required.'
+    return
+  }
+  suiteBusy.value = true
+  suiteError.value = ''
+  try {
+    const result = await api.createTestSuite(store.projectId, selectedPlan.value.id, {
+      name: suiteForm.name.trim(),
+      description: suiteForm.description,
+      assignee_id: suiteForm.assignee_id || null,
+    })
+    suiteModal.value = false
+    await store.refresh()
+    selectedSuiteId.value = result.id
+    toast.success('Suite created. Add cases by filter or CSV.', 'Test suite')
+  } catch (error) {
+    suiteError.value = error instanceof Error ? error.message : 'Failed to create test suite'
+  } finally {
+    suiteBusy.value = false
+  }
+}
+
+async function setSuiteArchived(suite: TestSuite, archived: boolean): Promise<void> {
+  if (!canTest.value) return
+  try {
+    await api.updateTestSuite(
+      store.projectId,
+      suite.plan_id,
+      suite.id,
+      {
+        name: suite.name,
+        description: suite.description,
+        assignee_id: suite.assignee_id,
+        position: suite.position,
+        archived,
+      },
+      suite.revision,
+    )
+    await store.refresh()
+    toast.success(archived ? 'Suite archived. Its membership stays available to history.' : 'Suite restored.', 'Test suite')
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('test suite'), 'Test suite')
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to update test suite', 'Test suite')
+  }
+}
+
+async function moveSuite(suite: TestSuite, direction: -1 | 1): Promise<void> {
+  if (!canTest.value || !selectedPlan.value) return
+  const suites = activeSuites.value
+  const index = suites.findIndex((entry) => entry.id === suite.id)
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= suites.length) return
+  const ids = suites.map((entry) => entry.id)
+  ;[ids[index], ids[target]] = [ids[target], ids[index]]
+  try {
+    await api.reorderTestSuites(store.projectId, selectedPlan.value.id, ids, selectedPlan.value.revision)
+    await store.refresh()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('test plan'), 'Test suite order')
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to reorder suites', 'Test suite order')
+  }
+}
+
+const addCasesOpen = ref(false)
+const addCasesBusy = ref(false)
+const addCasesError = ref('')
+const addCasesForm = reactive({
+  mode: 'filter' as 'filter' | 'csv',
+  feature_id: '',
+  type: '',
+  priority: '',
+  status: '',
+  csv: '',
+})
+
+function openAddCases(suite: TestSuite): void {
+  if (!canTest.value || suite.archived_at) return
+  selectedSuiteId.value = suite.id
+  Object.assign(addCasesForm, {
+    mode: 'filter',
+    feature_id: '',
+    type: '',
+    priority: '',
+    status: '',
+    csv: '',
+  })
+  addCasesError.value = ''
+  addCasesOpen.value = true
+}
+
+async function saveAddCases(): Promise<void> {
+  if (!canTest.value || !selectedSuite.value) return
+  if (addCasesForm.mode === 'csv' && !addCasesForm.csv.trim()) {
+    addCasesError.value = 'Paste at least one exact test case title.'
+    return
+  }
+  addCasesBusy.value = true
+  addCasesError.value = ''
+  try {
+    const payload: Record<string, unknown> = {}
+    if (addCasesForm.mode === 'csv') {
+      payload.csv = addCasesForm.csv
+    } else {
+      payload.filter = {
+        feature_id: addCasesForm.feature_id || null,
+        type: addCasesForm.type,
+        priority: addCasesForm.priority,
+        status: addCasesForm.status,
+      }
+    }
+    const result = await api.addTestSuiteCases(
+      store.projectId,
+      selectedSuite.value.plan_id,
+      selectedSuite.value.id,
+      payload,
+      selectedSuite.value.revision,
+    )
+    addCasesOpen.value = false
+    await store.refresh()
+    toast.success(
+      `${result.added} ${result.added === 1 ? 'case' : 'cases'} added${result.skipped ? `, ${result.skipped} already present` : ''}.`,
+      'Test suite',
+    )
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      addCasesError.value = revisionConflictMessage('test suite')
+      return
+    }
+    addCasesError.value = error instanceof Error ? error.message : 'Failed to add cases'
+  } finally {
+    addCasesBusy.value = false
+  }
+}
+
+async function removeSuiteCase(suite: TestSuite, testCase: TestCase): Promise<void> {
+  if (!canTest.value || suite.archived_at) return
+  try {
+    await api.removeTestSuiteCase(store.projectId, suite.plan_id, suite.id, testCase.id, suite.revision)
+    await store.refresh()
+    toast.success(`${testCase.title} removed from the suite.`, 'Test suite')
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      toast.error(revisionConflictMessage('test suite'), 'Test suite')
+      return
+    }
+    toast.error(error instanceof Error ? error.message : 'Failed to remove case', 'Test suite')
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Test run form
 // ---------------------------------------------------------------------------
 
@@ -303,10 +641,17 @@ const runForm = reactive({
   release_id: '',
   sprint_id: '',
   build_id: '',
+  scope: 'all' as 'all' | 'selection' | 'suite' | 'plan' | 'filter',
+  plan_id: '',
+  suite_id: '',
+  filter_feature_id: '',
+  filter_type: '',
+  filter_priority: '',
+  filter_status: '',
   test_case_ids: [] as string[],
 })
 
-function openCreateRun(): void {
+function openCreateRun(options: { scope?: typeof runForm.scope; planId?: string; suiteId?: string } = {}): void {
   if (!canTest.value) return
   const environments = store.workspace?.environments ?? []
   Object.assign(runForm, {
@@ -319,11 +664,43 @@ function openCreateRun(): void {
     release_id: '',
     sprint_id: store.sprints.find((sprint) => sprint.status === 'active')?.id ?? '',
     build_id: '',
+    scope: options.scope ?? 'all',
+    plan_id: options.planId ?? selectedPlanId.value,
+    suite_id: options.suiteId ?? selectedSuiteId.value,
+    filter_feature_id: '',
+    filter_type: '',
+    filter_priority: '',
+    filter_status: '',
     test_case_ids: [],
   })
   runError.value = ''
   runModal.value = true
 }
+
+const runFilterCases = computed(() =>
+  testCases.value.filter((testCase) => {
+    if (runForm.filter_feature_id && testCase.feature_id !== runForm.filter_feature_id) return false
+    if (runForm.filter_type && testCase.type !== runForm.filter_type) return false
+    if (runForm.filter_priority && testCase.priority !== runForm.filter_priority) return false
+    if (runForm.filter_status && testCase.status !== runForm.filter_status) return false
+    return true
+  }),
+)
+
+const runScopeCount = computed(() => {
+  switch (runForm.scope) {
+    case 'suite':
+      return runForm.suite_id ? suiteCaseIds(runForm.suite_id).length : 0
+    case 'plan':
+      return runForm.plan_id ? planCaseIds(runForm.plan_id).length : 0
+    case 'filter':
+      return runFilterCases.value.length
+    case 'selection':
+      return runForm.test_case_ids.length
+    default:
+      return testCases.value.length
+  }
+})
 
 function toggleCaseSelection(caseId: string): void {
   if (runForm.test_case_ids.includes(caseId)) {
@@ -343,17 +720,44 @@ async function saveRun(): Promise<void> {
     runError.value = 'Create at least one test case before starting a run.'
     return
   }
+  if (runForm.scope === 'selection' && !runForm.test_case_ids.length) {
+    runError.value = 'Select at least one test case, or change the run scope.'
+    return
+  }
+  if (runForm.scope === 'suite' && !runForm.suite_id) {
+    runError.value = 'Select a suite for this run.'
+    return
+  }
+  if (runForm.scope === 'plan' && !runForm.plan_id) {
+    runError.value = 'Select a plan for this run.'
+    return
+  }
+  if (!runScopeCount.value) {
+    runError.value = 'The selected scope contains no test cases.'
+    return
+  }
   runBusy.value = true
   runError.value = ''
   try {
-    const result = await api.createTestRun(store.projectId, {
+    const payload: Record<string, unknown> = {
       name: runForm.name.trim(),
       environment_id: runForm.environment_id,
       release_id: runForm.release_id || null,
       sprint_id: runForm.sprint_id || null,
       build_id: runForm.build_id || null,
-      test_case_ids: runForm.test_case_ids,
-    })
+    }
+    if (runForm.scope === 'selection') payload.test_case_ids = runForm.test_case_ids
+    if (runForm.scope === 'suite') payload.suite_id = runForm.suite_id
+    if (runForm.scope === 'plan') payload.plan_id = runForm.plan_id
+    if (runForm.scope === 'filter') {
+      payload.filter = {
+        feature_id: runForm.filter_feature_id || null,
+        type: runForm.filter_type,
+        priority: runForm.filter_priority,
+        status: runForm.filter_status,
+      }
+    }
+    const result = await api.createTestRun(store.projectId, payload)
     runModal.value = false
     await store.refresh()
     openRun(result.id)
@@ -524,16 +928,215 @@ async function saveBug(): Promise<void> {
         <h2 class="text-lg font-semibold tracking-tight text-slate-900">Test lab</h2>
       </div>
       <div class="flex flex-wrap gap-2">
+        <button v-if="canTest" type="button" class="btn-secondary" @click="openCreatePlan">
+          <AppIcon name="layers" :size="15" />
+          New test plan
+        </button>
         <button v-if="canTest" type="button" class="btn-secondary" :disabled="!features.length" @click="openCreateCase">
           <AppIcon name="flask" :size="15" />
           New test case
         </button>
-        <button v-if="canTest" type="button" class="btn-primary" :disabled="!testCases.length" @click="openCreateRun">
+        <button v-if="canTest" type="button" class="btn-primary" :disabled="!testCases.length" @click="openCreateRun()">
           <AppIcon name="plus" :size="15" />
           New test run
         </button>
       </div>
     </div>
+
+    <!-- Plans and suites -->
+    <section class="card p-5" data-testid="test-plan-board">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-900">Plans &amp; suites</h3>
+          <p class="mt-0.5 text-xs text-slate-600">
+            Plans schedule a cycle. Suites keep an ordered case selection that a run snapshots.
+          </p>
+        </div>
+        <button
+          v-if="canTest"
+          type="button"
+          class="btn-ghost text-xs"
+          :disabled="!selectedPlan || selectedPlan.status === 'archived'"
+          @click="openCreateSuite"
+        >
+          <AppIcon name="plus" :size="13" /> New suite
+        </button>
+      </div>
+
+      <div v-if="testPlans.length" class="mt-4 grid gap-5 lg:grid-cols-12">
+        <div class="space-y-3 lg:col-span-4">
+          <div>
+            <label class="field-label" for="test-plan-select">Plan</label>
+            <select id="test-plan-select" v-model="selectedPlanId" class="field-input text-sm">
+              <option v-for="plan in orderedPlans" :key="plan.id" :value="plan.id">
+                {{ plan.name }} · {{ statusLabel(plan.status) }}
+              </option>
+            </select>
+          </div>
+          <div v-if="selectedPlan" class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <StatusPill :status="selectedPlan.status" />
+              <span class="text-[11px] text-slate-600">{{ ownerName(selectedPlan.owner_id) }}</span>
+            </div>
+            <p v-if="selectedPlan.description" class="mt-2 text-xs text-slate-600">{{ selectedPlan.description }}</p>
+            <p class="mt-2 text-[11px] text-slate-600">
+              {{ selectedPlan.start_date ? formatDateTime(selectedPlan.start_date) : 'No start' }}
+              →
+              {{ selectedPlan.end_date ? formatDateTime(selectedPlan.end_date) : 'No end' }}
+            </p>
+            <div v-if="canTest && selectedPlan.status !== 'archived'" class="mt-3 flex flex-wrap gap-1.5">
+              <button
+                v-if="selectedPlan.status === 'draft'"
+                type="button"
+                class="btn-ghost text-[11px]"
+                @click="setPlanStatus(selectedPlan, 'active')"
+              >
+                Activate plan
+              </button>
+              <button
+                v-if="selectedPlan.status === 'active'"
+                type="button"
+                class="btn-ghost text-[11px]"
+                @click="setPlanStatus(selectedPlan, 'draft')"
+              >
+                Move to draft
+              </button>
+              <button type="button" class="btn-ghost text-[11px]" @click="setPlanStatus(selectedPlan, 'archived')">
+                Archive plan
+              </button>
+            </div>
+            <p v-else-if="selectedPlan.status === 'archived'" class="mt-3 text-[11px] text-slate-600">
+              Archived plans stay readable and keep the context of historical runs.
+            </p>
+          </div>
+        </div>
+
+        <div class="lg:col-span-8">
+          <div v-if="planSuites.length" class="space-y-2">
+            <div
+              v-for="(suite, index) in planSuites"
+              :key="suite.id"
+              data-testid="suite-row"
+              class="rounded-xl border px-3 py-2.5 transition"
+              :class="selectedSuiteId === suite.id ? 'border-cyan-300 bg-cyan-50/50' : 'border-slate-200 bg-white'"
+            >
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <button type="button" class="min-w-0 text-left" @click="selectedSuiteId = suite.id">
+                  <p class="truncate text-sm font-medium text-slate-800">
+                    {{ suite.name }}
+                    <span v-if="suite.archived_at" class="ml-1 text-[10px] font-normal text-slate-500">(archived)</span>
+                  </p>
+                  <p class="mt-0.5 text-[11px] text-slate-600">
+                    {{ caseCountLabel(suiteCaseIds(suite.id).length) }} · {{ ownerName(suite.assignee_id) }}
+                  </p>
+                </button>
+                <div class="flex flex-wrap items-center gap-1">
+                  <button
+                    v-if="canTest && !suite.archived_at && selectedPlan?.status !== 'archived'"
+                    type="button"
+                    class="btn-ghost px-2 py-1 text-[11px]"
+                    aria-label="Move suite up"
+                    :disabled="index === 0"
+                    @click="moveSuite(suite, -1)"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    v-if="canTest && !suite.archived_at && selectedPlan?.status !== 'archived'"
+                    type="button"
+                    class="btn-ghost px-2 py-1 text-[11px]"
+                    aria-label="Move suite down"
+                    :disabled="index === planSuites.length - 1"
+                    @click="moveSuite(suite, 1)"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    v-if="canTest && !suite.archived_at"
+                    type="button"
+                    class="btn-ghost text-[11px]"
+                    @click="openAddCases(suite)"
+                  >
+                    Add cases
+                  </button>
+                  <button
+                    v-if="canTest && !suite.archived_at"
+                    type="button"
+                    class="btn-ghost text-[11px]"
+                    :disabled="!suiteCaseIds(suite.id).length"
+                    @click="openCreateRun({ scope: 'suite', suiteId: suite.id, planId: suite.plan_id })"
+                  >
+                    Run suite
+                  </button>
+                  <button
+                    v-if="canTest"
+                    type="button"
+                    class="btn-ghost text-[11px] text-slate-500"
+                    @click="setSuiteArchived(suite, !suite.archived_at)"
+                  >
+                    {{ suite.archived_at ? 'Restore' : 'Archive' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center">
+            <p class="text-sm text-slate-600">No suites in this plan yet.</p>
+            <button v-if="canTest && selectedPlan?.status !== 'archived'" type="button" class="btn-secondary mt-3" @click="openCreateSuite">
+              <AppIcon name="plus" :size="14" /> Create the first suite
+            </button>
+          </div>
+
+          <div v-if="selectedSuite" class="mt-3 rounded-xl border border-slate-200">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+              <p class="text-xs font-semibold text-slate-700">
+                {{ selectedSuite.name }} · {{ selectedSuiteCases.length }} cases
+              </p>
+              <button
+                v-if="canTest && !selectedSuite.archived_at"
+                type="button"
+                class="btn-ghost text-[11px]"
+                @click="openCreateRun({ scope: 'suite', suiteId: selectedSuite.id, planId: selectedSuite.plan_id })"
+              >
+                Run this suite
+              </button>
+            </div>
+            <div v-if="selectedSuiteCases.length" class="max-h-48 divide-y divide-slate-100 overflow-y-auto">
+              <div
+                v-for="testCase in selectedSuiteCases"
+                :key="testCase.id"
+                data-testid="suite-case"
+                class="flex items-center justify-between gap-2 px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <p class="truncate text-xs font-medium text-slate-800">{{ testCase.title }}</p>
+                  <p class="text-[10px] text-slate-600">{{ featureName(testCase.feature_id) }}</p>
+                </div>
+                <button
+                  v-if="canTest && !selectedSuite.archived_at"
+                  type="button"
+                  class="rounded p-1 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                  aria-label="Remove case from suite"
+                  @click="removeSuiteCase(selectedSuite, testCase)"
+                >
+                  <AppIcon name="trash" :size="13" />
+                </button>
+              </div>
+            </div>
+            <p v-else class="px-3 py-4 text-xs text-slate-600">
+              This suite has no cases. Add by filter or paste exact titles.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="mt-4 rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center">
+        <p class="text-sm text-slate-600">No test plans yet. A plan groups suites and schedules a test cycle.</p>
+        <button v-if="canTest" type="button" class="btn-secondary mt-3" @click="openCreatePlan">
+          <AppIcon name="plus" :size="14" /> Create a test plan
+        </button>
+      </div>
+    </section>
 
     <div class="grid gap-5 xl:grid-cols-12">
       <section class="xl:col-span-5">
@@ -601,7 +1204,7 @@ async function saveBug(): Promise<void> {
               <div>
                 <h3 class="text-sm font-semibold text-slate-900">Test runs</h3>
               </div>
-              <button v-if="canTest" type="button" class="btn-ghost text-xs" :disabled="!testCases.length" @click="openCreateRun">
+              <button v-if="canTest" type="button" class="btn-ghost text-xs" :disabled="!testCases.length" @click="openCreateRun()">
                 <AppIcon name="plus" :size="13" /> New run
               </button>
             </div>
@@ -621,6 +1224,9 @@ async function saveBug(): Promise<void> {
                   <p class="mt-1 text-[11px] text-slate-600">
                     {{ environmentName(run.environment_id) }} ·
                     {{ formatDateTime(run.created_at) }}
+                  </p>
+                  <p v-if="run.plan_name || run.suite_name" class="mt-0.5 text-[10px] text-cyan-700">
+                    {{ [run.plan_name, run.suite_name].filter(Boolean).join(' · ') }} · snapshot
                   </p>
                 </div>
                 <StatusPill :status="run.status" />
@@ -658,7 +1264,7 @@ async function saveBug(): Promise<void> {
               compact
               title="No test runs yet"
               :action-label="canTest && testCases.length ? 'Start a test run' : ''"
-              @action="openCreateRun"
+              @action="openCreateRun()"
             />
           </div>
         </div>
@@ -841,12 +1447,86 @@ async function saveBug(): Promise<void> {
               </option>
             </select>
           </div>
-          <div class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
-            {{ caseCountLabel(runForm.test_case_ids.length || testCases.length) }} will be added to this run.
+          <div>
+            <label class="field-label" for="run-scope">Run scope</label>
+            <select id="run-scope" v-model="runForm.scope" class="field-input">
+              <option value="all">All project cases</option>
+              <option value="selection">Selected cases</option>
+              <option value="suite">A suite</option>
+              <option value="plan">A plan</option>
+              <option value="filter">A filter</option>
+            </select>
           </div>
         </div>
 
-        <div>
+        <div v-if="runForm.scope === 'suite'" class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="run-suite">Suite</label>
+            <select id="run-suite" v-model="runForm.suite_id" class="field-input">
+              <option value="">Select a suite</option>
+              <option v-for="suite in testSuites.filter((entry) => !entry.archived_at)" :key="suite.id" :value="suite.id">
+                {{ suite.name }} · {{ caseCountLabel(suiteCaseIds(suite.id).length) }}
+              </option>
+            </select>
+          </div>
+          <div class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+            The run stores the suite name and the revision of every case it executes.
+          </div>
+        </div>
+
+        <div v-else-if="runForm.scope === 'plan'" class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="run-plan">Plan</label>
+            <select id="run-plan" v-model="runForm.plan_id" class="field-input">
+              <option value="">Select a plan</option>
+              <option v-for="plan in orderedPlans.filter((entry) => entry.status !== 'archived')" :key="plan.id" :value="plan.id">
+                {{ plan.name }}
+              </option>
+            </select>
+          </div>
+          <div class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+            {{ caseCountLabel(runForm.plan_id ? planCaseIds(runForm.plan_id).length : 0) }} across active suites.
+          </div>
+        </div>
+
+        <div v-else-if="runForm.scope === 'filter'" class="grid gap-4 sm:grid-cols-4">
+          <div>
+            <label class="field-label" for="run-filter-feature">Feature</label>
+            <select id="run-filter-feature" v-model="runForm.filter_feature_id" class="field-input">
+              <option value="">Any feature</option>
+              <option v-for="feature in features" :key="feature.id" :value="feature.id">{{ feature.title }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="run-filter-type">Type</label>
+            <select id="run-filter-type" v-model="runForm.filter_type" class="field-input">
+              <option value="">Any type</option>
+              <option value="manual">Manual</option>
+              <option value="automated">Automated</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="run-filter-priority">Priority</label>
+            <select id="run-filter-priority" v-model="runForm.filter_priority" class="field-input">
+              <option value="">Any priority</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="run-filter-status">Status</label>
+            <select id="run-filter-status" v-model="runForm.filter_status" class="field-input">
+              <option value="">Any status</option>
+              <option value="draft">Draft</option>
+              <option value="ready">Ready</option>
+              <option value="deprecated">Deprecated</option>
+            </select>
+          </div>
+        </div>
+
+        <div v-else-if="runForm.scope === 'selection'">
           <div class="mb-2 flex items-center justify-between">
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-600">Test cases</p>
             <button
@@ -876,6 +1556,10 @@ async function saveBug(): Promise<void> {
             </label>
           </div>
         </div>
+
+        <div class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+          {{ caseCountLabel(runScopeCount) }} will be added to this run.
+        </div>
         <p v-if="runError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ runError }}</p>
       </div>
       <template #footer>
@@ -887,11 +1571,176 @@ async function saveBug(): Promise<void> {
       </template>
     </BaseModal>
 
+    <!-- Test plan modal -->
+    <BaseModal
+      v-model="planModal"
+      title="New test plan"
+      max-width="lg"
+      :persistent="planBusy"
+    >
+      <div class="space-y-4">
+        <div>
+          <label class="field-label" for="plan-name">Plan name</label>
+          <input id="plan-name" v-model="planForm.name" data-autofocus class="field-input" placeholder="Release 2.0 regression" />
+        </div>
+        <div>
+          <label class="field-label" for="plan-description">Description</label>
+          <textarea id="plan-description" v-model="planForm.description" rows="2" class="field-input" placeholder="Scope, entry criteria and test cycle notes" />
+        </div>
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div>
+            <label class="field-label" for="plan-owner">Owner</label>
+            <select id="plan-owner" v-model="planForm.owner_id" class="field-input">
+              <option value="">Unassigned</option>
+              <option v-for="member in members" :key="member.user_id" :value="member.user_id">
+                {{ member.username || member.email }}
+              </option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="plan-start">Start date</label>
+            <input id="plan-start" v-model="planForm.start_date" type="date" class="field-input" />
+          </div>
+          <div>
+            <label class="field-label" for="plan-end">End date</label>
+            <input id="plan-end" v-model="planForm.end_date" type="date" class="field-input" />
+          </div>
+        </div>
+        <p class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+          Plans start as draft. Archived plans are read-only and cannot start new runs; deleting a plan is not
+          offered so historical runs keep their snapshot.
+        </p>
+        <p v-if="planError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ planError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="planBusy" @click="planModal = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="planBusy" @click="savePlan">
+          <AppIcon v-if="planBusy" name="loader" :size="14" class="animate-spin" />
+          {{ planBusy ? 'Creating…' : 'Create test plan' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Test suite modal -->
+    <BaseModal
+      v-model="suiteModal"
+      title="New test suite"
+      max-width="lg"
+      :persistent="suiteBusy"
+    >
+      <div class="space-y-4">
+        <div>
+          <label class="field-label" for="suite-name">Suite name</label>
+          <input id="suite-name" v-model="suiteForm.name" data-autofocus class="field-input" placeholder="Checkout smoke" />
+        </div>
+        <div>
+          <label class="field-label" for="suite-description">Description</label>
+          <textarea id="suite-description" v-model="suiteForm.description" rows="2" class="field-input" placeholder="What this ordered selection verifies" />
+        </div>
+        <div>
+          <label class="field-label" for="suite-assignee">Assignee</label>
+          <select id="suite-assignee" v-model="suiteForm.assignee_id" class="field-input">
+            <option value="">Unassigned</option>
+            <option v-for="member in members" :key="member.user_id" :value="member.user_id">
+              {{ member.username || member.email }}
+            </option>
+          </select>
+        </div>
+        <p class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+          Suites are ordered inside the plan. The run stores the suite name and each case revision it executed.
+        </p>
+        <p v-if="suiteError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ suiteError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="suiteBusy" @click="suiteModal = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="suiteBusy" @click="saveSuite">
+          <AppIcon v-if="suiteBusy" name="loader" :size="14" class="animate-spin" />
+          {{ suiteBusy ? 'Creating…' : 'Create test suite' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Add cases to suite -->
+    <BaseModal
+      v-model="addCasesOpen"
+      title="Add cases to suite"
+      max-width="lg"
+      :persistent="addCasesBusy"
+    >
+      <div class="space-y-4">
+        <p class="text-xs text-slate-600">
+          Adding to <span class="font-semibold text-slate-800">{{ selectedSuite?.name }}</span>. Cases already in the
+          suite are skipped; an unknown CSV title rejects the whole request.
+        </p>
+        <div>
+          <label class="field-label" for="add-cases-mode">Selection method</label>
+          <select id="add-cases-mode" v-model="addCasesForm.mode" class="field-input">
+            <option value="filter">Filter project cases</option>
+            <option value="csv">Paste exact titles</option>
+          </select>
+        </div>
+        <div v-if="addCasesForm.mode === 'filter'" class="grid gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <label class="field-label" for="add-cases-feature">Feature</label>
+            <select id="add-cases-feature" v-model="addCasesForm.feature_id" class="field-input">
+              <option value="">Any feature</option>
+              <option v-for="feature in features" :key="feature.id" :value="feature.id">{{ feature.title }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="add-cases-type">Type</label>
+            <select id="add-cases-type" v-model="addCasesForm.type" class="field-input">
+              <option value="">Any type</option>
+              <option value="manual">Manual</option>
+              <option value="automated">Automated</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="add-cases-priority">Priority</label>
+            <select id="add-cases-priority" v-model="addCasesForm.priority" class="field-input">
+              <option value="">Any priority</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="add-cases-status">Status</label>
+            <select id="add-cases-status" v-model="addCasesForm.status" class="field-input">
+              <option value="">Any status</option>
+              <option value="draft">Draft</option>
+              <option value="ready">Ready</option>
+              <option value="deprecated">Deprecated</option>
+            </select>
+          </div>
+        </div>
+        <div v-else>
+          <label class="field-label" for="add-cases-csv">Exact case titles</label>
+          <textarea
+            id="add-cases-csv"
+            v-model="addCasesForm.csv"
+            rows="6"
+            class="field-input font-mono text-xs"
+            placeholder="Guest checkout with a saved card&#10;One-tap payment succeeds"
+          />
+        </div>
+        <p v-if="addCasesError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ addCasesError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="addCasesBusy" @click="addCasesOpen = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="addCasesBusy" @click="saveAddCases">
+          <AppIcon v-if="addCasesBusy" name="loader" :size="14" class="animate-spin" />
+          {{ addCasesBusy ? 'Adding…' : 'Add cases' }}
+        </button>
+      </template>
+    </BaseModal>
+
     <!-- Run detail modal -->
     <BaseModal
       v-model="detailOpen"
       :title="selectedRun?.name || 'Test run'"
-      :description="selectedRun ? `${environmentName(selectedRun.environment_id)} · ${formatDateTime(selectedRun.created_at)}` : ''"
+      :description="selectedRun ? `${environmentName(selectedRun.environment_id)} · ${formatDateTime(selectedRun.created_at)}${selectedRun.plan_name ? ` · ${selectedRun.plan_name}` : ''}${selectedRun.suite_name ? ` · ${selectedRun.suite_name}` : ''}` : ''"
       max-width="lg"
       :persistent="Boolean(resultBusy)"
     >

@@ -238,14 +238,17 @@ func (h *Handler) DeleteTestCase(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 type testRunRequest struct {
-	ReleaseID     *uuid.UUID  `json:"release_id"`
-	SprintID      *uuid.UUID  `json:"sprint_id"`
-	EnvironmentID *uuid.UUID  `json:"environment_id"`
-	BuildID       *uuid.UUID  `json:"build_id"`
-	Name          string      `json:"name"`
-	Status        string      `json:"status"`
-	ExecutedBy    *uuid.UUID  `json:"executed_by"`
-	TestCaseIDs   []uuid.UUID `json:"test_case_ids"`
+	ReleaseID     *uuid.UUID      `json:"release_id"`
+	SprintID      *uuid.UUID      `json:"sprint_id"`
+	EnvironmentID *uuid.UUID      `json:"environment_id"`
+	BuildID       *uuid.UUID      `json:"build_id"`
+	PlanID        *uuid.UUID      `json:"plan_id"`
+	SuiteID       *uuid.UUID      `json:"suite_id"`
+	Filter        *testCaseFilter `json:"filter"`
+	Name          string          `json:"name"`
+	Status        string          `json:"status"`
+	ExecutedBy    *uuid.UUID      `json:"executed_by"`
+	TestCaseIDs   []uuid.UUID     `json:"test_case_ids"`
 }
 
 func (h *Handler) CreateTestRun(c *gin.Context) {
@@ -273,62 +276,178 @@ func (h *Handler) CreateTestRun(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Environment does not belong to this project")
 		return
 	}
-	if len(req.TestCaseIDs) == 0 {
-		rows, err := h.store.DB().Query(c.Request.Context(), `SELECT id FROM test_cases WHERE project_id=$1 ORDER BY title`, projectID)
+	ctx := c.Request.Context()
+	planID := req.PlanID
+	suiteID := req.SuiteID
+	planName := ""
+	suiteName := ""
+	if suiteID != nil {
+		var suitePlan uuid.UUID
+		var suiteArchivedAt *time.Time
+		err := h.store.DB().QueryRow(ctx, `
+			SELECT s.plan_id, s.name, s.archived_at
+			FROM test_suites s
+			JOIN test_plans p ON p.id = s.plan_id
+			WHERE s.id=$1 AND p.project_id=$2`, *suiteID, projectID).Scan(&suitePlan, &suiteName, &suiteArchivedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			apiError(c, http.StatusNotFound, "NOT_FOUND", "Test suite not found")
+			return
+		}
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load test suite")
+			return
+		}
+		if suiteArchivedAt != nil {
+			apiError(c, http.StatusConflict, "TEST_SUITE_ARCHIVED", "An archived test suite cannot start a new run")
+			return
+		}
+		if planID == nil {
+			planID = &suitePlan
+		} else if *planID != suitePlan {
+			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "suite_id does not belong to the selected plan")
+			return
+		}
+	}
+	if planID != nil {
+		var planStatus string
+		err := h.store.DB().QueryRow(ctx, `SELECT name, status FROM test_plans WHERE id=$1 AND project_id=$2`,
+			*planID, projectID).Scan(&planName, &planStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			apiError(c, http.StatusNotFound, "NOT_FOUND", "Test plan not found")
+			return
+		}
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load test plan")
+			return
+		}
+		if planStatus == "archived" {
+			apiError(c, http.StatusConflict, "PLAN_ARCHIVED", "An archived test plan cannot start a new run")
+			return
+		}
+	}
+
+	cases := []unitTestCase{}
+	switch {
+	case len(req.TestCaseIDs) > 0:
+		ids := dedupeCaseIDs(req.TestCaseIDs)
+		rows, err := h.store.DB().Query(ctx, `
+			SELECT id, title, revision FROM test_cases
+			WHERE project_id=$1 AND id = ANY($2) ORDER BY title`, projectID, ids)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load test cases")
 			return
 		}
 		for rows.Next() {
-			var id uuid.UUID
-			if err := rows.Scan(&id); err != nil {
+			var tc unitTestCase
+			if err := rows.Scan(&tc.ID, &tc.Title, &tc.Revision); err != nil {
 				rows.Close()
 				apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load test cases")
 				return
 			}
-			req.TestCaseIDs = append(req.TestCaseIDs, id)
+			cases = append(cases, tc)
 		}
 		rows.Close()
+		if len(cases) != len(ids) {
+			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Every test_case_ids entry must belong to this project")
+			return
+		}
+	case req.Filter != nil:
+		if !h.validateTestCaseFilter(c, projectID, req.Filter) {
+			return
+		}
+		resolved, err := h.resolveFilteredCases(ctx, projectID, req.Filter)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve test case filter")
+			return
+		}
+		cases = resolved
+	case suiteID != nil:
+		rows, err := h.store.DB().Query(ctx, `
+			SELECT c.id, c.title, c.revision
+			FROM test_suite_cases sc
+			JOIN test_cases c ON c.id = sc.test_case_id
+			WHERE sc.suite_id=$1 AND c.project_id=$2
+			ORDER BY sc.position, c.title`, *suiteID, projectID)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load suite cases")
+			return
+		}
+		for rows.Next() {
+			var tc unitTestCase
+			if err := rows.Scan(&tc.ID, &tc.Title, &tc.Revision); err != nil {
+				rows.Close()
+				apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load suite cases")
+				return
+			}
+			cases = append(cases, tc)
+		}
+		rows.Close()
+	case planID != nil:
+		rows, err := h.store.DB().Query(ctx, `
+			SELECT DISTINCT c.id, c.title, c.revision
+			FROM test_suites s
+			JOIN test_suite_cases sc ON sc.suite_id = s.id
+			JOIN test_cases c ON c.id = sc.test_case_id
+			WHERE s.plan_id=$1 AND s.archived_at IS NULL AND c.project_id=$2
+			ORDER BY c.title`, *planID, projectID)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load plan cases")
+			return
+		}
+		for rows.Next() {
+			var tc unitTestCase
+			if err := rows.Scan(&tc.ID, &tc.Title, &tc.Revision); err != nil {
+				rows.Close()
+				apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load plan cases")
+				return
+			}
+			cases = append(cases, tc)
+		}
+		rows.Close()
+	default:
+		resolved, err := h.resolveFilteredCases(ctx, projectID, nil)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load test cases")
+			return
+		}
+		cases = resolved
 	}
-	if len(req.TestCaseIDs) == 0 {
+	if len(cases) == 0 {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "At least one test case is required")
 		return
 	}
 
-	tx, err := h.store.DB().Begin(c.Request.Context())
+	tx, err := h.store.DB().Begin(ctx)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start transaction")
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback(ctx)
 
 	var runID uuid.UUID
 	var revision int64
-	err = tx.QueryRow(c.Request.Context(), `
-		INSERT INTO test_runs (project_id, release_id, sprint_id, environment_id, build_id, name, status, executed_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, revision`,
-		projectID, req.ReleaseID, req.SprintID, req.EnvironmentID, req.BuildID, req.Name, req.Status, req.ExecutedBy).Scan(&runID, &revision)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO test_runs (project_id, release_id, sprint_id, environment_id, build_id,
+		plan_id, suite_id, plan_name, suite_name, name, status, executed_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id, revision`,
+		projectID, req.ReleaseID, req.SprintID, req.EnvironmentID, req.BuildID,
+		planID, suiteID, planName, suiteName, req.Name, req.Status, req.ExecutedBy).Scan(&runID, &revision)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create test run")
 		return
 	}
-	for _, caseID := range req.TestCaseIDs {
-		var exists bool
-		if err := tx.QueryRow(c.Request.Context(), `SELECT EXISTS (SELECT 1 FROM test_cases WHERE id=$1 AND project_id=$2)`, caseID, projectID).Scan(&exists); err != nil || !exists {
-			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case does not belong to this project")
-			return
-		}
+	for _, tc := range cases {
 		var resultID uuid.UUID
-		err = tx.QueryRow(c.Request.Context(), `
-			INSERT INTO test_results (test_run_id, test_case_id, status)
-			VALUES ($1,$2,'not_run') RETURNING id`, runID, caseID).Scan(&resultID)
+		err = tx.QueryRow(ctx, `
+			INSERT INTO test_results (test_run_id, test_case_id, case_revision, status)
+			VALUES ($1,$2,$3,'not_run') RETURNING id`, runID, tc.ID, tc.Revision).Scan(&resultID)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create test result")
 			return
 		}
-		_, err = tx.Exec(c.Request.Context(), `
+		_, err = tx.Exec(ctx, `
 			INSERT INTO test_step_results (test_result_id, test_step_id, status)
-			SELECT $1, id, 'not_run' FROM test_steps WHERE test_case_id=$2 ORDER BY position`, resultID, caseID)
+			SELECT $1, id, 'not_run' FROM test_steps WHERE test_case_id=$2 ORDER BY position`, resultID, tc.ID)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create step results")
 			return

@@ -843,6 +843,87 @@ export const api = {
     )
   },
 
+  async createTestPlan(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-plans`, {
+      method: 'POST',
+      body: payload,
+    })
+  },
+
+  async updateTestPlan(
+    projectId: string,
+    planId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-plans/${encodeURIComponent(planId)}`,
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
+  async createTestSuite(
+    projectId: string,
+    planId: string,
+    payload: unknown,
+  ): Promise<RevisionedResult & { plan_id: string; position: number }> {
+    return request<RevisionedResult & { plan_id: string; position: number }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-plans/${encodeURIComponent(planId)}/suites`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async updateTestSuite(
+    projectId: string,
+    planId: string,
+    suiteId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult & { plan_id: string }> {
+    return request<RevisionedResult & { plan_id: string }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-plans/${encodeURIComponent(planId)}/suites/${encodeURIComponent(suiteId)}`,
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
+  async reorderTestSuites(
+    projectId: string,
+    planId: string,
+    suiteIds: string[],
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-plans/${encodeURIComponent(planId)}/suite-order`,
+      { method: 'PUT', body: { suite_ids: suiteIds }, headers: ifMatch(revision) },
+    )
+  },
+
+  async addTestSuiteCases(
+    projectId: string,
+    planId: string,
+    suiteId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult & { added: number; skipped: number; requested: number }> {
+    return request<RevisionedResult & { added: number; skipped: number; requested: number }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-plans/${encodeURIComponent(planId)}/suites/${encodeURIComponent(suiteId)}/cases`,
+      { method: 'POST', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
+  async removeTestSuiteCase(
+    projectId: string,
+    planId: string,
+    suiteId: string,
+    caseId: string,
+    revision: number,
+  ): Promise<RevisionedResult & { removed: string }> {
+    return request<RevisionedResult & { removed: string }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-plans/${encodeURIComponent(planId)}/suites/${encodeURIComponent(suiteId)}/cases/${encodeURIComponent(caseId)}`,
+      { method: 'DELETE', headers: ifMatch(revision) },
+    )
+  },
+
   async createTestCase(projectId: string, payload: unknown): Promise<RevisionedResult> {
     return request<RevisionedResult>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-cases`, {
       method: 'POST',

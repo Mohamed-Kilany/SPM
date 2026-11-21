@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "018_sprint_release_lifecycle.sql" {
-		t.Fatalf("latest migration = %q, want 018_sprint_release_lifecycle.sql", names[len(names)-1])
+	if names[len(names)-1] != "019_test_plans_suites.sql" {
+		t.Fatalf("latest migration = %q, want 019_test_plans_suites.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -248,6 +248,65 @@ func TestSprintReleaseLifecycleRollbackIsComplete(t *testing.T) {
 	}
 	if !strings.Contains(forward, "entity_type IN ('work_item', 'feature', 'epic')") {
 		t.Error("018 does not constrain exception entity types")
+	}
+}
+
+func TestTestPlansSuitesRollbackIsComplete(t *testing.T) {
+	forward := readMigration(t, "019_test_plans_suites.sql")
+	rollback, err := os.ReadFile("rollback/019_test_plans_suites.sql")
+	if err != nil {
+		t.Fatalf("read test plans rollback companion: %v", err)
+	}
+	body := string(rollback)
+
+	for _, table := range []string{"test_plans", "test_suites", "test_suite_cases"} {
+		if !strings.Contains(forward, "CREATE TABLE IF NOT EXISTS "+table) {
+			t.Errorf("019 does not create %s", table)
+		}
+		if !strings.Contains(body, "DROP TABLE IF EXISTS "+table+";") {
+			t.Errorf("rollback does not drop %s", table)
+		}
+	}
+	for _, table := range []string{"test_plans", "test_suites"} {
+		if !strings.Contains(forward, "CREATE TRIGGER planning_revision BEFORE UPDATE ON "+table) {
+			t.Errorf("019 does not install the planning revision trigger on %s", table)
+		}
+		if !strings.Contains(body, "DROP TRIGGER IF EXISTS planning_revision ON "+table+";") {
+			t.Errorf("rollback does not drop the planning revision trigger on %s", table)
+		}
+	}
+	for _, column := range []struct{ table, name string }{
+		{"test_runs", "plan_id"},
+		{"test_runs", "suite_id"},
+		{"test_runs", "plan_name"},
+		{"test_runs", "suite_name"},
+		{"test_results", "case_revision"},
+	} {
+		if !strings.Contains(forward, "ADD COLUMN IF NOT EXISTS "+column.name) {
+			t.Errorf("019 does not add %s.%s", column.table, column.name)
+		}
+		if !strings.Contains(body, "DROP COLUMN IF EXISTS "+column.name) {
+			t.Errorf("rollback does not drop %s.%s", column.table, column.name)
+		}
+	}
+	index := regexp.MustCompile(`(?i)CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)`)
+	names := index.FindAllStringSubmatch(forward, -1)
+	if len(names) == 0 {
+		t.Fatal("019 creates no indexes")
+	}
+	for _, match := range names {
+		if !strings.Contains(body, "DROP INDEX IF EXISTS "+match[1]+";") {
+			t.Errorf("rollback does not drop index %s", match[1])
+		}
+	}
+	for _, fragment := range []string{
+		"status IN ('draft', 'active', 'archived')",
+		"PRIMARY KEY (suite_id, test_case_id)",
+		"CHECK (end_date IS NULL OR start_date IS NULL OR end_date >= start_date)",
+	} {
+		if !strings.Contains(forward, fragment) {
+			t.Errorf("019 is missing %q", fragment)
+		}
 	}
 }
 

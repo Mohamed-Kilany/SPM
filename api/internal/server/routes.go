@@ -202,6 +202,13 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodDelete, "/links/:linkId", auth.CapPlanningWrite, h.Workspace.DeleteLink)
 
 		// Test management.
+		project(http.MethodPost, "/test-plans", auth.CapTestWrite, h.Workspace.CreateTestPlan)
+		project(http.MethodPut, "/test-plans/:planId", auth.CapTestWrite, h.Workspace.UpdateTestPlan)
+		project(http.MethodPut, "/test-plans/:planId/suite-order", auth.CapTestWrite, h.Workspace.ReorderTestSuites)
+		project(http.MethodPost, "/test-plans/:planId/suites", auth.CapTestWrite, h.Workspace.CreateTestSuite)
+		project(http.MethodPut, "/test-plans/:planId/suites/:suiteId", auth.CapTestWrite, h.Workspace.UpdateTestSuite)
+		project(http.MethodPost, "/test-plans/:planId/suites/:suiteId/cases", auth.CapTestWrite, h.Workspace.AddSuiteCases)
+		project(http.MethodDelete, "/test-plans/:planId/suites/:suiteId/cases/:caseId", auth.CapTestWrite, h.Workspace.RemoveSuiteCase)
 		project(http.MethodPost, "/test-cases", auth.CapTestWrite, h.Workspace.CreateTestCase)
 		project(http.MethodPut, "/test-cases/:caseId", auth.CapTestWrite, h.Workspace.UpdateTestCase)
 		project(http.MethodDelete, "/test-cases/:caseId", auth.CapTestWrite, h.Workspace.DeleteTestCase)

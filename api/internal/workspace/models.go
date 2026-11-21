@@ -288,6 +288,45 @@ type TestStep struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// TestPlan groups suites and test cases for a test cycle.
+type TestPlan struct {
+	ID          uuid.UUID  `json:"id"`
+	ProjectID   uuid.UUID  `json:"project_id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"`
+	OwnerID     *uuid.UUID `json:"owner_id"`
+	StartDate   *time.Time `json:"start_date"`
+	EndDate     *time.Time `json:"end_date"`
+	CreatedBy   *uuid.UUID `json:"created_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	Revision    int64      `json:"revision"`
+}
+
+// TestSuite is an ordered group of test cases inside a plan.
+type TestSuite struct {
+	ID          uuid.UUID  `json:"id"`
+	PlanID      uuid.UUID  `json:"plan_id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	AssigneeID  *uuid.UUID `json:"assignee_id"`
+	Position    int        `json:"position"`
+	ArchivedAt  *time.Time `json:"archived_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	Revision    int64      `json:"revision"`
+}
+
+// TestSuiteCase links a test case to a suite in a stable order.
+type TestSuiteCase struct {
+	SuiteID    uuid.UUID  `json:"suite_id"`
+	TestCaseID uuid.UUID  `json:"test_case_id"`
+	Position   int        `json:"position"`
+	AddedBy    *uuid.UUID `json:"added_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 // TestRun is an execution of test cases against a build/environment.
 type TestRun struct {
 	ID            uuid.UUID              `json:"id"`
@@ -296,6 +335,10 @@ type TestRun struct {
 	SprintID      *uuid.UUID             `json:"sprint_id"`
 	EnvironmentID *uuid.UUID             `json:"environment_id"`
 	BuildID       *uuid.UUID             `json:"build_id"`
+	PlanID        *uuid.UUID             `json:"plan_id"`
+	SuiteID       *uuid.UUID             `json:"suite_id"`
+	PlanName      string                 `json:"plan_name"`
+	SuiteName     string                 `json:"suite_name"`
 	Name          string                 `json:"name"`
 	Status        string                 `json:"status"`
 	ExecutedBy    *uuid.UUID             `json:"executed_by"`
@@ -315,6 +358,7 @@ type TestResult struct {
 	ID            uuid.UUID        `json:"id"`
 	TestRunID     uuid.UUID        `json:"test_run_id"`
 	TestCaseID    uuid.UUID        `json:"test_case_id"`
+	CaseRevision  int64            `json:"case_revision"`
 	Status        string           `json:"status"`
 	ExecutedBy    *uuid.UUID       `json:"executed_by"`
 	DurationMS    *int             `json:"duration_ms"`
@@ -608,6 +652,9 @@ type Workspace struct {
 	Releases     []Release        `json:"releases"`
 	Environments []Environment    `json:"environments"`
 	TestCases    []TestCase       `json:"test_cases"`
+	TestPlans    []TestPlan       `json:"test_plans"`
+	TestSuites   []TestSuite      `json:"test_suites"`
+	SuiteCases   []TestSuiteCase  `json:"test_suite_cases"`
 	TestRuns     []TestRun        `json:"test_runs"`
 	TestResults  []TestResult     `json:"test_results"`
 	StepResults  []TestStepResult `json:"test_step_results"`
