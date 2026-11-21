@@ -512,6 +512,9 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await firstStep.getByRole('button', { name: /Raise bug/ }).click()
 
   const bugDialog = page.getByRole('dialog', { name: 'Raise a linked defect' })
+  await expect(bugDialog.getByTestId('bug-context')).toContainText(RUN_NAME)
+  await expect(bugDialog.getByTestId('bug-context')).toContainText(CASE_TITLE)
+  await expect(bugDialog.getByTestId('bug-context')).toContainText('Environment:')
   await bugDialog.locator('#bug-title').fill(BUG_TITLE)
   await bugDialog.locator('#bug-description').fill('The saved-card payment endpoint returned an unexpected server error.')
   await bugDialog.locator('#bug-severity').selectOption('critical')
@@ -520,6 +523,23 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await bugDialog.getByRole('button', { name: 'Create linked bug' }).click()
   await expect(bugDialog).toBeHidden()
   await expect(detail.getByText('Bug linked')).toBeVisible()
+
+  // Re-raising from the same failed step reports the open defect instead of
+  // silently creating a duplicate; the result link matches even with a new title.
+  await firstStep.getByRole('button', { name: /Raise bug/ }).click()
+  const duplicateDialog = page.getByRole('dialog', { name: 'Raise a linked defect' })
+  await duplicateDialog.getByRole('button', { name: 'Create linked bug' }).click()
+  await expect(duplicateDialog.getByTestId('bug-duplicates')).toContainText(BUG_TITLE)
+  await duplicateDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(duplicateDialog).toBeHidden()
+
+  // Bulk entry stays available but disables results that already have a bug.
+  await detail.getByTestId('open-bulk-bugs').click()
+  const bulkDialog = page.getByRole('dialog', { name: 'Create defects from failures' })
+  await expect(bulkDialog.getByTestId('bulk-bug-candidates')).toContainText('Bug already linked')
+  await bulkDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(bulkDialog).toBeHidden()
+
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(detail).toBeHidden()
 

@@ -225,6 +225,7 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodPatch, "/test-runs/:runId/results/:resultId/steps/:stepResultId", auth.CapTestWrite, h.Workspace.PatchTestStepResult)
 		project(http.MethodPost, "/test-runs/:runId/results/:resultId/steps/:stepResultId/evidence", auth.CapTestWrite, h.Workspace.UploadTestStepEvidence)
 		project(http.MethodPost, "/test-runs/:runId/results/:resultId/bug", auth.CapTestWrite, h.Workspace.CreateBugFromResult)
+		project(http.MethodPost, "/test-runs/:runId/bugs", auth.CapTestWrite, h.Workspace.BulkCreateBugsFromRun)
 
 		// Git and delivery. Builds, deployments, health checks and rollbacks
 		// are read-only projections of Gitea Actions and Argo CD; they are

@@ -26,6 +26,9 @@ import type {
   RepositoryTreeResponse,
   SprintClosePreview,
   SprintMetrics,
+  BugCreateInput,
+  BugCreateResult,
+  BulkBugResult,
   TestCaseVersionList,
   TestRunFinishResult,
   TestStepEvidence,
@@ -42,12 +45,14 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  readonly details: unknown
 
-  constructor(message: string, status: number, code = 'REQUEST_FAILED') {
+  constructor(message: string, status: number, code = 'REQUEST_FAILED', details?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -139,7 +144,7 @@ async function requestRaw<T>(path: string, options: RequestOptions = {}): Promis
         (response.status === 401
           ? 'Your session has expired. Please sign in again.'
           : `Request failed (HTTP ${response.status})`)
-      throw new ApiError(message, response.status, data?.error?.code ?? 'REQUEST_FAILED')
+      throw new ApiError(message, response.status, data?.error?.code ?? 'REQUEST_FAILED', data)
     }
 
     return { data: data as T, response }
@@ -1062,13 +1067,25 @@ export const api = {
     )
   },
 
-  async createBugFromResult(    projectId: string,
+  async createBugFromResult(
+    projectId: string,
     runId: string,
     resultId: string,
-    payload: unknown,
-  ): Promise<{ id: string; key?: string }> {
-    return request<{ id: string; key?: string }>(
+    payload: BugCreateInput,
+  ): Promise<BugCreateResult> {
+    return request<BugCreateResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/test-runs/${encodeURIComponent(runId)}/results/${encodeURIComponent(resultId)}/bug`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async bulkCreateBugsFromRun(
+    projectId: string,
+    runId: string,
+    payload: { result_ids: string[]; force?: boolean },
+  ): Promise<BulkBugResult> {
+    return request<BulkBugResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-runs/${encodeURIComponent(runId)}/bugs`,
       { method: 'POST', body: payload },
     )
   },

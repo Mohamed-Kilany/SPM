@@ -200,9 +200,9 @@ case edits never change what the tester sees.
   is ignored rather than blocking execution.
 - **Deep link:** `?tab=tests&run=<runId>&focus=1` opens the focused runner;
   without `focus=1` the read-only run detail opens.
-- **Bug shortcut:** a failed step shows "Raise linked bug" (or `G`), prefilled
-  with the case title, position, expected and actual results. TST-04 extends
-  this into full defect traceability.
+- **Bug shortcut:** a failed step shows "Raise linked bug" (or `G`). The modal
+  previews the captured run, case, step, environment, build, deployment and
+  release/sprint context before the defect is written.
 
 ### Step evidence
 
@@ -215,6 +215,87 @@ magic-byte validation, active-markup rejection, EICAR detection, the configured
 `evidence_url` is set to the project-scoped download URL. Downloads require
 `scan_status='clean'`. Replacing a file points the step at the new attachment;
 the previous file stays addressable by ID for audit purposes.
+
+## Defect creation and traceability
+
+`POST .../test-runs/{runId}/results/{resultId}/bug` creates one defect from an
+executed result. The request may override `title`, `description`, `severity`,
+`priority`, `assignee_id`, `reproduction_steps`, `expected_result`,
+`actual_result` and `step_result_id`. Defaults come from the result snapshot:
+
+- The title is `Defect: <case> — step <n>: <action>` when a failed step exists,
+  otherwise `Defect: <case>`.
+- Without `step_result_id`, the first failed step is used. An explicit step must
+  belong to the result (`400 VALIDATION_ERROR`).
+- Expected and actual results fall back to the failed step, then the result.
+- Reproduction steps default to the executed step actions.
+
+The created work item stores `feature_id`, `environment_id`, `release_id` and
+`sprint_id` from the run. Its description always appends a traceability block
+with the run, case revision, result, step, environment, release, sprint, build
+and deployment plus every executed step, expected/actual value and evidence
+URL. The response returns the bug key and the artifact links written in the
+same transaction:
+
+| Source | Target | Link type |
+|---|---|---|
+| `test_result` | `work_item` | `found_bug` |
+| `test_run` | `work_item` | `found_bug` |
+| `test_case` | `work_item` | `found_bug` |
+| `build` (when present) | `work_item` | `found_bug` |
+| `deployment` (when present) | `work_item` | `found_bug` |
+
+`test_results.bug_work_item_id` and, when a step was selected that step's
+`bug_work_item_id`, point back to the bug. Repeatedly opening the same result
+therefore resolves to the existing defect.
+
+### Duplicate protection
+
+Before inserting, the API searches open bugs (`status` not in `done`,
+`cancelled`, `closed`, `verified`) in the project. A match is a normalized title
+(case-insensitive, whitespace collapsed) or an existing link from the same test
+result. A match returns:
+
+```json
+{
+  "error": { "code": "DUPLICATE_BUG", "message": "A similar open bug already exists" },
+  "duplicates": [
+    { "id": "…", "key": "SPM-42", "title": "Checkout hangs", "status": "in_progress", "match_on": "test_result" }
+  ]
+}
+```
+
+`match_on` is `test_result` when the result or an artifact link already points
+at the bug, otherwise `title`. Sending `force: true` creates the defect anyway
+and relinks the result to the newest bug. The UI renders the matches and offers
+"Create anyway"; a normal cancel leaves the existing bug untouched.
+
+### Bulk creation
+
+`POST .../test-runs/{runId}/bugs` accepts optional `result_ids` and `force`.
+Omitting `result_ids` targets every result that is failed or has a failed step.
+Unknown IDs return `400 INVALID_RESULT_IDS`. Each item is independent and
+reports one status:
+
+| Status | Meaning |
+|---|---|
+| `created` | Bug created, result/step linked, `bug_id` and `key` returned |
+| `duplicate` | Open duplicates returned; retry with `force: true` to create |
+| `skipped` | `already_linked` or `not_failed` |
+| `failed` | `load_failed`, `duplicate_check_failed` or `create_failed` |
+
+The response is a summary (`requested`, `created`, `duplicates`, `skipped`,
+`failed`) plus per-item details, so a partial batch never rolls back successful
+items. The UI preselects unlinked failures, disables results that already have
+a bug, and lists the outcome for every selected case.
+
+### Audit and events
+
+Single creation records the `test.bug.create` audit action with the work item,
+source result, run, case, step, environment, build and deployment. Bulk
+creation records `test.bug.create` per created bug and one `test.bug.bulk_create`
+summary event. Both paths call `recordActivity`, which inserts a project
+activity row and publishes `workspace.changed` to SSE subscribers.
 
 ## Finishing and pass rate
 
@@ -284,5 +365,13 @@ first, falling back to live steps only when `test_step_id` is still linked.
   date parsing and case deduplication.
 - `api/internal/workspace/handler_test_versions_test.go` covers request
   normalization for versioned case and shared-step writes.
+- `api/internal/workspace/handler_test_bugs_test.go` covers title
+  normalization, automatic titles/reproduction, step selection, context
+  composition, artifact-link targets, bulk skip reasons and summary counts.
+- `ui/src/lib/testBugs.test.ts` covers the client-side context preview,
+  deployment selection, duplicate-error extraction and bulk labels.
+- `ui/e2e/linked-sdlc.spec.ts` raises a defect from a failed step, asserts the
+  captured context, re-raises the same result to check the duplicate warning,
+  and confirms the bulk dialog disables an already-linked result.
 - `ui/e2e/linked-sdlc.spec.ts` creates a plan, creates a suite, adds a case by
   CSV, runs the suite and asserts the snapshot context in the run detail.

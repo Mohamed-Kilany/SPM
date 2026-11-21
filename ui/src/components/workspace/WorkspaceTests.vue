@@ -13,7 +13,23 @@ import { useToastStore } from '../../stores/toastStore'
 import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { percent, statusLabel } from '../../lib/workspace'
 import { formatDateTime, timeAgo } from '../../lib/format'
+import {
+  autoBugTitle,
+  autoReproduction,
+  bugContextSummary,
+  bulkItemLabel,
+  bulkSummaryLabel,
+  defaultBulkSelection,
+  deploymentForRun,
+  deploymentLabel,
+  duplicateMatchLabel,
+  duplicatesFromError,
+  failedStep,
+  isFailedResult,
+} from '../../lib/testBugs'
 import type {
+  BugDuplicate,
+  BulkBugResult,
   TestCase,
   TestCaseVersion,
   TestPlan,
@@ -82,6 +98,8 @@ const bugBusy = ref(false)
 const bugError = ref('')
 const bugResultId = ref<string | null>(null)
 const bugStepResultId = ref<string | null>(null)
+const bugForce = ref(false)
+const bugDuplicates = ref<BugDuplicate[]>([])
 const bugForm = reactive({
   title: '',
   description: '',
@@ -91,6 +109,13 @@ const bugForm = reactive({
   expected_result: '',
   actual_result: '',
 })
+
+const bulkBugOpen = ref(false)
+const bulkBugBusy = ref(false)
+const bulkBugError = ref('')
+const bulkBugForce = ref(false)
+const bulkBugSelected = ref<string[]>([])
+const bulkBugResult = ref<BulkBugResult | null>(null)
 
 const testCases = computed(() => store.testCases)
 const testRuns = computed(() => store.testRuns)
@@ -181,6 +206,42 @@ const selectedRun = computed(() =>
 const runnerRun = computed(() =>
   runnerRunId.value ? store.testRuns.find((run) => run.id === runnerRunId.value) ?? null : null,
 )
+
+const bugContextResult = computed(
+  () => selectedRun.value?.results.find((result) => result.id === bugResultId.value) ?? null,
+)
+
+const bugContextLines = computed(() => {
+  const run = selectedRun.value
+  const result = bugContextResult.value
+  if (!run || !result) return []
+  const testCase = caseById.value.get(result.test_case_id)
+  const stepResult = bugStepResultId.value
+    ? (result.step_results ?? []).find((entry) => entry.id === bugStepResultId.value)
+    : undefined
+  const build = run.build_id ? store.builds.find((entry) => entry.id === run.build_id) : undefined
+  const deployment = deploymentForRun(run, store.deployments)
+  return bugContextSummary({
+    runName: run.name,
+    runStatus: run.status,
+    caseTitle: testCase?.title ?? 'Test case',
+    caseRevision: result.case_revision,
+    planName: run.plan_name,
+    suiteName: run.suite_name,
+    step: stepResult
+      ? { position: stepResult.position, action: stepResult.action, status: stepResult.status }
+      : undefined,
+    environmentName: run.environment_id ? environmentName(run.environment_id) : '',
+    releaseName: run.release_id ? store.releases.find((entry) => entry.id === run.release_id)?.name ?? '' : '',
+    sprintName: run.sprint_id ? store.sprints.find((entry) => entry.id === run.sprint_id)?.name ?? '' : '',
+    buildLabel: build
+      ? `#${build.number}${build.commit_sha ? ` (${build.commit_sha.slice(0, 7)})` : ''}`
+      : '',
+    deploymentLabel: deploymentLabel(deployment, store.workspace?.environments ?? []),
+  })
+})
+
+const bulkCandidates = computed(() => selectedRun.value?.results.filter(isFailedResult) ?? [])
 
 const filteredCases = computed(() => {
   const query = caseSearch.value.trim().toLowerCase()
@@ -1164,23 +1225,23 @@ async function patchStep(
 function openBug(result: TestResult, stepResult?: TestStepResult): void {
   if (!canTest.value) return
   const testCase = caseById.value.get(result.test_case_id)
-  const step = stepResult ? stepFor(stepResult) : undefined
-  const position = stepResult?.position || step?.position || 1
-  const expected = stepResult?.expected_result || step?.expected_result || ''
+  const targetStep = stepResult ?? failedStep(result.step_results ?? [])
+  const step = targetStep ? stepFor(targetStep) : undefined
+  const expected = targetStep?.expected_result || step?.expected_result || ''
   bugResultId.value = result.id
-  bugStepResultId.value = stepResult?.id ?? null
+  bugStepResultId.value = targetStep?.id ?? null
+  bugForce.value = false
+  bugDuplicates.value = []
   Object.assign(bugForm, {
-    title: stepResult
-      ? `Defect: ${testCase?.title ?? 'Test case'} — step ${position}`
-      : `Defect: ${testCase?.title ?? 'Test case'}`,
-    description: stepResult?.actual_result || result.actual_result || '',
+    title: autoBugTitle(testCase?.title ?? 'Test case', targetStep),
+    description: targetStep?.actual_result || result.actual_result || '',
     severity: 'major',
     priority: 'high',
-    reproduction_steps: (testCase?.steps ?? [])
-      .map((entry, index) => `${index + 1}. ${entry.action}`)
-      .join('\n'),
+    reproduction_steps:
+      autoReproduction(result.step_results ?? []) ||
+      (testCase?.steps ?? []).map((entry, index) => `${index + 1}. ${entry.action}`).join('\n'),
     expected_result: expected,
-    actual_result: stepResult?.actual_result || result.actual_result || '',
+    actual_result: targetStep?.actual_result || result.actual_result || '',
   })
   bugError.value = ''
   bugOpen.value = true
@@ -1210,16 +1271,81 @@ async function saveBug(): Promise<void> {
         expected_result: bugForm.expected_result,
         actual_result: bugForm.actual_result,
         step_result_id: bugStepResultId.value,
+        force: bugForce.value,
       },
     )
     bugOpen.value = false
+    bugDuplicates.value = []
+    bugForce.value = false
     await store.refresh()
-    toast.success(`${result.key ?? 'Bug'} created and linked to the failed test.`, 'Defect raised')
+    toast.success(`${result.key || 'Bug'} created and linked to the failed test.`, 'Defect raised')
   } catch (error) {
-    bugError.value = error instanceof Error ? error.message : 'Failed to create bug'
+    const duplicates = duplicatesFromError(error)
+    if (duplicates.length) {
+      bugDuplicates.value = duplicates
+      bugError.value = 'A similar open bug already exists. Review the matches below.'
+    } else {
+      bugError.value = error instanceof Error ? error.message : 'Failed to create bug'
+    }
   } finally {
     bugBusy.value = false
   }
+}
+
+async function createBugAnyway(): Promise<void> {
+  bugForce.value = true
+  await saveBug()
+}
+
+function closeBug(): void {
+  if (bugBusy.value) return
+  bugOpen.value = false
+  bugDuplicates.value = []
+  bugForce.value = false
+}
+
+function openBulkBugs(): void {
+  if (!canTest.value || !selectedRun.value) return
+  bulkBugSelected.value = defaultBulkSelection(bulkCandidates.value)
+  bulkBugForce.value = false
+  bulkBugResult.value = null
+  bulkBugError.value = ''
+  bulkBugOpen.value = true
+}
+
+async function submitBulkBugs(): Promise<void> {
+  if (!canTest.value || !selectedRun.value) return
+  if (!bulkBugSelected.value.length) {
+    bulkBugError.value = 'Select at least one failed result.'
+    return
+  }
+  bulkBugBusy.value = true
+  bulkBugError.value = ''
+  try {
+    const result = await api.bulkCreateBugsFromRun(store.projectId, selectedRun.value.id, {
+      result_ids: [...bulkBugSelected.value],
+      force: bulkBugForce.value,
+    })
+    bulkBugResult.value = result
+    await store.refresh()
+    toast.success(bulkSummaryLabel(result), 'Defects from failures')
+  } catch (error) {
+    bulkBugError.value = error instanceof Error ? error.message : 'Failed to create bugs'
+  } finally {
+    bulkBugBusy.value = false
+  }
+}
+
+function closeBulkBugs(): void {
+  if (bulkBugBusy.value) return
+  bulkBugOpen.value = false
+  bulkBugResult.value = null
+}
+
+function bulkResultCaseTitle(resultId: string): string {
+  const result = selectedRun.value?.results.find((entry) => entry.id === resultId)
+  if (!result) return 'Test result'
+  return caseById.value.get(result.test_case_id)?.title ?? 'Test case'
 }
 </script>
 
@@ -2311,6 +2437,24 @@ async function saveBug(): Promise<void> {
           <span class="text-xs font-semibold text-slate-600">{{ percent(runProgress(selectedRun)) }} executed</span>
         </div>
 
+        <div
+          v-if="canTest && bulkCandidates.length"
+          class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50/70 px-3 py-2"
+        >
+          <p class="text-[11px] text-rose-700">
+            {{ bulkCandidates.length }} failed {{ bulkCandidates.length === 1 ? 'case' : 'cases' }} can become
+            traceable defects.
+          </p>
+          <button
+            type="button"
+            class="rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+            data-testid="open-bulk-bugs"
+            @click="openBulkBugs"
+          >
+            Create bugs from failures
+          </button>
+        </div>
+
         <div v-for="result in selectedRun.results ?? []" :key="result.id" data-testid="test-result" class="rounded-xl border border-slate-200">
           <div class="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <div class="min-w-0">
@@ -2451,6 +2595,19 @@ async function saveBug(): Promise<void> {
           <label class="field-label" for="bug-description">Description</label>
           <textarea id="bug-description" v-model="bugForm.description" rows="2" class="field-input" placeholder="Observed behavior and impact" />
         </div>
+        <div
+          v-if="bugContextLines.length"
+          data-testid="bug-context"
+          class="rounded-xl border border-slate-200 bg-slate-50/70 p-3"
+        >
+          <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-600">Captured test context</p>
+          <ul class="mt-1.5 space-y-0.5 text-[11px] text-slate-700">
+            <li v-for="line in bugContextLines" :key="line">{{ line }}</li>
+          </ul>
+          <p class="mt-1.5 text-[10px] text-slate-500">
+            Appended to the description and linked bidirectionally when the bug is created.
+          </p>
+        </div>
         <div class="grid gap-4 sm:grid-cols-3">
           <div>
             <label class="field-label" for="bug-severity">Severity</label>
@@ -2472,7 +2629,7 @@ async function saveBug(): Promise<void> {
             </select>
           </div>
           <div class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
-            Linked to the failed result and its feature automatically.
+            Links the result, run, case, step, environment and build/deployment automatically.
           </div>
         </div>
         <div>
@@ -2489,13 +2646,131 @@ async function saveBug(): Promise<void> {
             <textarea id="bug-actual" v-model="bugForm.actual_result" rows="2" class="field-input" />
           </div>
         </div>
+        <div
+          v-if="bugDuplicates.length"
+          data-testid="bug-duplicates"
+          class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5"
+        >
+          <p class="text-xs font-semibold text-amber-900">Possible duplicate</p>
+          <ul class="mt-1 space-y-1 text-[11px] text-amber-800">
+            <li v-for="duplicate in bugDuplicates" :key="duplicate.id">
+              <span class="font-semibold">{{ duplicate.key }}</span> · {{ duplicate.title }}
+              <span class="text-amber-600">({{ duplicateMatchLabel(duplicate) }})</span>
+            </li>
+          </ul>
+          <p class="mt-1 text-[10px] text-amber-700">
+            Cancel to reuse the existing bug, or create another defect and link it to this result.
+          </p>
+        </div>
         <p v-if="bugError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ bugError }}</p>
       </div>
       <template #footer>
-        <button type="button" class="btn-secondary" :disabled="bugBusy" @click="bugOpen = false">Cancel</button>
-        <button type="button" class="btn-primary" :disabled="bugBusy" @click="saveBug">
+        <button type="button" class="btn-secondary" :disabled="bugBusy" @click="closeBug">Cancel</button>
+        <button
+          v-if="bugDuplicates.length && !bugForce"
+          type="button"
+          class="btn-primary"
+          data-testid="bug-force-create"
+          :disabled="bugBusy"
+          @click="createBugAnyway"
+        >
+          <AppIcon v-if="bugBusy" name="loader" :size="14" class="animate-spin" />
+          {{ bugBusy ? 'Creating…' : 'Create anyway' }}
+        </button>
+        <button v-else type="button" class="btn-primary" :disabled="bugBusy" @click="saveBug">
           <AppIcon v-if="bugBusy" name="loader" :size="14" class="animate-spin" />
           {{ bugBusy ? 'Creating…' : 'Create linked bug' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Bulk bug modal -->
+    <BaseModal
+      v-model="bulkBugOpen"
+      title="Create defects from failures"
+      max-width="lg"
+      :persistent="bulkBugBusy"
+    >
+      <div v-if="!bulkBugResult" class="space-y-4">
+        <p class="text-xs text-slate-600">
+          Every selected failed result becomes a bug with its run, case, step, environment, build and deployment
+          context. Results already linked to a bug are skipped.
+        </p>
+        <div data-testid="bulk-bug-candidates" class="max-h-72 space-y-2 overflow-y-auto pr-1">
+          <label
+            v-for="result in bulkCandidates"
+            :key="result.id"
+            class="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2"
+            :class="result.bug_work_item_id ? 'bg-slate-50 opacity-70' : 'bg-white'"
+          >
+            <input
+              v-model="bulkBugSelected"
+              type="checkbox"
+              class="mt-0.5"
+              :value="result.id"
+              :disabled="Boolean(result.bug_work_item_id)"
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block text-xs font-semibold text-slate-800">{{ caseTitle(result.test_case_id) }}</span>
+              <span class="block text-[10px] text-slate-600">
+                {{ result.step_results?.length ?? 0 }} steps ·
+                {{ result.bug_work_item_id ? 'Bug already linked' : 'Ready to become a defect' }}
+              </span>
+            </span>
+          </label>
+          <p v-if="!bulkCandidates.length" class="text-xs text-slate-500">This run has no failed results.</p>
+        </div>
+        <label class="flex items-center gap-2 text-xs text-slate-700">
+          <input v-model="bulkBugForce" type="checkbox" />
+          Create anyway when a similar open bug exists
+        </label>
+        <p v-if="bulkBugError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ bulkBugError }}</p>
+      </div>
+      <div v-else data-testid="bulk-bug-results" class="space-y-3">
+        <div class="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+          <p class="text-xs font-semibold text-slate-800">{{ bulkSummaryLabel(bulkBugResult) }}</p>
+          <p class="mt-0.5 text-[10px] text-slate-600">
+            Requested {{ bulkBugResult.requested }} of {{ bulkCandidates.length }} failed results.
+          </p>
+        </div>
+        <ul class="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+          <li
+            v-for="item in bulkBugResult.items"
+            :key="item.result_id"
+            class="flex items-start justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2"
+          >
+            <span class="min-w-0">
+              <span class="block text-xs font-semibold text-slate-800">{{ bulkResultCaseTitle(item.result_id) }}</span>
+              <span class="block text-[10px] text-slate-600">{{ bulkItemLabel(item) }}</span>
+            </span>
+            <span
+              class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              :class="{
+                'bg-emerald-100 text-emerald-700': item.status === 'created',
+                'bg-amber-100 text-amber-700': item.status === 'duplicate',
+                'bg-slate-100 text-slate-600': item.status === 'skipped',
+                'bg-red-100 text-red-700': item.status === 'failed',
+              }"
+            >
+              {{ item.status }}
+            </span>
+          </li>
+        </ul>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="bulkBugBusy" @click="closeBulkBugs">
+          {{ bulkBugResult ? 'Close' : 'Cancel' }}
+        </button>
+        <button
+          v-if="!bulkBugResult"
+          type="button"
+          class="btn-primary"
+          data-testid="submit-bulk-bugs"
+          :disabled="bulkBugBusy || !bulkBugSelected.length"
+          @click="submitBulkBugs"
+        >
+          <AppIcon v-if="bulkBugBusy" name="loader" :size="14" class="animate-spin" />
+          {{ bulkBugBusy ? 'Creating…' : `Create ${bulkBugSelected.length} ${bulkBugSelected.length === 1 ? 'defect' : 'defects'}` }}
         </button>
       </template>
     </BaseModal>
