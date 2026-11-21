@@ -827,6 +827,41 @@ properties:
     type: array
     items: { type: string, format: uuid }
   executed_by: { type: [string, "null"], format: uuid }`,
+	"TestRunFinishInput": `type: object
+description: Finishing a run with not_run cases requires force=true and is recorded as an incomplete outcome.
+properties:
+  force: { type: boolean, default: false, description: Complete even when cases are still not run. }`,
+	"TestRunFinishResult": `type: object
+description: Deterministic finish summary. Repeating finish on a completed run returns the same counts with already_completed=true.
+required: [id, status, outcome, total, passed, failed, blocked, skipped, not_run, already_completed]
+properties:
+  id: { type: string, format: uuid }
+  status: { type: string, enum: [completed] }
+  outcome: { type: string, enum: [passed, failed, incomplete], description: incomplete when forced with not_run cases; failed when any case failed. }
+  total: { type: integer, minimum: 0 }
+  passed: { type: integer, minimum: 0 }
+  failed: { type: integer, minimum: 0 }
+  blocked: { type: integer, minimum: 0 }
+  skipped: { type: integer, minimum: 0 }
+  not_run: { type: integer, minimum: 0 }
+  completed_at: { type: [string, "null"], format: date-time }
+  already_completed: { type: boolean }`,
+	"TestStepEvidence": `type: object
+description: A scanned attachment linked to one test step result through evidence_url.
+required: [id, test_step_result_id, filename, evidence_url]
+properties:
+  id: { type: string, format: uuid }
+  test_step_result_id: { type: string, format: uuid }
+  filename: { type: string }
+  mime_type: { type: string }
+  size_bytes: { type: integer, format: int64 }
+  checksum_sha256: { type: string }
+  scan_status: { type: string, description: "clean, skipped or infected. Downloads require clean." }
+  scan_engine: { type: string }
+  scan_detail: { type: string }
+  uploaded_by: { type: [string, "null"], format: uuid }
+  evidence_url: { type: string, description: Project-scoped download URL stored on the step result. }
+  created_at: { type: string, format: date-time }`,
 	"TestCaseInput": `type: object
 description: Creating or editing a case stores an immutable version snapshot. Steps are replaced as a set and each needs an action and an expected result.
 required: [title, feature_id, steps]
@@ -1062,7 +1097,7 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	}
 
 	// Request body.
-	if isAttachmentUpload(route.Method, openAPIPath) {
+	if isFileUpload(route.Method, openAPIPath) {
 		b.WriteString("requestBody:\n  required: true\n  content:\n    multipart/form-data:\n      schema:\n        type: object\n        required: [file]\n        properties:\n          file: { type: string, format: binary }\n")
 	} else if strings.EqualFold(route.Method, "POST") && strings.HasSuffix(openAPIPath, "/watch") {
 		b.WriteString("requestBody:\n  required: false\n  content:\n    application/json:\n      schema: { type: object, additionalProperties: false }\n")
@@ -1141,6 +1176,18 @@ func isWorkItemDetailPath(method, path string) bool {
 
 func isAttachmentUpload(method, path string) bool {
 	return strings.EqualFold(method, "POST") && strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/attachments")
+}
+
+// isEvidenceUpload covers focused-runner evidence: a scanned file attached to
+// one step result of a test run.
+func isEvidenceUpload(method, path string) bool {
+	return strings.EqualFold(method, "POST") &&
+		strings.Contains(path, "/test-runs/") &&
+		strings.HasSuffix(path, "/steps/{stepResultId}/evidence")
+}
+
+func isFileUpload(method, path string) bool {
+	return isAttachmentUpload(method, path) || isEvidenceUpload(method, path)
 }
 
 func isAttachmentDownload(method, path string) bool {
@@ -1300,9 +1347,12 @@ func errorCodes(route server.Route, path string) []string {
 	if strings.HasSuffix(path, "/merge") {
 		codes = append(codes, "422")
 	}
-	if isAttachmentUpload(route.Method, path) ||
+	if isFileUpload(route.Method, path) ||
 		(strings.EqualFold(route.Method, "POST") && strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/links")) {
 		codes = appendUnique(codes, "422")
+	}
+	if strings.HasSuffix(path, "/test-runs/{runId}/finish") {
+		codes = appendUnique(codes, "409")
 	}
 	if successCode(route.Method, path) == "201" && !strings.Contains(path, "/auth/login") {
 		codes = appendUnique(codes, "409")
@@ -1411,6 +1461,8 @@ func requestSchema(method, path string) string {
 		}
 	case strings.HasSuffix(path, "/test-runs/import"):
 		return "TestImport"
+	case strings.HasSuffix(path, "/test-runs/{runId}/finish"):
+		return "TestRunFinishInput"
 	case strings.HasSuffix(path, "/test-runs"), strings.Contains(path, "/test-runs/"):
 		switch {
 		case strings.HasSuffix(path, "/bug"):
@@ -1490,6 +1542,10 @@ func successSchema(method, path string) string {
 		return "TestCaseImportResult"
 	case strings.Contains(path, "/test-cases/") && strings.HasSuffix(path, "/versions"):
 		return "TestCaseVersionList"
+	case strings.HasSuffix(path, "/test-runs/{runId}/finish"):
+		return "TestRunFinishResult"
+	case isEvidenceUpload(method, path):
+		return "TestStepEvidence"
 	case isTestManagementCreate(method, path) || isTestManagementMutation(method, path):
 		return "RevisionResult"
 	case isRevisionedCreate(method, path) || isRevisionedMutation(method, path):
@@ -1557,85 +1613,87 @@ func tagFor(path string) string {
 }
 
 var summaryOverrides = map[string]string{
-	"GET /health":                                                                      "Health probe",
-	"GET /health/live":                                                                 "Liveness probe",
-	"GET /health/ready":                                                                "Readiness probe",
-	"POST /api/v1/auth/login":                                                          "Sign in",
-	"GET /api/v1/auth/me":                                                              "Get the current user",
-	"PATCH /api/v1/auth/me":                                                            "Update the current profile",
-	"POST /api/v1/auth/password":                                                       "Change the current password",
-	"POST /api/v1/auth/stream-ticket":                                                  "Issue a stream ticket",
-	"GET /api/v1/users":                                                                "List directory users",
-	"GET /api/v1/search":                                                               "Search artifacts",
-	"GET /api/v1/admin/users":                                                          "List users",
-	"POST /api/v1/admin/users":                                                         "Create a user",
-	"PATCH /api/v1/admin/users/{userId}":                                               "Update a user",
-	"GET /api/v1/admin/audit/events":                                                   "List audit events",
-	"GET /api/v1/admin/audit/events/{auditId}":                                         "Get an audit event",
-	"GET /api/v1/admin/audit/export":                                                   "Export audit events",
-	"GET /api/v1/admin/audit/verify":                                                   "Verify the audit hash chain",
-	"GET /api/v1/projects":                                                             "List projects",
-	"POST /api/v1/projects":                                                            "Create a project",
-	"GET /api/v1/projects/{id}":                                                        "Get a project",
-	"PATCH /api/v1/projects/{id}":                                                      "Update a project",
-	"GET /api/v1/projects/{id}/workspace":                                              "Get the project workspace",
-	"GET /api/v1/projects/{id}/activity":                                               "List project activity",
-	"GET /api/v1/projects/{id}/traceability":                                           "Get traceability",
-	"GET /api/v1/projects/{id}/reports":                                                "Get project reports",
-	"GET /api/v1/projects/{id}/reports/export":                                         "Export a report",
-	"GET /api/v1/projects/{id}/release-readiness":                                      "Get release readiness",
-	"GET /api/v1/projects/{id}/settings":                                               "Get project settings",
-	"PUT /api/v1/projects/{id}/settings":                                               "Update project settings",
-	"GET /api/v1/projects/{id}/members":                                                "List project members",
-	"POST /api/v1/projects/{id}/members":                                               "Add a project member",
-	"PATCH /api/v1/projects/{id}/members/{userId}":                                     "Update a project member",
-	"DELETE /api/v1/projects/{id}/members/{userId}":                                    "Remove a project member",
-	"GET /api/v1/projects/{id}/stream":                                                 "Stream project events",
-	"GET /api/v1/projects/{id}/ai/search":                                              "Search with AI",
-	"POST /api/v1/projects/{id}/ai/ask":                                                "Ask a question",
-	"GET /api/v1/projects/{id}/ai/insights":                                            "Get AI insights",
-	"POST /api/v1/projects/{id}/pull-requests/{prId}/merge":                            "Merge a pull request",
-	"POST /api/v1/projects/{id}/repositories/{repoId}/provision":                       "Provision a repository",
-	"POST /api/v1/projects/{id}/test-runs/import":                                      "Import test results",
-	"POST /api/v1/projects/{id}/repositories":                                          "Create a repository",
-	"POST /api/v1/projects/{id}/branches":                                              "Create a branch",
-	"POST /api/v1/projects/{id}/pull-requests":                                         "Create a pull request",
-	"PUT /api/v1/projects/{id}/pull-requests/{prId}":                                   "Update a pull request",
-	"POST /api/v1/projects/{id}/environments":                                          "Create an environment",
-	"POST /api/v1/projects/{id}/links":                                                 "Create a link",
-	"DELETE /api/v1/projects/{id}/links/{linkId}":                                      "Delete a link",
-	"POST /api/v1/projects/{id}/tickets":                                               "Create a ticket",
-	"GET /api/v1/projects/{id}/work-items/{itemId}":                                    "Get a work item detail",
-	"POST /api/v1/projects/{id}/work-items/{itemId}/comments":                          "Comment on a work item",
-	"PATCH /api/v1/projects/{id}/comments/{commentId}":                                 "Edit a comment",
-	"DELETE /api/v1/projects/{id}/comments/{commentId}":                                "Delete a comment",
-	"POST /api/v1/projects/{id}/work-items/{itemId}/watch":                             "Watch a work item",
-	"DELETE /api/v1/projects/{id}/work-items/{itemId}/watch":                           "Stop watching a work item",
-	"POST /api/v1/projects/{id}/work-items/{itemId}/attachments":                       "Upload a work item attachment",
-	"GET /api/v1/projects/{id}/attachments/{attachmentId}/download":                    "Download an attachment",
-	"DELETE /api/v1/projects/{id}/attachments/{attachmentId}":                          "Delete an attachment",
-	"POST /api/v1/projects/{id}/work-items/{itemId}/links":                             "Link a work item",
-	"DELETE /api/v1/projects/{id}/work-items/{itemId}/links/{linkId}":                  "Unlink a work item",
-	"POST /api/v1/projects/{id}/test-plans":                                            "Create a test plan",
-	"PUT /api/v1/projects/{id}/test-plans/{planId}":                                    "Update a test plan",
-	"PUT /api/v1/projects/{id}/test-plans/{planId}/suite-order":                        "Reorder test suites",
-	"POST /api/v1/projects/{id}/test-plans/{planId}/suites":                            "Create a test suite",
-	"PUT /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}":                   "Update a test suite",
-	"POST /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases":            "Add cases to a test suite",
-	"DELETE /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases/{caseId}": "Remove a case from a test suite",
-	"POST /api/v1/projects/{id}/test-cases":                                            "Create a test case",
-	"GET /api/v1/projects/{id}/test-cases/export":                                      "Export test cases",
-	"POST /api/v1/projects/{id}/test-cases/import":                                     "Import test cases",
-	"GET /api/v1/projects/{id}/test-cases/{caseId}/versions":                           "List test case versions",
-	"POST /api/v1/projects/{id}/test-shared-steps":                                     "Create a shared step",
-	"PUT /api/v1/projects/{id}/test-shared-steps/{sharedStepId}":                       "Update a shared step",
-	"DELETE /api/v1/projects/{id}/test-shared-steps/{sharedStepId}":                    "Delete a shared step",
-	"POST /api/v1/projects/{id}/test-runs":                                             "Create a test run",
-	"POST /api/v1/webhooks/gitea":                                                      "Receive a Gitea webhook",
-	"POST /api/v1/webhooks/argocd":                                                     "Receive an Argo CD webhook",
-	"POST /api/v1/webhooks/git/{provider}":                                             "Receive a Git provider webhook",
-	"POST /api/v1/webhooks/ci/{provider}":                                              "Receive a CI provider webhook",
-	"POST /api/v1/webhooks/cd/{provider}":                                              "Receive a CD provider webhook",
+	"GET /health":                                                                                   "Health probe",
+	"GET /health/live":                                                                              "Liveness probe",
+	"GET /health/ready":                                                                             "Readiness probe",
+	"POST /api/v1/auth/login":                                                                       "Sign in",
+	"GET /api/v1/auth/me":                                                                           "Get the current user",
+	"PATCH /api/v1/auth/me":                                                                         "Update the current profile",
+	"POST /api/v1/auth/password":                                                                    "Change the current password",
+	"POST /api/v1/auth/stream-ticket":                                                               "Issue a stream ticket",
+	"GET /api/v1/users":                                                                             "List directory users",
+	"GET /api/v1/search":                                                                            "Search artifacts",
+	"GET /api/v1/admin/users":                                                                       "List users",
+	"POST /api/v1/admin/users":                                                                      "Create a user",
+	"PATCH /api/v1/admin/users/{userId}":                                                            "Update a user",
+	"GET /api/v1/admin/audit/events":                                                                "List audit events",
+	"GET /api/v1/admin/audit/events/{auditId}":                                                      "Get an audit event",
+	"GET /api/v1/admin/audit/export":                                                                "Export audit events",
+	"GET /api/v1/admin/audit/verify":                                                                "Verify the audit hash chain",
+	"GET /api/v1/projects":                                                                          "List projects",
+	"POST /api/v1/projects":                                                                         "Create a project",
+	"GET /api/v1/projects/{id}":                                                                     "Get a project",
+	"PATCH /api/v1/projects/{id}":                                                                   "Update a project",
+	"GET /api/v1/projects/{id}/workspace":                                                           "Get the project workspace",
+	"GET /api/v1/projects/{id}/activity":                                                            "List project activity",
+	"GET /api/v1/projects/{id}/traceability":                                                        "Get traceability",
+	"GET /api/v1/projects/{id}/reports":                                                             "Get project reports",
+	"GET /api/v1/projects/{id}/reports/export":                                                      "Export a report",
+	"GET /api/v1/projects/{id}/release-readiness":                                                   "Get release readiness",
+	"GET /api/v1/projects/{id}/settings":                                                            "Get project settings",
+	"PUT /api/v1/projects/{id}/settings":                                                            "Update project settings",
+	"GET /api/v1/projects/{id}/members":                                                             "List project members",
+	"POST /api/v1/projects/{id}/members":                                                            "Add a project member",
+	"PATCH /api/v1/projects/{id}/members/{userId}":                                                  "Update a project member",
+	"DELETE /api/v1/projects/{id}/members/{userId}":                                                 "Remove a project member",
+	"GET /api/v1/projects/{id}/stream":                                                              "Stream project events",
+	"GET /api/v1/projects/{id}/ai/search":                                                           "Search with AI",
+	"POST /api/v1/projects/{id}/ai/ask":                                                             "Ask a question",
+	"GET /api/v1/projects/{id}/ai/insights":                                                         "Get AI insights",
+	"POST /api/v1/projects/{id}/pull-requests/{prId}/merge":                                         "Merge a pull request",
+	"POST /api/v1/projects/{id}/repositories/{repoId}/provision":                                    "Provision a repository",
+	"POST /api/v1/projects/{id}/test-runs/import":                                                   "Import test results",
+	"POST /api/v1/projects/{id}/repositories":                                                       "Create a repository",
+	"POST /api/v1/projects/{id}/branches":                                                           "Create a branch",
+	"POST /api/v1/projects/{id}/pull-requests":                                                      "Create a pull request",
+	"PUT /api/v1/projects/{id}/pull-requests/{prId}":                                                "Update a pull request",
+	"POST /api/v1/projects/{id}/environments":                                                       "Create an environment",
+	"POST /api/v1/projects/{id}/links":                                                              "Create a link",
+	"DELETE /api/v1/projects/{id}/links/{linkId}":                                                   "Delete a link",
+	"POST /api/v1/projects/{id}/tickets":                                                            "Create a ticket",
+	"GET /api/v1/projects/{id}/work-items/{itemId}":                                                 "Get a work item detail",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/comments":                                       "Comment on a work item",
+	"PATCH /api/v1/projects/{id}/comments/{commentId}":                                              "Edit a comment",
+	"DELETE /api/v1/projects/{id}/comments/{commentId}":                                             "Delete a comment",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/watch":                                          "Watch a work item",
+	"DELETE /api/v1/projects/{id}/work-items/{itemId}/watch":                                        "Stop watching a work item",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/attachments":                                    "Upload a work item attachment",
+	"GET /api/v1/projects/{id}/attachments/{attachmentId}/download":                                 "Download an attachment",
+	"DELETE /api/v1/projects/{id}/attachments/{attachmentId}":                                       "Delete an attachment",
+	"POST /api/v1/projects/{id}/work-items/{itemId}/links":                                          "Link a work item",
+	"DELETE /api/v1/projects/{id}/work-items/{itemId}/links/{linkId}":                               "Unlink a work item",
+	"POST /api/v1/projects/{id}/test-plans":                                                         "Create a test plan",
+	"PUT /api/v1/projects/{id}/test-plans/{planId}":                                                 "Update a test plan",
+	"PUT /api/v1/projects/{id}/test-plans/{planId}/suite-order":                                     "Reorder test suites",
+	"POST /api/v1/projects/{id}/test-plans/{planId}/suites":                                         "Create a test suite",
+	"PUT /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}":                                "Update a test suite",
+	"POST /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases":                         "Add cases to a test suite",
+	"DELETE /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases/{caseId}":              "Remove a case from a test suite",
+	"POST /api/v1/projects/{id}/test-cases":                                                         "Create a test case",
+	"GET /api/v1/projects/{id}/test-cases/export":                                                   "Export test cases",
+	"POST /api/v1/projects/{id}/test-cases/import":                                                  "Import test cases",
+	"GET /api/v1/projects/{id}/test-cases/{caseId}/versions":                                        "List test case versions",
+	"POST /api/v1/projects/{id}/test-shared-steps":                                                  "Create a shared step",
+	"PUT /api/v1/projects/{id}/test-shared-steps/{sharedStepId}":                                    "Update a shared step",
+	"DELETE /api/v1/projects/{id}/test-shared-steps/{sharedStepId}":                                 "Delete a shared step",
+	"POST /api/v1/projects/{id}/test-runs":                                                          "Create a test run",
+	"POST /api/v1/projects/{id}/test-runs/{runId}/finish":                                           "Finish a test run",
+	"POST /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}/evidence": "Upload test step evidence",
+	"POST /api/v1/webhooks/gitea":                                                                   "Receive a Gitea webhook",
+	"POST /api/v1/webhooks/argocd":                                                                  "Receive an Argo CD webhook",
+	"POST /api/v1/webhooks/git/{provider}":                                                          "Receive a Git provider webhook",
+	"POST /api/v1/webhooks/ci/{provider}":                                                           "Receive a CI provider webhook",
+	"POST /api/v1/webhooks/cd/{provider}":                                                           "Receive a CD provider webhook",
 }
 
 func summaryFor(method, path string) string {

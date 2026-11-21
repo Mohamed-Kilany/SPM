@@ -763,11 +763,13 @@ func (h *Handler) recomputeResultStatus(ctx context.Context, resultID uuid.UUID)
 }
 
 func (h *Handler) refreshRunStatus(ctx context.Context, runID uuid.UUID) {
-	var remaining int
-	_ = h.store.DB().QueryRow(ctx, `SELECT COUNT(*) FROM test_results WHERE test_run_id=$1 AND status='not_run'`, runID).Scan(&remaining)
-	if remaining == 0 {
-		_, _ = h.store.DB().Exec(ctx, `UPDATE test_runs SET status='completed', completed_at=COALESCE(completed_at, NOW()), updated_at=NOW() WHERE id=$1`, runID)
-	} else {
-		_, _ = h.store.DB().Exec(ctx, `UPDATE test_runs SET status='in_progress', started_at=COALESCE(started_at, NOW()), updated_at=NOW() WHERE id=$1 AND status='planned'`, runID)
+	counts, err := h.loadTestRunCounts(ctx, runID)
+	if err != nil {
+		return
 	}
+	if counts.Total > 0 && counts.NotRun == 0 {
+		_, _ = h.completeTestRun(ctx, runID, counts)
+		return
+	}
+	_, _ = h.store.DB().Exec(ctx, `UPDATE test_runs SET status='in_progress', started_at=COALESCE(started_at, NOW()), updated_at=NOW() WHERE id=$1 AND status='planned'`, runID)
 }

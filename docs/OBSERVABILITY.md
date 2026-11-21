@@ -110,6 +110,32 @@ join key between a metric anomaly and a released tag.
 stale revisions; investigate the UI/API snapshot path before raising it. Revision and ETag
 semantics are in [`docs/DATA-MODEL.md`](DATA-MODEL.md).
 
+### Test execution
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `spm_test_runs_completed_total` | counter | `outcome` (`passed`, `failed`, `incomplete`) | Runs that transitioned to `completed` |
+
+The counter increments exactly once per run, whether completion came from the
+last case result or from `POST .../test-runs/{runId}/finish`. Repeating finish
+returns `already_completed: true` without a second increment. `incomplete`
+means the run was force-finished with `not_run` cases remaining.
+
+The pass rate is computed per run from cases: `passed / (passed + failed)`,
+excluding blocked, skipped and `not_run`. The run-level outcome counter supports
+a coarse trend of how often completed runs are fully green:
+
+```promql
+sum(rate(spm_test_runs_completed_total{outcome="passed"}[7d]))
+/
+clamp_min(sum(rate(spm_test_runs_completed_total[7d])), 1)
+```
+
+Alert on a sustained drop in the `passed` share, or on any increase in
+`outcome="incomplete"` when the project expects full coverage. Finishing rules
+and the outcome mapping are in
+[`docs/TEST-MANAGEMENT.md`](TEST-MANAGEMENT.md#finishing-and-pass-rate).
+
 ### Audit
 
 | Metric | Type | Labels | Meaning |

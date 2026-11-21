@@ -482,6 +482,30 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await expect(detail).toBeVisible()
   await expect(detail).toContainText(PLAN_NAME)
   await expect(detail).toContainText(SUITE_NAME)
+
+  // The focused runner opens from the run detail, records a step from the
+  // keyboard and keeps the snapshot context visible.
+  await detail.getByRole('button', { name: 'Open runner' }).click()
+  const runner = page.getByRole('dialog', { name: RUN_NAME })
+  await expect(runner).toBeVisible()
+  await expect(runner.getByTestId('runner-step')).toContainText('Open checkout with a saved card selected.')
+  const savedStep = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      response.url().includes('/test-runs/') &&
+      response.url().includes('/steps/'),
+  )
+  await page.keyboard.press('p')
+  expect((await savedStep).ok()).toBeTruthy()
+  await expect(runner.getByText('1 passed')).toBeVisible()
+  await runner.getByRole('button', { name: 'Next', exact: true }).click()
+  await expect(runner.getByTestId('runner-step')).toContainText('Confirm the one-tap payment.')
+  await runner.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(runner).toBeHidden()
+
+  // Reopen the read-only detail to raise the bug from the failed step.
+  await page.getByText(RUN_NAME, { exact: true }).first().click()
+  await expect(detail).toBeVisible()
   const firstStep = detail.getByTestId('test-step-result').first()
   await firstStep.getByRole('button', { name: 'Failed', exact: true }).click()
   await expect(firstStep.getByRole('button', { name: /Raise bug/ })).toBeVisible()

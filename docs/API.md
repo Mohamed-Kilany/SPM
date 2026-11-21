@@ -13,7 +13,7 @@ inventory, not hand-maintained.
 | Generator and drift check | `api/cmd/openapi` |
 
 `TestRoutesMatchRegistration` proves the metadata table and the real Gin engine serve the same
-118 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
+120 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
 describe the same operations in both directions. `TestUIClientPathsExist` proves every API path
 used by `ui/src/api/client.ts` is documented.
 

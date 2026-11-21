@@ -6,6 +6,7 @@ import AppIcon from '../AppIcon.vue'
 import StatusPill from './StatusPill.vue'
 import PriorityPill from './PriorityPill.vue'
 import EmptyState from './EmptyState.vue'
+import TestRunRunner from './TestRunRunner.vue'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useToastStore } from '../../stores/toastStore'
@@ -69,6 +70,8 @@ const runError = ref('')
 
 const detailOpen = ref(false)
 const selectedRunId = ref<string | null>(null)
+const runnerOpen = ref(false)
+const runnerRunId = ref<string | null>(null)
 const resultNotes = reactive<Record<string, string>>({})
 const stepNotes = reactive<Record<string, string>>({})
 const stepEvidence = reactive<Record<string, string>>({})
@@ -173,6 +176,10 @@ watch(
 
 const selectedRun = computed(() =>
   selectedRunId.value ? store.testRuns.find((run) => run.id === selectedRunId.value) ?? null : null,
+)
+
+const runnerRun = computed(() =>
+  runnerRunId.value ? store.testRuns.find((run) => run.id === runnerRunId.value) ?? null : null,
 )
 
 const filteredCases = computed(() => {
@@ -1050,10 +1057,35 @@ function openRun(runId: string): void {
   detailOpen.value = true
 }
 
+function openRunner(runId: string): void {
+  if (!store.testRuns.some((run) => run.id === runId)) return
+  runnerRunId.value = runId
+  runnerOpen.value = true
+  if (selectedRunId.value === runId) detailOpen.value = false
+}
+
+function openRunnerFromDetail(): void {
+  if (selectedRunId.value) openRunner(selectedRunId.value)
+}
+
+function openRunnerBug(resultId: string, stepResultId: string): void {
+  const run = runnerRun.value
+  const result = run?.results.find((entry) => entry.id === resultId)
+  if (!run || !result) return
+  const stepResult = (result.step_results ?? []).find((entry) => entry.id === stepResultId)
+  selectedRunId.value = run.id
+  openBug(result, stepResult)
+}
+
+function onRunnerFinished(outcome: string): void {
+  toast.success(`Run finished with outcome ${outcome}.`, 'Test runner')
+}
+
 function applyDeepLink(): void {
   const runId = String(route.query.run ?? '')
   if (runId && store.testRuns.some((run) => run.id === runId)) {
-    openRun(runId)
+    if (String(route.query.focus ?? '') === '1') openRunner(runId)
+    else openRun(runId)
     return
   }
   const caseId = String(route.query.case ?? '')
@@ -1519,12 +1551,15 @@ async function saveBug(): Promise<void> {
           </div>
 
           <div v-if="sortedRuns.length" class="divide-y divide-slate-100">
-            <button
+            <div
               v-for="run in sortedRuns"
               :key="run.id"
-              type="button"
-              class="block w-full px-5 py-4 text-left hover:bg-slate-50"
+              role="button"
+              tabindex="0"
+              class="block w-full cursor-pointer px-5 py-4 text-left hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
               @click="openRun(run.id)"
+              @keydown.enter="openRun(run.id)"
+              @keydown.space.prevent="openRun(run.id)"
             >
               <div class="flex flex-wrap items-start justify-between gap-2">
                 <div class="min-w-0">
@@ -1537,7 +1572,19 @@ async function saveBug(): Promise<void> {
                     {{ [run.plan_name, run.suite_name].filter(Boolean).join(' · ') }} · snapshot
                   </p>
                 </div>
-                <StatusPill :status="run.status" />
+                <div class="flex flex-none items-center gap-2">
+                  <StatusPill :status="run.status" />
+                  <button
+                    v-if="canTest"
+                    type="button"
+                    class="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                    :aria-label="`${run.status === 'completed' ? 'Open summary' : 'Open focused runner'} for ${run.name}`"
+                    @click.stop="openRunner(run.id)"
+                    @keydown.stop
+                  >
+                    {{ run.status === 'completed' ? 'Summary' : 'Run' }}
+                  </button>
+                </div>
               </div>
               <div class="mt-3 flex items-center gap-3">
                 <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
@@ -1564,7 +1611,7 @@ async function saveBug(): Promise<void> {
                 >CI build</span>
                 <span class="ml-auto font-medium text-slate-600">{{ resultCounts(run).total }} results</span>
               </div>
-            </button>
+            </div>
           </div>
           <div v-else class="px-5 py-10">
             <EmptyState
@@ -2369,9 +2416,24 @@ async function saveBug(): Promise<void> {
       </div>
       <template #footer>
 
+        <button v-if="canTest" type="button" class="btn-primary" @click="openRunnerFromDetail">
+          Open runner
+        </button>
         <button type="button" class="btn-secondary" @click="detailOpen = false">Close</button>
       </template>
     </BaseModal>
+
+    <TestRunRunner
+      :open="runnerOpen"
+      :run="runnerRun"
+      :project-id="store.projectId"
+      :case-title="caseTitle"
+      :can-test="canTest"
+      @update:open="runnerOpen = $event"
+      @refresh="store.refresh()"
+      @raise-bug="openRunnerBug"
+      @finished="onRunnerFinished"
+    />
 
     <!-- Bug modal -->
     <BaseModal

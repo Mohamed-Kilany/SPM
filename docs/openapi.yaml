@@ -2749,6 +2749,43 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/test-runs/{runId}/finish:
+    post:
+      tags: ["Tests"]
+      summary: "Finish a test run"
+      operationId: post_api_v1_projects_id_test_runs_runId_finish
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestRunFinishResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestRunFinishInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "runId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}:
     patch:
       tags: ["Tests"]
@@ -2854,6 +2891,55 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TestStepResultInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "runId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "resultId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "stepResultId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}/evidence:
+    post:
+      tags: ["Tests"]
+      summary: "Upload test step evidence"
+      operationId: post_api_v1_projects_id_test_runs_runId_results_resultId_steps_stepResultId_evidence
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestStepEvidence'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
       parameters:
         - name: "id"
           in: path
@@ -4709,3 +4795,41 @@ components:
         expected_result: {type: string}
         test_data: {type: string}
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    TestRunFinishInput:
+      type: object
+      description: Finishing a run with not_run cases requires force=true and is recorded as an incomplete outcome.
+      properties:
+        force: {type: boolean, default: false, description: Complete even when cases are still not run.}
+    TestRunFinishResult:
+      type: object
+      description: Deterministic finish summary. Repeating finish on a completed run returns the same counts with already_completed=true.
+      required: [id, status, outcome, total, passed, failed, blocked, skipped, not_run, already_completed]
+      properties:
+        id: {type: string, format: uuid}
+        status: {type: string, enum: [completed]}
+        outcome: {type: string, enum: [passed, failed, incomplete], description: incomplete when forced with not_run cases; failed when any case failed.}
+        total: {type: integer, minimum: 0}
+        passed: {type: integer, minimum: 0}
+        failed: {type: integer, minimum: 0}
+        blocked: {type: integer, minimum: 0}
+        skipped: {type: integer, minimum: 0}
+        not_run: {type: integer, minimum: 0}
+        completed_at: {type: [string, "null"], format: date-time}
+        already_completed: {type: boolean}
+    TestStepEvidence:
+      type: object
+      description: A scanned attachment linked to one test step result through evidence_url.
+      required: [id, test_step_result_id, filename, evidence_url]
+      properties:
+        id: {type: string, format: uuid}
+        test_step_result_id: {type: string, format: uuid}
+        filename: {type: string}
+        mime_type: {type: string}
+        size_bytes: {type: integer, format: int64}
+        checksum_sha256: {type: string}
+        scan_status: {type: string, description: "clean, skipped or infected. Downloads require clean."}
+        scan_engine: {type: string}
+        scan_detail: {type: string}
+        uploaded_by: {type: [string, "null"], format: uuid}
+        evidence_url: {type: string, description: Project-scoped download URL stored on the step result.}
+        created_at: {type: string, format: date-time}

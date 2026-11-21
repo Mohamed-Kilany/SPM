@@ -27,6 +27,8 @@ import type {
   SprintClosePreview,
   SprintMetrics,
   TestCaseVersionList,
+  TestRunFinishResult,
+  TestStepEvidence,
   TraceabilityResponse,
   Attachment,
   Comment,
@@ -1034,8 +1036,33 @@ export const api = {
     )
   },
 
-  async createBugFromResult(
+  async finishTestRun(
     projectId: string,
+    runId: string,
+    force = false,
+  ): Promise<TestRunFinishResult> {
+    return request<TestRunFinishResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-runs/${encodeURIComponent(runId)}/finish`,
+      { method: 'POST', body: { force } },
+    )
+  },
+
+  async uploadTestStepEvidence(
+    projectId: string,
+    runId: string,
+    resultId: string,
+    stepResultId: string,
+    file: File,
+  ): Promise<TestStepEvidence> {
+    const form = new FormData()
+    form.append('file', file)
+    return request<TestStepEvidence>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-runs/${encodeURIComponent(runId)}/results/${encodeURIComponent(resultId)}/steps/${encodeURIComponent(stepResultId)}/evidence`,
+      { method: 'POST', body: form, timeoutMs: 60_000 },
+    )
+  },
+
+  async createBugFromResult(    projectId: string,
     runId: string,
     resultId: string,
     payload: unknown,

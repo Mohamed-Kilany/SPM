@@ -111,6 +111,12 @@ readable in history.
 | `POST` | `/projects/{id}/test-shared-steps` | Create a shared step template |
 | `PUT` | `/projects/{id}/test-shared-steps/{sharedStepId}` | Update a template |
 | `DELETE` | `/projects/{id}/test-shared-steps/{sharedStepId}` | Delete a template; copies keep their text |
+| `POST` | `/projects/{id}/test-runs` | Create a run from IDs, filter, suite, plan or every case |
+| `POST` | `/projects/{id}/test-runs/{runId}/finish` | Finish a run and return its summary |
+| `PATCH` | `/projects/{id}/test-runs/{runId}/results/{resultId}` | Record a case-level result |
+| `PATCH` | `/projects/{id}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}` | Record a step result |
+| `POST` | `/projects/{id}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}/evidence` | Upload scanned step evidence |
+| `POST` | `/projects/{id}/test-runs/{runId}/results/{resultId}/bug` | Create a linked bug from a failure |
 
 Every mutation returns the standard revision envelope and ETag. Updates,
 reorders and membership changes require `If-Match`, `?expected_version=` or an
@@ -172,6 +178,73 @@ step when its position still matches and is nullable otherwise
 | `test_step_results.case_revision` | Revision the step was executed against |
 | `test_step_results.position` / `action` / `expected_result` / `test_data` | Snapshot of the version's step |
 | `test_step_results.test_step_id` | Optional link to the live step, by position |
+
+## Focused runner
+
+`TestRunRunner.vue` executes one run in a dedicated modal, one step at a time.
+The left list shows every step grouped by case with a status dot; the current
+panel renders the snapshotted action, expected result and test data so later
+case edits never change what the tester sees.
+
+- **Status shortcuts:** `P` passed, `F` failed, `B` blocked, `S` skipped. The
+  buttons carry the same hints. `←`/`→` (and `↑`/`↓`) move between steps,
+  `G` raises a linked bug from the current failed step and `E` opens the
+  evidence picker. Shortcuts are ignored while focus is in an input, textarea
+  or select.
+- **Autosave:** step notes are saved 700 ms after the last keystroke. Status
+  changes save immediately. Closing or finishing flushes pending drafts, so a
+  status click never waits for the note debounce.
+- **Resume:** the current step, note drafts and evidence URLs are stored under
+  `spm.runner.<projectId>.<runId>`. Reopening a run restores the draft and
+  continues at the last step; finishing a run clears the key. Corrupt storage
+  is ignored rather than blocking execution.
+- **Deep link:** `?tab=tests&run=<runId>&focus=1` opens the focused runner;
+  without `focus=1` the read-only run detail opens.
+- **Bug shortcut:** a failed step shows "Raise linked bug" (or `G`), prefilled
+  with the case title, position, expected and actual results. TST-04 extends
+  this into full defect traceability.
+
+### Step evidence
+
+`POST .../steps/{stepResultId}/evidence` is multipart with one `file` part.
+Evidence reuses the work item attachment pipeline: extension allow-list,
+magic-byte validation, active-markup rejection, EICAR detection, the configured
+`ATTACHMENT_MAX_BYTES` limit (10 MiB by default) and ClamAV when
+`CLAMAV_ADDR` is set. The attachment row uses
+`entity_type='test_step_result'` and `entity_id=<stepResultId>`; the step's
+`evidence_url` is set to the project-scoped download URL. Downloads require
+`scan_status='clean'`. Replacing a file points the step at the new attachment;
+the previous file stays addressable by ID for audit purposes.
+
+## Finishing and pass rate
+
+`POST .../test-runs/{runId}/finish` is idempotent:
+
+- An in-progress run with `not_run` cases returns `409 RUN_INCOMPLETE` unless
+  the body is `{"force": true}`. The UI opens a confirmation instead of
+  finishing silently.
+- A forced finish leaves `not_run` counts in the summary and records the
+  outcome as `incomplete`.
+- Otherwise the outcome is `failed` when any case failed and `passed` when all
+  remaining cases passed, were blocked or were skipped.
+- Repeating finish on a completed run returns the same counts with
+  `already_completed: true`; it never double counts the metric.
+
+Automatic completion still happens when the last case receives a result, so
+finish is primarily the explicit boundary and summary view. Runs snapshot the
+case revision, so a completed run's summary is stable.
+
+`spm_test_runs_completed_total{outcome}` is incremented exactly once per
+transition to `completed`, with `outcome` limited to `passed`, `failed` or
+`incomplete`. The pass rate is:
+
+```text
+passed / (passed + failed)
+```
+
+Blocked, skipped and `not_run` cases are excluded from the denominator and
+reported separately; a forced incomplete run is visible through its
+`incomplete` counter rather than being hidden in the pass rate.
 
 ## Assignment and validation
 

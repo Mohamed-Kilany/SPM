@@ -220,8 +220,10 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodDelete, "/test-shared-steps/:sharedStepId", auth.CapTestWrite, h.Workspace.DeleteSharedStep)
 		project(http.MethodPost, "/test-runs", auth.CapTestWrite, h.Workspace.CreateTestRun)
 		project(http.MethodPost, "/test-runs/import", auth.CapTestWrite, h.Workspace.ImportTestRun)
+		project(http.MethodPost, "/test-runs/:runId/finish", auth.CapTestWrite, h.Workspace.FinishTestRun)
 		project(http.MethodPatch, "/test-runs/:runId/results/:resultId", auth.CapTestWrite, h.Workspace.PatchTestResult)
 		project(http.MethodPatch, "/test-runs/:runId/results/:resultId/steps/:stepResultId", auth.CapTestWrite, h.Workspace.PatchTestStepResult)
+		project(http.MethodPost, "/test-runs/:runId/results/:resultId/steps/:stepResultId/evidence", auth.CapTestWrite, h.Workspace.UploadTestStepEvidence)
 		project(http.MethodPost, "/test-runs/:runId/results/:resultId/bug", auth.CapTestWrite, h.Workspace.CreateBugFromResult)
 
 		// Git and delivery. Builds, deployments, health checks and rollbacks

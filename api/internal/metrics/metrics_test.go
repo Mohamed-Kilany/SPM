@@ -237,6 +237,26 @@ func TestPlanningConflictCounter(t *testing.T) {
 	}
 }
 
+func TestTestRunCompletionCounter(t *testing.T) {
+	registry := newTestRegistry()
+	registry.ObserveTestRunCompleted("passed")
+	registry.ObserveTestRunCompleted("passed")
+	registry.ObserveTestRunCompleted("failed")
+	registry.ObserveTestRunCompleted("unknown")
+
+	completions := family(t, registry, "spm_test_runs_completed_total")
+	if len(completions.GetMetric()) != 3 {
+		t.Fatalf("completion series = %d, want passed, failed and incomplete", len(completions.GetMetric()))
+	}
+	values := map[string]float64{}
+	for _, metric := range completions.GetMetric() {
+		values[labelValue(metric, "outcome")] = metric.GetCounter().GetValue()
+	}
+	if values["passed"] != 2 || values["failed"] != 1 || values["incomplete"] != 1 {
+		t.Fatalf("completion values = %v, want passed=2 failed=1 incomplete=1", values)
+	}
+}
+
 func TestAuditMetrics(t *testing.T) {
 	registry := newTestRegistry()
 	registry.ObserveAuditWrite(10*time.Millisecond, nil)
