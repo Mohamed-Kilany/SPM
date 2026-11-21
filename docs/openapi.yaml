@@ -2212,6 +2212,64 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/test-cases/export:
+    get:
+      tags: ["Tests"]
+      summary: "Export test cases"
+      operationId: get_api_v1_projects_id_test_cases_export
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseExport'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-cases/import:
+    post:
+      tags: ["Tests"]
+      summary: "Import test cases"
+      operationId: post_api_v1_projects_id_test_cases_import
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseImportResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestCaseImportInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/test-cases/{caseId}:
     delete:
       tags: ["Tests"]
@@ -2281,6 +2339,35 @@ paths:
       parameters:
         - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
         - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "caseId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-cases/{caseId}/versions:
+    get:
+      tags: ["Tests"]
+      summary: "List test case versions"
+      operationId: get_api_v1_projects_id_test_cases_caseId_versions
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseVersionList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
         - name: "id"
           in: path
           required: true
@@ -2781,6 +2868,120 @@ paths:
           required: true
           schema: {type: string}
         - name: "stepResultId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-shared-steps:
+    post:
+      tags: ["Tests"]
+      summary: "Create a shared step"
+      operationId: post_api_v1_projects_id_test_shared_steps
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSharedStepInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-shared-steps/{sharedStepId}:
+    delete:
+      tags: ["Tests"]
+      summary: "Delete a shared step"
+      operationId: delete_api_v1_projects_id_test_shared_steps_sharedStepId
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sharedStepId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Tests"]
+      summary: "Update a shared step"
+      operationId: put_api_v1_projects_id_test_shared_steps_sharedStepId
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSharedStepInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "sharedStepId"
           in: path
           required: true
           schema: {type: string}
@@ -3729,21 +3930,33 @@ components:
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     TestCaseInput:
       type: object
-      required: [title]
+      description: Creating or editing a case stores an immutable version snapshot. Steps are replaced as a set and each needs an action and an expected result.
+      required: [title, feature_id, steps]
       properties:
         feature_id: {type: string, format: uuid}
-        title: {type: string}
+        title: {type: string, maxLength: 255}
         description: {type: string}
         preconditions: {type: string}
-        priority: {type: string}
-        type: {type: string}
+        type: {type: string, enum: [manual, automated], default: manual}
+        priority: {type: string, enum: [low, medium, high, critical], default: medium}
+        status: {type: string, enum: [draft, ready, deprecated], default: draft}
+        automation_ref: {type: string, maxLength: 1024}
+        owner_id: {type: [string, "null"], format: uuid, description: Must be a project member.}
+        tags:
+          type: array
+          items: {type: string}
         steps:
           type: array
+          minItems: 1
+          maxItems: 200
           items:
             type: object
+            required: [action, expected_result]
             properties:
+              shared_step_id: {type: [string, "null"], format: uuid, description: Optional template this step was copied from; the text is still stored on the case.}
               action: {type: string}
               expected_result: {type: string}
+              test_data: {type: string}
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     TestRunInput:
       type: object
@@ -4350,4 +4563,149 @@ components:
         assignee_id: {type: [string, "null"], format: uuid, description: Must be a project member.}
         position: {type: [integer, "null"], minimum: 0, description: Omit on create to append.}
         archived: {type: boolean, default: false}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    TestCaseExport:
+      type: object
+      description: Portable JSON document accepted by the import endpoint in the same project.
+      required: [format, exported_at, project_id, cases]
+      properties:
+        format: {type: string, enum: [spm.test-cases.v1]}
+        exported_at: {type: string, format: date-time}
+        project_id: {type: string, format: uuid}
+        cases:
+          type: array
+          items:
+            type: object
+            required: [title, steps]
+            properties:
+              feature_id: {type: [string, "null"], format: uuid}
+              feature_title: {type: string}
+              title: {type: string}
+              description: {type: string}
+              preconditions: {type: string}
+              type: {type: string, enum: [manual, automated]}
+              priority: {type: string, enum: [low, medium, high, critical]}
+              status: {type: string, enum: [draft, ready, deprecated]}
+              automation_ref: {type: string}
+              owner_id: {type: [string, "null"], format: uuid}
+              tags:
+                type: array
+                items: {type: string}
+              steps:
+                type: array
+                items:
+                  type: object
+                  required: [action, expected_result]
+                  properties:
+                    action: {type: string}
+                    expected_result: {type: string}
+                    test_data: {type: string}
+    TestCaseImportInput:
+      type: object
+      description: Every case is validated before the first insert, and all cases are written in one transaction. A case without feature_id is matched by feature_title within the project.
+      required: [cases]
+      properties:
+        format: {type: string, enum: [spm.test-cases.v1]}
+        cases:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [title, steps]
+            properties:
+              feature_id: {type: [string, "null"], format: uuid}
+              feature_title: {type: string, description: Used when feature_id is absent; matched case-insensitively in the project.}
+              title: {type: string}
+              description: {type: string}
+              preconditions: {type: string}
+              type: {type: string, enum: [manual, automated]}
+              priority: {type: string, enum: [low, medium, high, critical]}
+              status: {type: string, enum: [draft, ready, deprecated]}
+              automation_ref: {type: string}
+              owner_id: {type: [string, "null"], format: uuid}
+              tags:
+                type: array
+                items: {type: string}
+              steps:
+                type: array
+                minItems: 1
+                maxItems: 200
+                items:
+                  type: object
+                  required: [action, expected_result]
+                  properties:
+                    action: {type: string}
+                    expected_result: {type: string}
+                    test_data: {type: string}
+    TestCaseImportResult:
+      type: object
+      required: [format, imported, cases]
+      properties:
+        format: {type: string, enum: [spm.test-cases.v1]}
+        imported: {type: integer, minimum: 0}
+        cases:
+          type: array
+          items:
+            type: object
+            required: [id, title, revision]
+            properties:
+              id: {type: string, format: uuid}
+              title: {type: string}
+              revision: {type: integer, format: int64, minimum: 1}
+    TestCaseVersion:
+      type: object
+      description: Immutable snapshot written by every case create and edit. Runs record the revision they executed.
+      required: [id, test_case_id, revision, title, changed_by_name, created_at, steps]
+      properties:
+        id: {type: string, format: uuid}
+        test_case_id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        feature_id: {type: [string, "null"], format: uuid}
+        feature_title: {type: string}
+        title: {type: string}
+        description: {type: string}
+        preconditions: {type: string}
+        type: {type: string, enum: [manual, automated]}
+        priority: {type: string, enum: [low, medium, high, critical]}
+        status: {type: string, enum: [draft, ready, deprecated]}
+        automation_ref: {type: string}
+        owner_id: {type: [string, "null"], format: uuid}
+        tags:
+          type: array
+          items: {type: string}
+        changed_by: {type: [string, "null"], format: uuid}
+        changed_by_name: {type: string, description: Display name captured with the change so history survives a rename.}
+        created_at: {type: string, format: date-time}
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestCaseVersionStep'
+    TestCaseVersionList:
+      type: object
+      required: [test_case_id, total, versions]
+      properties:
+        test_case_id: {type: string, format: uuid}
+        total: {type: integer, minimum: 0}
+        versions:
+          type: array
+          description: Newest revision first.
+          items:
+            $ref: '#/components/schemas/TestCaseVersion'
+    TestCaseVersionStep:
+      type: object
+      required: [position, action, expected_result]
+      properties:
+        position: {type: integer, minimum: 1}
+        action: {type: string}
+        expected_result: {type: string}
+        test_data: {type: string}
+    TestSharedStepInput:
+      type: object
+      description: A reusable step template. Values are copied into a case when inserted, so editing or deleting a template never rewrites existing cases.
+      required: [name, action, expected_result]
+      properties:
+        name: {type: string, maxLength: 255}
+        action: {type: string}
+        expected_result: {type: string}
+        test_data: {type: string}
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}

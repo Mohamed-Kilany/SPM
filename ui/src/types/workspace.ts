@@ -318,12 +318,60 @@ export interface Environment {
 export interface TestStep {
   id: string
   test_case_id: string
+  shared_step_id: string | null
   position: number
   action: string
   expected_result: string
   test_data: string
   created_at: string
   updated_at: string
+}
+
+export interface TestSharedStep {
+  id: string
+  project_id: string
+  name: string
+  action: string
+  expected_result: string
+  test_data: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
+export interface TestCaseVersionStep {
+  position: number
+  action: string
+  expected_result: string
+  test_data: string
+}
+
+export interface TestCaseVersion {
+  id: string
+  test_case_id: string
+  revision: number
+  feature_id: string | null
+  feature_title: string
+  title: string
+  description: string
+  preconditions: string
+  type: string
+  priority: Priority | string
+  status: string
+  automation_ref: string
+  owner_id: string | null
+  tags: string[]
+  changed_by: string | null
+  changed_by_name: string
+  created_at: string
+  steps: TestCaseVersionStep[]
+}
+
+export interface TestCaseVersionList {
+  test_case_id: string
+  total: number
+  versions: TestCaseVersion[]
 }
 
 export interface TestCase {
@@ -386,7 +434,12 @@ export interface TestSuiteCase {
 export interface TestStepResult {
   id: string
   test_result_id: string
-  test_step_id: string
+  test_step_id: string | null
+  case_revision: number
+  position: number
+  action: string
+  expected_result: string
+  test_data: string
   status: TestStatus | string
   actual_result: string
   evidence_url: string
@@ -703,6 +756,7 @@ export interface Workspace {
   test_plans: TestPlan[]
   test_suites: TestSuite[]
   test_suite_cases: TestSuiteCase[]
+  test_shared_steps: TestSharedStep[]
   test_runs: TestRun[]
   test_results: TestResult[]
   test_step_results: TestStepResult[]

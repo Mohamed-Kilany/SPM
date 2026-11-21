@@ -827,6 +827,173 @@ properties:
     type: array
     items: { type: string, format: uuid }
   executed_by: { type: [string, "null"], format: uuid }`,
+	"TestCaseInput": `type: object
+description: Creating or editing a case stores an immutable version snapshot. Steps are replaced as a set and each needs an action and an expected result.
+required: [title, feature_id, steps]
+properties:
+  feature_id: { type: string, format: uuid }
+  title: { type: string, maxLength: 255 }
+  description: { type: string }
+  preconditions: { type: string }
+  type: { type: string, enum: [manual, automated], default: manual }
+  priority: { type: string, enum: [low, medium, high, critical], default: medium }
+  status: { type: string, enum: [draft, ready, deprecated], default: draft }
+  automation_ref: { type: string, maxLength: 1024 }
+  owner_id: { type: [string, "null"], format: uuid, description: Must be a project member. }
+  tags:
+    type: array
+    items: { type: string }
+  steps:
+    type: array
+    minItems: 1
+    maxItems: 200
+    items:
+      type: object
+      required: [action, expected_result]
+      properties:
+        shared_step_id: { type: [string, "null"], format: uuid, description: Optional template this step was copied from; the text is still stored on the case. }
+        action: { type: string }
+        expected_result: { type: string }
+        test_data: { type: string }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
+	"TestCaseVersionStep": `type: object
+required: [position, action, expected_result]
+properties:
+  position: { type: integer, minimum: 1 }
+  action: { type: string }
+  expected_result: { type: string }
+  test_data: { type: string }`,
+	"TestCaseVersion": `type: object
+description: Immutable snapshot written by every case create and edit. Runs record the revision they executed.
+required: [id, test_case_id, revision, title, changed_by_name, created_at, steps]
+properties:
+  id: { type: string, format: uuid }
+  test_case_id: { type: string, format: uuid }
+  revision: { type: integer, format: int64, minimum: 1 }
+  feature_id: { type: [string, "null"], format: uuid }
+  feature_title: { type: string }
+  title: { type: string }
+  description: { type: string }
+  preconditions: { type: string }
+  type: { type: string, enum: [manual, automated] }
+  priority: { type: string, enum: [low, medium, high, critical] }
+  status: { type: string, enum: [draft, ready, deprecated] }
+  automation_ref: { type: string }
+  owner_id: { type: [string, "null"], format: uuid }
+  tags:
+    type: array
+    items: { type: string }
+  changed_by: { type: [string, "null"], format: uuid }
+  changed_by_name: { type: string, description: Display name captured with the change so history survives a rename. }
+  created_at: { type: string, format: date-time }
+  steps:
+    type: array
+    items:
+      $ref: '#/components/schemas/TestCaseVersionStep'`,
+	"TestCaseVersionList": `type: object
+required: [test_case_id, total, versions]
+properties:
+  test_case_id: { type: string, format: uuid }
+  total: { type: integer, minimum: 0 }
+  versions:
+    type: array
+    description: Newest revision first.
+    items:
+      $ref: '#/components/schemas/TestCaseVersion'`,
+	"TestCaseExport": `type: object
+description: Portable JSON document accepted by the import endpoint in the same project.
+required: [format, exported_at, project_id, cases]
+properties:
+  format: { type: string, enum: [spm.test-cases.v1] }
+  exported_at: { type: string, format: date-time }
+  project_id: { type: string, format: uuid }
+  cases:
+    type: array
+    items:
+      type: object
+      required: [title, steps]
+      properties:
+        feature_id: { type: [string, "null"], format: uuid }
+        feature_title: { type: string }
+        title: { type: string }
+        description: { type: string }
+        preconditions: { type: string }
+        type: { type: string, enum: [manual, automated] }
+        priority: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [draft, ready, deprecated] }
+        automation_ref: { type: string }
+        owner_id: { type: [string, "null"], format: uuid }
+        tags:
+          type: array
+          items: { type: string }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [action, expected_result]
+            properties:
+              action: { type: string }
+              expected_result: { type: string }
+              test_data: { type: string }`,
+	"TestCaseImportInput": `type: object
+description: Every case is validated before the first insert, and all cases are written in one transaction. A case without feature_id is matched by feature_title within the project.
+required: [cases]
+properties:
+  format: { type: string, enum: [spm.test-cases.v1] }
+  cases:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [title, steps]
+      properties:
+        feature_id: { type: [string, "null"], format: uuid }
+        feature_title: { type: string, description: Used when feature_id is absent; matched case-insensitively in the project. }
+        title: { type: string }
+        description: { type: string }
+        preconditions: { type: string }
+        type: { type: string, enum: [manual, automated] }
+        priority: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [draft, ready, deprecated] }
+        automation_ref: { type: string }
+        owner_id: { type: [string, "null"], format: uuid }
+        tags:
+          type: array
+          items: { type: string }
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: object
+            required: [action, expected_result]
+            properties:
+              action: { type: string }
+              expected_result: { type: string }
+              test_data: { type: string }`,
+	"TestCaseImportResult": `type: object
+required: [format, imported, cases]
+properties:
+  format: { type: string, enum: [spm.test-cases.v1] }
+  imported: { type: integer, minimum: 0 }
+  cases:
+    type: array
+    items:
+      type: object
+      required: [id, title, revision]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }`,
+	"TestSharedStepInput": `type: object
+description: A reusable step template. Values are copied into a case when inserted, so editing or deleting a template never rewrites existing cases.
+required: [name, action, expected_result]
+properties:
+  name: { type: string, maxLength: 255 }
+  action: { type: string }
+  expected_result: { type: string }
+  test_data: { type: string }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
 }
 
 func sortedSchemaNames() []string {
@@ -929,7 +1096,7 @@ func isRevisionedPath(path string) bool {
 		return false
 	}
 	switch parts[4] {
-	case "prds", "epics", "features", "work-items", "sprints", "releases", "test-plans", "test-cases", "test-runs":
+	case "prds", "epics", "features", "work-items", "sprints", "releases", "test-plans", "test-cases", "test-runs", "test-shared-steps":
 		return true
 	}
 	return false
@@ -995,6 +1162,7 @@ func isRevisionedCreate(method, path string) bool {
 		strings.HasSuffix(path, "/sprints"),
 		strings.HasSuffix(path, "/releases"),
 		strings.HasSuffix(path, "/test-cases"),
+		strings.HasSuffix(path, "/test-shared-steps"),
 		strings.HasSuffix(path, "/test-runs"):
 		return true
 	}
@@ -1253,6 +1421,10 @@ func requestSchema(method, path string) string {
 			return "TestResultInput"
 		}
 		return "TestRunInput"
+	case strings.HasSuffix(path, "/test-cases/import"):
+		return "TestCaseImportInput"
+	case strings.HasSuffix(path, "/test-shared-steps"), strings.Contains(path, "/test-shared-steps/"):
+		return "TestSharedStepInput"
 	case strings.HasSuffix(path, "/test-cases"), strings.Contains(path, "/test-cases/"):
 		return "TestCaseInput"
 	case strings.HasSuffix(path, "/repositories"), strings.Contains(path, "/repositories/"):
@@ -1312,6 +1484,12 @@ func successSchema(method, path string) string {
 		return "LinkedArtifact"
 	case strings.EqualFold(method, "POST") && strings.Contains(path, "/test-plans/") && strings.HasSuffix(path, "/cases"):
 		return "SuiteCasesResult"
+	case strings.HasSuffix(path, "/test-cases/export"):
+		return "TestCaseExport"
+	case strings.HasSuffix(path, "/test-cases/import"):
+		return "TestCaseImportResult"
+	case strings.Contains(path, "/test-cases/") && strings.HasSuffix(path, "/versions"):
+		return "TestCaseVersionList"
 	case isTestManagementCreate(method, path) || isTestManagementMutation(method, path):
 		return "RevisionResult"
 	case isRevisionedCreate(method, path) || isRevisionedMutation(method, path):
@@ -1446,6 +1624,12 @@ var summaryOverrides = map[string]string{
 	"POST /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases":            "Add cases to a test suite",
 	"DELETE /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases/{caseId}": "Remove a case from a test suite",
 	"POST /api/v1/projects/{id}/test-cases":                                            "Create a test case",
+	"GET /api/v1/projects/{id}/test-cases/export":                                      "Export test cases",
+	"POST /api/v1/projects/{id}/test-cases/import":                                     "Import test cases",
+	"GET /api/v1/projects/{id}/test-cases/{caseId}/versions":                           "List test case versions",
+	"POST /api/v1/projects/{id}/test-shared-steps":                                     "Create a shared step",
+	"PUT /api/v1/projects/{id}/test-shared-steps/{sharedStepId}":                       "Update a shared step",
+	"DELETE /api/v1/projects/{id}/test-shared-steps/{sharedStepId}":                    "Delete a shared step",
 	"POST /api/v1/projects/{id}/test-runs":                                             "Create a test run",
 	"POST /api/v1/webhooks/gitea":                                                      "Receive a Gitea webhook",
 	"POST /api/v1/webhooks/argocd":                                                     "Receive an Argo CD webhook",
