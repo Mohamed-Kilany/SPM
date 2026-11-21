@@ -13,7 +13,7 @@ inventory, not hand-maintained.
 | Generator and drift check | `api/cmd/openapi` |
 
 `TestRoutesMatchRegistration` proves the metadata table and the real Gin engine serve the same
-112 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
+118 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
 describe the same operations in both directions. `TestUIClientPathsExist` proves every API path
 used by `ui/src/api/client.ts` is documented.
 
@@ -69,10 +69,10 @@ or a document that fails OpenAPI validation, fails the gate.
 ## Optimistic concurrency
 
 Planning artifacts are revisioned: PRDs, epics, features, work items, test
-plans, test suites, test cases, test runs, sprints and releases. `revision` is an
-internal integer that the database increments on every update; it is not the
-human-facing `version` string on a PRD or release. The model is described in
-[`DATA-MODEL.md`](DATA-MODEL.md).
+plans, test suites, test cases, test runs, test shared steps, sprints and
+releases. `revision` is an internal integer that the database increments on
+every update; it is not the human-facing `version` string on a PRD or release.
+The model is described in [`DATA-MODEL.md`](DATA-MODEL.md).
 
 A mutating request must send the revision it read:
 
@@ -104,7 +104,10 @@ links and attachments) are described in [`WORK-ITEMS.md`](WORK-ITEMS.md).
 Sprint start/close, carry-over, velocity, release freeze, scope exceptions and
 sign-off are described in [`PLANNING-LIFECYCLE.md`](PLANNING-LIFECYCLE.md).
 Test plans, ordered suites, filter/CSV membership and run snapshots are
-described in [`TEST-MANAGEMENT.md`](TEST-MANAGEMENT.md).
+described in [`TEST-MANAGEMENT.md`](TEST-MANAGEMENT.md). The same document covers
+case version history (`GET /test-cases/{caseId}/versions`), shared step
+templates (`/test-shared-steps`) and the `spm.test-cases.v1` JSON
+export/import endpoints.
 
 The UI sends `If-Match` from the freshest workspace snapshot. On `409` it
 refreshes the project, keeps the edit dialog open and asks the user to review

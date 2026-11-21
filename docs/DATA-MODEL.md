@@ -37,7 +37,10 @@ Project
 │       └── Feature ── (required Epic)
 │           ├── Work item ── (optional Feature, self-referencing parent)
 │           └── Test case ── (optional Feature)
-│               └── Test step
+│               ├── Test step ── (optional shared step template)
+│               └── Test case version
+│                   └── Test case version step
+├── Test shared step ── (project-scoped template)
 ├── Test plan
 │   └── Test suite
 │       └── Test suite case ── Test case
@@ -56,7 +59,7 @@ Project
 │   └── Health check
 ├── Test run ── Environment, Release, Sprint, Build
 │   └── Test result ── Test case
-│       └── Test step result ── Test step
+│       └── Test step result ── (optional Test step)
 ├── Artifact link
 ├── Activity event
 ├── Comment
@@ -78,12 +81,16 @@ unlinked (`SET NULL`).
 | `projects` → project-scoped tables | `CASCADE` | Deleting a project removes all of its planning, delivery, test and collaboration rows. |
 | `epics` → `features` | `CASCADE` | A feature cannot exist without its epic. |
 | `test_cases` → `test_steps` | `CASCADE` | Steps are owned by their case. |
+| `test_cases` → `test_case_versions` | `CASCADE` | Version history is owned by its case. |
+| `test_case_versions` → `test_case_version_steps` | `CASCADE` | Snapshot steps are owned by their version. |
+| `test_shared_steps` → `test_steps` | `SET NULL` | Deleting a template keeps the copied text and only drops provenance. |
 | `test_plans` → `test_suites` | `CASCADE` | Suites are owned by their plan. |
 | `test_suites` → `test_suite_cases` | `CASCADE` | Membership belongs to its suite. |
 | `test_cases` → `test_suite_cases` | `CASCADE` | Deleting a case removes its suite membership. |
 | `test_runs` → `test_results` | `CASCADE` | Results are owned by their run. |
 | `test_plans`/`test_suites` → `test_runs` | `SET NULL` | Historical runs keep `plan_name`/`suite_name` snapshots. |
 | `test_results` → `test_step_results` | `CASCADE` | Step results are owned by their result. |
+| `test_steps` → `test_step_results` | `SET NULL` | Step results keep the text they snapshotted when the live step is replaced. |
 | `git_repositories` → branches, commits, pull requests | `CASCADE` | Repository history is removed with the repository. |
 | `pull_requests` → reviews | `CASCADE` | Reviews are owned by their pull request. |
 | `deployments` → approvals, health checks | `CASCADE` | Evidence is owned by its deployment. |
@@ -99,16 +106,21 @@ the missing link as "not linked", and nothing in the UI assumes a target still
 exists. New tables must follow the same rule: `NOT NULL` parents cascade,
 optional references set null.
 
+`test_case_versions` and `test_case_version_steps` are immutable: the API only
+inserts them, never updates them, and reading history is a plain query. A live
+case can therefore be rewritten or deleted-safe (cascading its own history)
+without ever mutating a snapshot that a run already recorded.
+
 `work_items.parent_id` additionally has a `CHECK (parent_id IS NULL OR parent_id
 <> id)` constraint (`work_items_no_self_parent`) so a direct write cannot create
 a self-cycle. Deeper cycles are rejected by the application hierarchy validation.
 
 ## 4. Optimistic concurrency
 
-Ten planning tables carry an internal concurrency token:
+Eleven planning tables carry an internal concurrency token:
 
 `prds`, `epics`, `features`, `work_items`, `test_plans`, `test_suites`,
-`test_cases`, `test_runs`, `sprints`, `releases`.
+`test_cases`, `test_runs`, `test_shared_steps`, `sprints`, `releases`.
 
 ```sql
 revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0)
@@ -147,9 +159,11 @@ inside the update transaction. Every other revisioned table enforces a token on
 `PUT`, `PATCH` (work-item status) and `DELETE`.
 
 Test runs also snapshot `plan_id`, `suite_id`, `plan_name` and `suite_name`, and
-each `test_results` row stores the `case_revision` it executed against. These
-snapshots are append-only history: renaming or archiving a plan, suite or case
-never rewrites a completed run. See
+each `test_results` row stores the `case_revision` it executed against. Step
+results snapshot their `position`, `action`, `expected_result`, `test_data` and
+`case_revision`, so replacing a case's steps leaves completed runs readable.
+These snapshots are append-only history: renaming or archiving a plan, suite or
+case never rewrites a completed run. See
 [`TEST-MANAGEMENT.md`](TEST-MANAGEMENT.md).
 
 The HTTP contract is generated into [`openapi.yaml`](openapi.yaml); the
@@ -188,6 +202,11 @@ migration.
 - Project membership is unique on `(project_id, user_id)`.
 - `artifact_links` is unique on the link tuple, so linking the same artifacts
   twice is idempotent.
+- `test_case_versions` is unique on `(test_case_id, revision)` and
+  `test_case_version_steps` on `(version_id, position)`; both are append-only and
+  have no update or delete endpoint.
+- `test_shared_steps` is unique on `(project_id, name)`, so templates stay
+  addressable by name within a project.
 - `schema_migrations.version` is unique; a migration can never be applied twice.
 
 ## 7. Changing the model

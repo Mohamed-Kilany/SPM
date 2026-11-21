@@ -12,7 +12,17 @@ import { useToastStore } from '../../stores/toastStore'
 import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import { percent, statusLabel } from '../../lib/workspace'
 import { formatDateTime, timeAgo } from '../../lib/format'
-import type { TestCase, TestPlan, TestResult, TestRun, TestSuite, TestStep, TestStepResult } from '../../types/workspace'
+import type {
+  TestCase,
+  TestCaseVersion,
+  TestPlan,
+  TestResult,
+  TestRun,
+  TestSharedStep,
+  TestSuite,
+  TestStep,
+  TestStepResult,
+} from '../../types/workspace'
 
 const store = useWorkspaceStore()
 const auth = useAuthStore()
@@ -28,6 +38,30 @@ const caseModal = ref(false)
 const caseEditingId = ref<string | null>(null)
 const caseBusy = ref(false)
 const caseError = ref('')
+
+const importInput = ref<HTMLInputElement | null>(null)
+const ioBusy = ref(false)
+
+const historyOpen = ref(false)
+const historyBusy = ref(false)
+const historyError = ref('')
+const historyCaseId = ref<string | null>(null)
+const historyCaseTitle = ref('')
+const historyVersions = ref<TestCaseVersion[]>([])
+const historyTotal = ref(0)
+
+const sharedPick = ref('')
+const sharedModal = ref(false)
+const sharedEditingId = ref<string | null>(null)
+const sharedEditingRevision = ref(0)
+const sharedBusy = ref(false)
+const sharedError = ref('')
+const sharedForm = reactive({
+  name: '',
+  action: '',
+  expected_result: '',
+  test_data: '',
+})
 
 const runModal = ref(false)
 const runBusy = ref(false)
@@ -61,6 +95,7 @@ const testPlans = computed(() => store.testPlans)
 const testSuites = computed(() => store.testSuites)
 const features = computed(() => store.features)
 const members = computed(() => store.workspace?.members ?? [])
+const sharedSteps = computed(() => store.workspace?.test_shared_steps ?? [])
 
 const selectedPlanId = ref('')
 const selectedSuiteId = ref('')
@@ -219,12 +254,47 @@ function runProgress(run: TestRun): number {
 }
 
 function stepFor(stepResult: TestStepResult): TestStep | undefined {
-  return stepById.value.get(stepResult.test_step_id)
+  return stepResult.test_step_id ? stepById.value.get(stepResult.test_step_id) : undefined
+}
+
+// Step results snapshot their content when the run starts, so they render
+// correctly even after the case is edited and live steps are replaced.
+function stepPosition(stepResult: TestStepResult): number | string {
+  return stepResult.position || stepFor(stepResult)?.position || '—'
+}
+
+function stepAction(stepResult: TestStepResult): string {
+  return stepResult.action || stepFor(stepResult)?.action || 'Test step'
+}
+
+function stepExpected(stepResult: TestStepResult): string {
+  return stepResult.expected_result || stepFor(stepResult)?.expected_result || '—'
 }
 
 // ---------------------------------------------------------------------------
 // Test case form
 // ---------------------------------------------------------------------------
+
+interface CaseStepDraft {
+  key: number
+  shared_step_id: string | null
+  action: string
+  expected_result: string
+  test_data: string
+}
+
+let stepKeySeed = 0
+
+function emptyStep(): CaseStepDraft {
+  stepKeySeed += 1
+  return {
+    key: stepKeySeed,
+    shared_step_id: null,
+    action: '',
+    expected_result: '',
+    test_data: '',
+  }
+}
 
 const caseForm = reactive({
   feature_id: '',
@@ -237,11 +307,7 @@ const caseForm = reactive({
   automation_ref: '',
   owner_id: '',
   tags: '',
-  steps: [{ action: '', expected_result: '', test_data: '' }] as Array<{
-    action: string
-    expected_result: string
-    test_data: string
-  }>,
+  steps: [emptyStep()] as CaseStepDraft[],
 })
 
 function resetCaseForm(): void {
@@ -256,7 +322,7 @@ function resetCaseForm(): void {
     automation_ref: '',
     owner_id: '',
     tags: '',
-    steps: [{ action: '', expected_result: '', test_data: '' }],
+    steps: [emptyStep()],
   })
 }
 
@@ -264,6 +330,7 @@ function openCreateCase(): void {
   if (!canTest.value) return
   caseEditingId.value = null
   resetCaseForm()
+  sharedPick.value = ''
   caseError.value = ''
   caseModal.value = true
 }
@@ -283,23 +350,57 @@ function openEditCase(testCase: TestCase): void {
     owner_id: testCase.owner_id ?? '',
     tags: (testCase.tags ?? []).join(', '),
     steps: (testCase.steps ?? []).map((step) => ({
+      ...emptyStep(),
+      shared_step_id: step.shared_step_id ?? null,
       action: step.action,
       expected_result: step.expected_result,
       test_data: step.test_data,
     })),
   })
-  if (!caseForm.steps.length) caseForm.steps = [{ action: '', expected_result: '', test_data: '' }]
+  if (!caseForm.steps.length) caseForm.steps = [emptyStep()]
+  sharedPick.value = ''
   caseError.value = ''
   caseModal.value = true
 }
 
 function addStep(): void {
-  caseForm.steps.push({ action: '', expected_result: '', test_data: '' })
+  caseForm.steps.push(emptyStep())
 }
 
 function removeStep(index: number): void {
   if (caseForm.steps.length <= 1) return
   caseForm.steps.splice(index, 1)
+}
+
+function moveStep(index: number, delta: number): void {
+  const target = index + delta
+  if (target < 0 || target >= caseForm.steps.length) return
+  const [step] = caseForm.steps.splice(index, 1)
+  caseForm.steps.splice(target, 0, step)
+}
+
+function onStepKeydown(event: KeyboardEvent, index: number): void {
+  if (!event.altKey) return
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    moveStep(index, -1)
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    moveStep(index, 1)
+  }
+}
+
+function insertSharedStep(): void {
+  const shared = sharedSteps.value.find((step) => step.id === sharedPick.value)
+  if (!shared) return
+  caseForm.steps.push({
+    ...emptyStep(),
+    shared_step_id: shared.id,
+    action: shared.action,
+    expected_result: shared.expected_result,
+    test_data: shared.test_data,
+  })
+  sharedPick.value = ''
 }
 
 async function saveCase(): Promise<void> {
@@ -338,6 +439,7 @@ async function saveCase(): Promise<void> {
         .map((tag) => tag.trim())
         .filter(Boolean),
       steps: caseForm.steps.map((step) => ({
+        shared_step_id: step.shared_step_id,
         action: step.action.trim(),
         expected_result: step.expected_result.trim(),
         test_data: step.test_data,
@@ -366,6 +468,172 @@ async function saveCase(): Promise<void> {
     caseError.value = error instanceof Error ? error.message : 'Failed to save test case'
   } finally {
     caseBusy.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Version history, import/export and shared steps
+// ---------------------------------------------------------------------------
+
+async function openHistory(testCase: Pick<TestCase, 'id' | 'title'>): Promise<void> {
+  historyCaseId.value = testCase.id
+  historyCaseTitle.value = testCase.title
+  historyVersions.value = []
+  historyTotal.value = 0
+  historyError.value = ''
+  historyOpen.value = true
+  await loadHistory()
+}
+
+function openEditingHistory(): void {
+  const current = caseEditingId.value
+    ? store.testCases.find((testCase) => testCase.id === caseEditingId.value)
+    : null
+  if (current) void openHistory(current)
+}
+
+async function loadHistory(): Promise<void> {
+  if (!historyCaseId.value) return
+  historyBusy.value = true
+  historyError.value = ''
+  try {
+    const result = await api.listTestCaseVersions(store.projectId, historyCaseId.value)
+    historyVersions.value = result.versions ?? []
+    historyTotal.value = result.total ?? historyVersions.value.length
+  } catch (error) {
+    historyError.value = error instanceof Error ? error.message : 'Failed to load version history'
+  } finally {
+    historyBusy.value = false
+  }
+}
+
+function triggerImport(): void {
+  if (!canTest.value) return
+  importInput.value?.click()
+}
+
+async function onImportFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !canTest.value) return
+  ioBusy.value = true
+  try {
+    const payload = JSON.parse(await file.text())
+    const result = await api.importTestCases(store.projectId, payload)
+    await store.refresh()
+    toast.success(`Imported ${result.imported} test case(s).`, 'Test lab')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Failed to import test cases', 'Test lab')
+  } finally {
+    ioBusy.value = false
+  }
+}
+
+async function exportCases(): Promise<void> {
+  if (!testCases.value.length) return
+  ioBusy.value = true
+  try {
+    const exported = await api.exportTestCases(store.projectId)
+    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `test-cases-${new Date().toISOString().slice(0, 10)}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    toast.success('Test cases exported.', 'Test lab')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Failed to export test cases', 'Test lab')
+  } finally {
+    ioBusy.value = false
+  }
+}
+
+function resetSharedForm(): void {
+  Object.assign(sharedForm, { name: '', action: '', expected_result: '', test_data: '' })
+  sharedEditingId.value = null
+  sharedEditingRevision.value = 0
+  sharedError.value = ''
+}
+
+function openSharedManager(): void {
+  if (!canTest.value) return
+  resetSharedForm()
+  sharedModal.value = true
+}
+
+function editSharedStep(step: TestSharedStep): void {
+  sharedEditingId.value = step.id
+  sharedEditingRevision.value = step.revision
+  Object.assign(sharedForm, {
+    name: step.name,
+    action: step.action,
+    expected_result: step.expected_result,
+    test_data: step.test_data,
+  })
+  sharedError.value = ''
+}
+
+async function saveSharedStep(): Promise<void> {
+  if (!canTest.value) return
+  if (!sharedForm.name.trim() || !sharedForm.action.trim() || !sharedForm.expected_result.trim()) {
+    sharedError.value = 'Name, action and expected result are required.'
+    return
+  }
+  sharedBusy.value = true
+  sharedError.value = ''
+  const payload = {
+    name: sharedForm.name.trim(),
+    action: sharedForm.action.trim(),
+    expected_result: sharedForm.expected_result.trim(),
+    test_data: sharedForm.test_data,
+  }
+  try {
+    if (sharedEditingId.value) {
+      await api.updateSharedStep(
+        store.projectId,
+        sharedEditingId.value,
+        payload,
+        sharedEditingRevision.value,
+      )
+      toast.success('Shared step updated. Existing cases keep their copied text.', 'Test lab')
+    } else {
+      await api.createSharedStep(store.projectId, payload)
+      toast.success('Shared step created.', 'Test lab')
+    }
+    resetSharedForm()
+    await store.refresh()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      sharedError.value = revisionConflictMessage('shared step')
+      return
+    }
+    sharedError.value = error instanceof Error ? error.message : 'Failed to save shared step'
+  } finally {
+    sharedBusy.value = false
+  }
+}
+
+async function deleteSharedStep(step: TestSharedStep): Promise<void> {
+  if (!canTest.value || sharedBusy.value) return
+  sharedBusy.value = true
+  sharedError.value = ''
+  try {
+    await api.deleteSharedStep(store.projectId, step.id, step.revision)
+    if (sharedEditingId.value === step.id) resetSharedForm()
+    await store.refresh()
+    toast.success('Shared step deleted. Cases keep the text they copied.', 'Test lab')
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      sharedError.value = revisionConflictMessage('shared step')
+      return
+    }
+    sharedError.value = error instanceof Error ? error.message : 'Failed to delete shared step'
+  } finally {
+    sharedBusy.value = false
   }
 }
 
@@ -865,11 +1133,13 @@ function openBug(result: TestResult, stepResult?: TestStepResult): void {
   if (!canTest.value) return
   const testCase = caseById.value.get(result.test_case_id)
   const step = stepResult ? stepFor(stepResult) : undefined
+  const position = stepResult?.position || step?.position || 1
+  const expected = stepResult?.expected_result || step?.expected_result || ''
   bugResultId.value = result.id
   bugStepResultId.value = stepResult?.id ?? null
   Object.assign(bugForm, {
-    title: step
-      ? `Defect: ${testCase?.title ?? 'Test case'} — step ${step.position}`
+    title: stepResult
+      ? `Defect: ${testCase?.title ?? 'Test case'} — step ${position}`
       : `Defect: ${testCase?.title ?? 'Test case'}`,
     description: stepResult?.actual_result || result.actual_result || '',
     severity: 'major',
@@ -877,7 +1147,7 @@ function openBug(result: TestResult, stepResult?: TestStepResult): void {
     reproduction_steps: (testCase?.steps ?? [])
       .map((entry, index) => `${index + 1}. ${entry.action}`)
       .join('\n'),
-    expected_result: step?.expected_result ?? '',
+    expected_result: expected,
     actual_result: stepResult?.actual_result || result.actual_result || '',
   })
   bugError.value = ''
@@ -1147,8 +1417,46 @@ async function saveBug(): Promise<void> {
                 <h3 class="text-sm font-semibold text-slate-900">Test cases</h3>
                 <p class="mt-0.5 text-xs text-slate-600">{{ testCases.length }} reusable definitions</p>
               </div>
-              <span class="badge bg-cyan-50 text-cyan-700 ring-cyan-600/20">{{ filteredCases.length }} shown</span>
+              <div class="flex items-center gap-1.5">
+                <button
+                  v-if="testCases.length"
+                  type="button"
+                  class="btn-ghost px-2 text-[11px]"
+                  :disabled="ioBusy"
+                  title="Export every test case as JSON"
+                  @click="exportCases"
+                >
+                  <AppIcon name="download" :size="13" /> Export
+                </button>
+                <button
+                  v-if="canTest"
+                  type="button"
+                  class="btn-ghost px-2 text-[11px]"
+                  :disabled="ioBusy"
+                  title="Import test cases from JSON"
+                  @click="triggerImport"
+                >
+                  <AppIcon name="upload" :size="13" /> Import
+                </button>
+                <button
+                  v-if="canTest"
+                  type="button"
+                  class="btn-ghost px-2 text-[11px]"
+                  title="Manage reusable step templates"
+                  @click="openSharedManager"
+                >
+                  <AppIcon name="layers" :size="13" /> Templates
+                </button>
+                <span class="badge bg-cyan-50 text-cyan-700 ring-cyan-600/20">{{ filteredCases.length }} shown</span>
+              </div>
             </div>
+            <input
+              ref="importInput"
+              type="file"
+              accept="application/json,.json"
+              class="hidden"
+              @change="onImportFile"
+            />
             <div class="mt-3 flex gap-2">
               <div class="relative flex-1">
                 <AppIcon name="search" :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
@@ -1363,42 +1671,219 @@ async function saveBug(): Promise<void> {
         </div>
 
         <div>
-          <div class="mb-2 flex items-center justify-between">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-600">Test steps</p>
-            <button type="button" class="btn-ghost text-xs" @click="addStep">
-              <AppIcon name="plus" :size="13" /> Add step
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <template v-if="sharedSteps.length">
+                <select v-model="sharedPick" class="field-input w-auto max-w-[190px] py-1 text-[11px]" aria-label="Shared step template">
+                  <option value="">Insert shared step…</option>
+                  <option v-for="shared in sharedSteps" :key="shared.id" :value="shared.id">{{ shared.name }}</option>
+                </select>
+                <button type="button" class="btn-ghost text-xs" :disabled="!sharedPick" @click="insertSharedStep">
+                  <AppIcon name="layers" :size="13" /> Insert
+                </button>
+              </template>
+              <button type="button" class="btn-ghost text-xs" @click="addStep">
+                <AppIcon name="plus" :size="13" /> Add step
+              </button>
+            </div>
           </div>
           <div class="space-y-2">
-            <div v-for="(step, index) in caseForm.steps" :key="index" class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-              <div class="flex items-center justify-between">
-                <span class="text-[11px] font-semibold text-slate-600">Step {{ index + 1 }}</span>
-                <button
-                  type="button"
-                  class="rounded p-1 text-slate-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
-                  :disabled="caseForm.steps.length <= 1"
-                  aria-label="Remove step"
-                  @click="removeStep(index)"
-                >
-                  <AppIcon name="trash" :size="13" />
-                </button>
+            <div
+              v-for="(step, index) in caseForm.steps"
+              :key="step.key"
+              data-testid="case-step-editor"
+              class="rounded-xl border border-slate-200 bg-slate-50/60 p-3 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+              tabindex="0"
+              @keydown="onStepKeydown($event, index)"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                  Step {{ index + 1 }}
+                  <span v-if="step.shared_step_id" class="rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-700">
+                    copied from template
+                  </span>
+                </span>
+                <div class="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    class="rounded p-1 text-slate-600 hover:bg-slate-200 disabled:opacity-30"
+                    :disabled="index === 0"
+                    aria-label="Move step up"
+                    title="Move step up (Alt+Up)"
+                    @click="moveStep(index, -1)"
+                  >
+                    <AppIcon name="arrowUp" :size="13" />
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded p-1 text-slate-600 hover:bg-slate-200 disabled:opacity-30"
+                    :disabled="index === caseForm.steps.length - 1"
+                    aria-label="Move step down"
+                    title="Move step down (Alt+Down)"
+                    @click="moveStep(index, 1)"
+                  >
+                    <AppIcon name="arrowDown" :size="13" />
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded p-1 text-slate-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
+                    :disabled="caseForm.steps.length <= 1"
+                    aria-label="Remove step"
+                    @click="removeStep(index)"
+                  >
+                    <AppIcon name="trash" :size="13" />
+                  </button>
+                </div>
               </div>
               <div class="mt-2 grid gap-2 sm:grid-cols-2">
                 <textarea v-model="step.action" rows="2" class="field-input text-xs" placeholder="Action: what does the tester do?" />
                 <textarea v-model="step.expected_result" rows="2" class="field-input text-xs" placeholder="Expected: what should happen?" />
               </div>
               <input v-model="step.test_data" class="field-input mt-2 py-1.5 text-xs" placeholder="Test data (optional)" />
+              <p class="mt-1 text-[10px] text-slate-500">Select this step and press Alt+↑ or Alt+↓ to reorder without leaving the keyboard.</p>
             </div>
           </div>
         </div>
         <p v-if="caseError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ caseError }}</p>
       </div>
       <template #footer>
+        <button
+          v-if="caseEditingId"
+          type="button"
+          class="btn-ghost mr-auto text-xs"
+          :disabled="caseBusy"
+          @click="openEditingHistory"
+        >
+          <AppIcon name="history" :size="13" /> History
+        </button>
         <button type="button" class="btn-secondary" :disabled="caseBusy" @click="caseModal = false">Cancel</button>
         <button type="button" class="btn-primary" :disabled="caseBusy" @click="saveCase">
           <AppIcon v-if="caseBusy" name="loader" :size="14" class="animate-spin" />
           {{ caseBusy ? 'Saving…' : caseEditingId ? 'Save test case' : 'Create test case' }}
         </button>
+      </template>
+    </BaseModal>
+
+    <!-- Version history modal -->
+    <BaseModal
+      v-model="historyOpen"
+      :title="`Version history · ${historyCaseTitle}`"
+      max-width="lg"
+    >
+      <div class="space-y-3">
+        <div class="flex items-center justify-between gap-2 text-xs text-slate-600">
+          <span>{{ historyTotal }} snapshot{{ historyTotal === 1 ? '' : 's' }} · runs keep the revision they executed</span>
+          <button type="button" class="btn-ghost px-2 text-xs" :disabled="historyBusy" @click="loadHistory">
+            <AppIcon name="refresh" :size="13" /> Refresh
+          </button>
+        </div>
+        <p v-if="historyError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ historyError }}</p>
+        <div v-if="historyBusy" class="py-8 text-center text-xs text-slate-600">
+          <AppIcon name="loader" :size="16" class="mx-auto animate-spin" />
+        </div>
+        <div v-else-if="!historyVersions.length" class="rounded-xl border border-dashed border-slate-300 py-8 text-center text-xs text-slate-600">
+          No snapshots yet. The next edit creates one.
+        </div>
+        <div v-else class="max-h-[520px] space-y-3 overflow-y-auto pr-1">
+          <article
+            v-for="version in historyVersions"
+            :key="version.id"
+            data-testid="case-version"
+            class="rounded-xl border border-slate-200 bg-white p-3"
+          >
+            <header class="flex flex-wrap items-start justify-between gap-2">
+              <div class="min-w-0">
+                <p class="text-xs font-semibold text-slate-800">Revision {{ version.revision }} · {{ version.title }}</p>
+                <p class="mt-0.5 text-[10px] text-slate-600">
+                  {{ version.changed_by_name || 'System' }} changed this case · {{ formatDateTime(version.created_at) }}
+                </p>
+              </div>
+              <StatusPill :status="version.status" />
+            </header>
+            <p class="mt-1.5 text-[10px] text-slate-600">
+              {{ version.feature_title || 'No feature' }} · {{ version.priority }} priority · {{ version.type }} ·
+              {{ version.steps.length }} step{{ version.steps.length === 1 ? '' : 's' }}
+            </p>
+            <ol class="mt-2 space-y-1">
+              <li
+                v-for="step in version.steps"
+                :key="step.position"
+                class="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] text-slate-700"
+              >
+                <span class="font-semibold">{{ step.position }}.</span> {{ step.action }}
+                <span class="mt-0.5 block text-[10px] text-slate-600">Expected: {{ step.expected_result }}</span>
+                <span v-if="step.test_data" class="mt-0.5 block text-[10px] text-slate-500">Data: {{ step.test_data }}</span>
+              </li>
+            </ol>
+          </article>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" @click="historyOpen = false">Close</button>
+      </template>
+    </BaseModal>
+
+    <!-- Shared step templates modal -->
+    <BaseModal
+      v-model="sharedModal"
+      title="Shared step templates"
+      max-width="lg"
+      :persistent="sharedBusy"
+    >
+      <div class="space-y-4">
+        <p class="rounded-lg bg-cyan-50 px-3 py-2 text-[11px] leading-relaxed text-cyan-800">
+          Inserting a template copies its action, expected result and data into the case. Editing or deleting a template never changes a case that already used it.
+        </p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="shared-name">Name</label>
+            <input id="shared-name" v-model="sharedForm.name" class="field-input" placeholder="Sign in as a returning customer" />
+          </div>
+          <div>
+            <label class="field-label" for="shared-data">Test data</label>
+            <input id="shared-data" v-model="sharedForm.test_data" class="field-input" placeholder="qa+checkout@example.com" />
+          </div>
+          <div>
+            <label class="field-label" for="shared-action">Action</label>
+            <textarea id="shared-action" v-model="sharedForm.action" rows="2" class="field-input" placeholder="Open the sign-in page and submit valid credentials" />
+          </div>
+          <div>
+            <label class="field-label" for="shared-expected">Expected result</label>
+            <textarea id="shared-expected" v-model="sharedForm.expected_result" rows="2" class="field-input" placeholder="The account dashboard is shown" />
+          </div>
+        </div>
+        <p v-if="sharedError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{{ sharedError }}</p>
+        <div class="flex gap-2">
+          <button type="button" class="btn-primary text-xs" :disabled="sharedBusy" @click="saveSharedStep">
+            <AppIcon v-if="sharedBusy" name="loader" :size="13" class="animate-spin" />
+            {{ sharedEditingId ? 'Save template' : 'Add template' }}
+          </button>
+          <button v-if="sharedEditingId" type="button" class="btn-secondary text-xs" :disabled="sharedBusy" @click="resetSharedForm">
+            Cancel edit
+          </button>
+        </div>
+        <div v-if="sharedSteps.length" class="max-h-[300px] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
+          <div v-for="step in sharedSteps" :key="step.id" class="flex items-start gap-3 px-3 py-2.5">
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-xs font-semibold text-slate-800">{{ step.name }}</p>
+              <p class="mt-0.5 truncate text-[11px] text-slate-600">{{ step.action }}</p>
+              <p class="mt-0.5 truncate text-[10px] text-slate-500">Expected: {{ step.expected_result }}</p>
+            </div>
+            <div class="flex items-center gap-0.5">
+              <button type="button" class="rounded p-1 text-slate-600 hover:bg-slate-100" aria-label="Edit shared step" @click="editSharedStep(step)">
+                <AppIcon name="edit" :size="13" />
+              </button>
+              <button type="button" class="rounded p-1 text-slate-600 hover:bg-red-50 hover:text-red-600" aria-label="Delete shared step" :disabled="sharedBusy" @click="deleteSharedStep(step)">
+                <AppIcon name="trash" :size="13" />
+              </button>
+            </div>
+          </div>
+        </div>
+        <p v-else class="text-xs text-slate-600">No templates yet.</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" @click="sharedModal = false">Close</button>
       </template>
     </BaseModal>
 
@@ -1832,10 +2317,13 @@ async function saveBug(): Promise<void> {
               <div class="flex flex-wrap items-start justify-between gap-2">
                 <div class="min-w-0 flex-1">
                   <p class="text-[11px] font-semibold text-slate-700">
-                    Step {{ stepFor(stepResult)?.position ?? '—' }} · {{ stepFor(stepResult)?.action || 'Test step' }}
+                    Step {{ stepPosition(stepResult) }} · {{ stepAction(stepResult) }}
                   </p>
                   <p class="mt-0.5 text-[10px] text-slate-600">
-                    Expected: {{ stepFor(stepResult)?.expected_result || '—' }}
+                    Expected: {{ stepExpected(stepResult) }}
+                  </p>
+                  <p class="mt-0.5 text-[10px] text-slate-500">
+                    Executed against case revision {{ stepResult.case_revision || result.case_revision || 1 }}
                   </p>
                 </div>
                 <div class="flex items-center gap-1.5">

@@ -278,14 +278,59 @@ type TestCase struct {
 
 // TestStep is one ordered action in a test case.
 type TestStep struct {
-	ID             uuid.UUID `json:"id"`
-	TestCaseID     uuid.UUID `json:"test_case_id"`
-	Position       int       `json:"position"`
-	Action         string    `json:"action"`
-	ExpectedResult string    `json:"expected_result"`
-	TestData       string    `json:"test_data"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	TestCaseID     uuid.UUID  `json:"test_case_id"`
+	SharedStepID   *uuid.UUID `json:"shared_step_id"`
+	Position       int        `json:"position"`
+	Action         string     `json:"action"`
+	ExpectedResult string     `json:"expected_result"`
+	TestData       string     `json:"test_data"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// TestCaseVersion is an immutable snapshot of a test case and its steps.
+type TestCaseVersion struct {
+	ID            uuid.UUID             `json:"id"`
+	TestCaseID    uuid.UUID             `json:"test_case_id"`
+	Revision      int64                 `json:"revision"`
+	FeatureID     *uuid.UUID            `json:"feature_id"`
+	FeatureTitle  string                `json:"feature_title"`
+	Title         string                `json:"title"`
+	Description   string                `json:"description"`
+	Preconditions string                `json:"preconditions"`
+	Type          string                `json:"type"`
+	Priority      string                `json:"priority"`
+	Status        string                `json:"status"`
+	AutomationRef string                `json:"automation_ref"`
+	OwnerID       *uuid.UUID            `json:"owner_id"`
+	Tags          []string              `json:"tags"`
+	ChangedBy     *uuid.UUID            `json:"changed_by"`
+	ChangedByName string                `json:"changed_by_name"`
+	CreatedAt     time.Time             `json:"created_at"`
+	Steps         []TestCaseVersionStep `json:"steps"`
+}
+
+// TestCaseVersionStep is one ordered step inside an immutable version.
+type TestCaseVersionStep struct {
+	Position       int    `json:"position"`
+	Action         string `json:"action"`
+	ExpectedResult string `json:"expected_result"`
+	TestData       string `json:"test_data"`
+}
+
+// TestSharedStep is a reusable step template copied into a case on use.
+type TestSharedStep struct {
+	ID             uuid.UUID  `json:"id"`
+	ProjectID      uuid.UUID  `json:"project_id"`
+	Name           string     `json:"name"`
+	Action         string     `json:"action"`
+	ExpectedResult string     `json:"expected_result"`
+	TestData       string     `json:"test_data"`
+	CreatedBy      *uuid.UUID `json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	Revision       int64      `json:"revision"`
 }
 
 // TestPlan groups suites and test cases for a test cycle.
@@ -371,17 +416,24 @@ type TestResult struct {
 	StepResults   []TestStepResult `json:"step_results"`
 }
 
-// TestStepResult is the outcome of one step in a result.
+// TestStepResult is the outcome of one step in a result. The action, expected
+// result and data are snapshots taken from the case version at run creation,
+// so a later case edit cannot rewrite what the tester executed.
 type TestStepResult struct {
-	ID            uuid.UUID  `json:"id"`
-	TestResultID  uuid.UUID  `json:"test_result_id"`
-	TestStepID    uuid.UUID  `json:"test_step_id"`
-	Status        string     `json:"status"`
-	ActualResult  string     `json:"actual_result"`
-	EvidenceURL   string     `json:"evidence_url"`
-	BugWorkItemID *uuid.UUID `json:"bug_work_item_id"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	TestResultID   uuid.UUID  `json:"test_result_id"`
+	TestStepID     *uuid.UUID `json:"test_step_id"`
+	CaseRevision   int64      `json:"case_revision"`
+	Position       int        `json:"position"`
+	Action         string     `json:"action"`
+	ExpectedResult string     `json:"expected_result"`
+	TestData       string     `json:"test_data"`
+	Status         string     `json:"status"`
+	ActualResult   string     `json:"actual_result"`
+	EvidenceURL    string     `json:"evidence_url"`
+	BugWorkItemID  *uuid.UUID `json:"bug_work_item_id"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // GitRepository is a linked source repository.
@@ -655,6 +707,7 @@ type Workspace struct {
 	TestPlans    []TestPlan       `json:"test_plans"`
 	TestSuites   []TestSuite      `json:"test_suites"`
 	SuiteCases   []TestSuiteCase  `json:"test_suite_cases"`
+	SharedSteps  []TestSharedStep `json:"test_shared_steps"`
 	TestRuns     []TestRun        `json:"test_runs"`
 	TestResults  []TestResult     `json:"test_results"`
 	StepResults  []TestStepResult `json:"test_step_results"`

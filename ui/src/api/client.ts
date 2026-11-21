@@ -26,6 +26,7 @@ import type {
   RepositoryTreeResponse,
   SprintClosePreview,
   SprintMetrics,
+  TestCaseVersionList,
   TraceabilityResponse,
   Attachment,
   Comment,
@@ -950,6 +951,53 @@ export const api = {
   ): Promise<RevisionedResult> {
     return request<RevisionedResult>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/test-cases/${encodeURIComponent(caseId)}`,
+      { method: 'DELETE', headers: ifMatch(revision) },
+    )
+  },
+
+  async listTestCaseVersions(projectId: string, caseId: string): Promise<TestCaseVersionList> {
+    return request<TestCaseVersionList>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-cases/${encodeURIComponent(caseId)}/versions`,
+    )
+  },
+
+  async exportTestCases(projectId: string): Promise<unknown> {
+    return request<unknown>(`/api/v1/projects/${encodeURIComponent(projectId)}/test-cases/export`)
+  },
+
+  async importTestCases(projectId: string, payload: unknown): Promise<{ imported: number }> {
+    return request<{ imported: number }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-cases/import`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async createSharedStep(projectId: string, payload: unknown): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-shared-steps`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async updateSharedStep(
+    projectId: string,
+    sharedStepId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-shared-steps/${encodeURIComponent(sharedStepId)}`,
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
+  async deleteSharedStep(
+    projectId: string,
+    sharedStepId: string,
+    revision: number,
+  ): Promise<RevisionedResult> {
+    return request<RevisionedResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/test-shared-steps/${encodeURIComponent(sharedStepId)}`,
       { method: 'DELETE', headers: ifMatch(revision) },
     )
   },

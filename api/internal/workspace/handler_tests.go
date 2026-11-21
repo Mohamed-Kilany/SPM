@@ -18,9 +18,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type testStepInput struct {
-	Action         string `json:"action"`
-	ExpectedResult string `json:"expected_result"`
-	TestData       string `json:"test_data"`
+	SharedStepID   *uuid.UUID `json:"shared_step_id"`
+	Action         string     `json:"action"`
+	ExpectedResult string     `json:"expected_result"`
+	TestData       string     `json:"test_data"`
 }
 
 type testCaseRequest struct {
@@ -38,6 +39,95 @@ type testCaseRequest struct {
 	ExpectedVersion *int64          `json:"expected_version"`
 }
 
+// validateTestCaseRequest normalizes and validates every field shared by case
+// creation, editing and import. It trims step text, enforces enums and verifies
+// feature, shared-step and step-content invariants before a transaction starts.
+func (h *Handler) validateTestCaseRequest(c *gin.Context, projectID uuid.UUID, req *testCaseRequest) bool {
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" || len(req.Title) > 255 {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case title is required and must be at most 255 characters")
+		return false
+	}
+	if req.Type == "" {
+		req.Type = "manual"
+	}
+	if req.Type != "manual" && req.Type != "automated" {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case type must be manual or automated")
+		return false
+	}
+	if req.Priority == "" {
+		req.Priority = PriorityMedium
+	}
+	if req.Priority != PriorityLow && req.Priority != PriorityMedium &&
+		req.Priority != PriorityHigh && req.Priority != PriorityCritical {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case priority must be low, medium, high or critical")
+		return false
+	}
+	if req.Status == "" {
+		req.Status = "draft"
+	}
+	if req.Status != "draft" && req.Status != "ready" && req.Status != "deprecated" {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case status must be draft, ready or deprecated")
+		return false
+	}
+	if req.FeatureID == nil {
+		apiError(c, http.StatusUnprocessableEntity, "TRACEABILITY_ERROR", "A test case must link to a feature")
+		return false
+	}
+	if err := h.ensureBelongs(c.Request.Context(), "features", projectID, *req.FeatureID); err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Feature does not belong to this project")
+		return false
+	}
+	if len(req.Steps) == 0 {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "A test case must have at least one step")
+		return false
+	}
+	if len(req.Steps) > 200 {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "A test case can have at most 200 steps")
+		return false
+	}
+	sharedIDs := make([]uuid.UUID, 0, len(req.Steps))
+	for i := range req.Steps {
+		step := &req.Steps[i]
+		step.Action = strings.TrimSpace(step.Action)
+		step.ExpectedResult = strings.TrimSpace(step.ExpectedResult)
+		if step.Action == "" || step.ExpectedResult == "" {
+			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Every test step needs an action and an expected result")
+			return false
+		}
+		if step.SharedStepID != nil {
+			sharedIDs = append(sharedIDs, *step.SharedStepID)
+		}
+	}
+	if len(sharedIDs) > 0 {
+		var found int
+		if err := h.store.DB().QueryRow(c.Request.Context(), `
+			SELECT COUNT(DISTINCT id) FROM test_shared_steps
+			WHERE project_id=$1 AND id = ANY($2)`, projectID, sharedIDs).Scan(&found); err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate shared steps")
+			return false
+		}
+		distinct := map[uuid.UUID]bool{}
+		for _, id := range sharedIDs {
+			distinct[id] = true
+		}
+		if found != len(distinct) {
+			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Every shared step must belong to this project")
+			return false
+		}
+	}
+	if req.OwnerID != nil {
+		var member bool
+		if err := h.store.DB().QueryRow(c.Request.Context(),
+			`SELECT EXISTS (SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2)`,
+			projectID, *req.OwnerID).Scan(&member); err != nil || !member {
+			apiError(c, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Test case owner must be a project member")
+			return false
+		}
+	}
+	return true
+}
+
 func (h *Handler) CreateTestCase(c *gin.Context) {
 	projectID, ok := parseProjectID(c)
 	if !ok {
@@ -48,41 +138,8 @@ func (h *Handler) CreateTestCase(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "INVALID_REQUEST", "Request body is not valid JSON")
 		return
 	}
-	req.Title = strings.TrimSpace(req.Title)
-	if req.Title == "" || len(req.Title) > 255 {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case title is required and must be at most 255 characters")
+	if !h.validateTestCaseRequest(c, projectID, &req) {
 		return
-	}
-	if req.Type == "" {
-		req.Type = "manual"
-	}
-	if req.Type != "manual" && req.Type != "automated" {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case type must be manual or automated")
-		return
-	}
-	if req.Status == "" {
-		req.Status = "draft"
-	}
-	if req.Priority == "" {
-		req.Priority = PriorityMedium
-	}
-	if req.FeatureID == nil {
-		apiError(c, http.StatusUnprocessableEntity, "TRACEABILITY_ERROR", "A test case must link to a feature")
-		return
-	}
-	if err := h.ensureBelongs(c.Request.Context(), "features", projectID, *req.FeatureID); err != nil {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Feature does not belong to this project")
-		return
-	}
-	if len(req.Steps) == 0 {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "A test case must have at least one step")
-		return
-	}
-	for _, step := range req.Steps {
-		if strings.TrimSpace(step.Action) == "" || strings.TrimSpace(step.ExpectedResult) == "" {
-			apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Every test step needs an action and an expected result")
-			return
-		}
 	}
 
 	tx, err := h.store.DB().Begin(c.Request.Context())
@@ -105,12 +162,16 @@ func (h *Handler) CreateTestCase(c *gin.Context) {
 	}
 	for i, step := range req.Steps {
 		_, err = tx.Exec(c.Request.Context(), `
-			INSERT INTO test_steps (test_case_id, position, action, expected_result, test_data)
-			VALUES ($1,$2,$3,$4,$5)`, id, i+1, step.Action, step.ExpectedResult, step.TestData)
+			INSERT INTO test_steps (test_case_id, shared_step_id, position, action, expected_result, test_data)
+			VALUES ($1,$2,$3,$4,$5,$6)`, id, step.SharedStepID, i+1, step.Action, step.ExpectedResult, step.TestData)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create test steps")
 			return
 		}
+	}
+	if err := snapshotTestCaseVersion(c.Request.Context(), tx, projectID, id, actorID(c)); err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to snapshot test case version")
+		return
 	}
 	if err := tx.Commit(c.Request.Context()); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit test case")
@@ -135,21 +196,7 @@ func (h *Handler) UpdateTestCase(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "INVALID_REQUEST", "Request body is not valid JSON")
 		return
 	}
-	req.Title = strings.TrimSpace(req.Title)
-	if req.Title == "" {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Test case title is required")
-		return
-	}
-	if req.FeatureID == nil {
-		apiError(c, http.StatusUnprocessableEntity, "TRACEABILITY_ERROR", "A test case must link to a feature")
-		return
-	}
-	if err := h.ensureBelongs(c.Request.Context(), "features", projectID, *req.FeatureID); err != nil {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Feature does not belong to this project")
-		return
-	}
-	if len(req.Steps) == 0 {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "A test case must have at least one step")
+	if !h.validateTestCaseRequest(c, projectID, &req) {
 		return
 	}
 
@@ -188,12 +235,16 @@ func (h *Handler) UpdateTestCase(c *gin.Context) {
 	}
 	for i, step := range req.Steps {
 		_, err = tx.Exec(c.Request.Context(), `
-			INSERT INTO test_steps (test_case_id, position, action, expected_result, test_data)
-			VALUES ($1,$2,$3,$4,$5)`, caseID, i+1, step.Action, step.ExpectedResult, step.TestData)
+			INSERT INTO test_steps (test_case_id, shared_step_id, position, action, expected_result, test_data)
+			VALUES ($1,$2,$3,$4,$5,$6)`, caseID, step.SharedStepID, i+1, step.Action, step.ExpectedResult, step.TestData)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create test steps")
 			return
 		}
+	}
+	if err := snapshotTestCaseVersion(c.Request.Context(), tx, projectID, caseID, actorID(c)); err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to snapshot test case version")
+		return
 	}
 	if err := tx.Commit(c.Request.Context()); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit test case")
@@ -446,8 +497,13 @@ func (h *Handler) CreateTestRun(c *gin.Context) {
 			return
 		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO test_step_results (test_result_id, test_step_id, status)
-			SELECT $1, id, 'not_run' FROM test_steps WHERE test_case_id=$2 ORDER BY position`, resultID, tc.ID)
+			INSERT INTO test_step_results (test_result_id, test_step_id, case_revision, position, action, expected_result, test_data, status)
+			SELECT $1, s.id, v.revision, vs.position, vs.action, vs.expected_result, vs.test_data, 'not_run'
+			FROM test_case_versions v
+			JOIN test_case_version_steps vs ON vs.version_id = v.id
+			LEFT JOIN test_steps s ON s.test_case_id = v.test_case_id AND s.position = vs.position
+			WHERE v.test_case_id=$2 AND v.revision=$3
+			ORDER BY vs.position`, resultID, tc.ID, tc.Revision)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create step results")
 			return

@@ -315,8 +315,8 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 
 	// Steps for every case in the project
 	stepRows, err := s.db.Query(ctx, `
-		SELECT s.id, s.test_case_id, s.position, s.action, s.expected_result, COALESCE(s.test_data, ''),
-		       s.created_at, s.updated_at
+		SELECT s.id, s.test_case_id, COALESCE(s.shared_step_id::text, ''), s.position, s.action,
+		       s.expected_result, COALESCE(s.test_data, ''), s.created_at, s.updated_at
 		FROM test_steps s
 		JOIN test_cases c ON c.id = s.test_case_id
 		WHERE c.project_id = $1
@@ -327,10 +327,12 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 	defer stepRows.Close()
 	for stepRows.Next() {
 		var st TestStep
-		if err := stepRows.Scan(&st.ID, &st.TestCaseID, &st.Position, &st.Action, &st.ExpectedResult,
+		var shared string
+		if err := stepRows.Scan(&st.ID, &st.TestCaseID, &shared, &st.Position, &st.Action, &st.ExpectedResult,
 			&st.TestData, &st.CreatedAt, &st.UpdatedAt); err != nil {
 			return err
 		}
+		st.SharedStepID = parseUUIDPtr(shared)
 		if index, ok := byCase[st.TestCaseID]; ok {
 			w.TestCases[index].Steps = append(w.TestCases[index].Steps, st)
 		}
@@ -421,6 +423,33 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 		return err
 	}
 
+	// Reusable step templates
+	sharedRows, err := s.db.Query(ctx, `
+		SELECT id, project_id, name, action, expected_result, COALESCE(test_data, ''),
+		       COALESCE(created_by::text, ''), created_at, updated_at, revision
+		FROM test_shared_steps
+		WHERE project_id = $1
+		ORDER BY lower(name)`, projectID)
+	if err != nil {
+		return err
+	}
+	defer sharedRows.Close()
+	w.SharedSteps = []TestSharedStep{}
+	for sharedRows.Next() {
+		var step TestSharedStep
+		var creator string
+		if err := sharedRows.Scan(&step.ID, &step.ProjectID, &step.Name, &step.Action,
+			&step.ExpectedResult, &step.TestData, &creator, &step.CreatedAt, &step.UpdatedAt,
+			&step.Revision); err != nil {
+			return err
+		}
+		step.CreatedBy = parseUUIDPtr(creator)
+		w.SharedSteps = append(w.SharedSteps, step)
+	}
+	if err := sharedRows.Err(); err != nil {
+		return err
+	}
+
 	// Test runs
 	runRows, err := s.db.Query(ctx, `
 		SELECT id, project_id, COALESCE(release_id::text, ''), COALESCE(sprint_id::text, ''),
@@ -504,13 +533,15 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 
 	// Step results
 	stepResultRows, err := s.db.Query(ctx, `
-		SELECT sr.id, sr.test_result_id, sr.test_step_id, sr.status, COALESCE(sr.actual_result, ''),
-		       COALESCE(sr.evidence_url, ''), COALESCE(sr.bug_work_item_id::text, ''), sr.created_at, sr.updated_at
+		SELECT sr.id, sr.test_result_id, COALESCE(sr.test_step_id::text, ''), sr.case_revision,
+		       sr.position, sr.action, sr.expected_result, COALESCE(sr.test_data, ''), sr.status,
+		       COALESCE(sr.actual_result, ''), COALESCE(sr.evidence_url, ''),
+		       COALESCE(sr.bug_work_item_id::text, ''), sr.created_at, sr.updated_at
 		FROM test_step_results sr
 		JOIN test_results r ON r.id = sr.test_result_id
 		JOIN test_runs tr ON tr.id = r.test_run_id
 		WHERE tr.project_id = $1
-		ORDER BY sr.test_result_id, sr.created_at`, projectID)
+		ORDER BY sr.test_result_id, sr.position, sr.created_at`, projectID)
 	if err != nil {
 		return err
 	}
@@ -518,11 +549,13 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 	w.StepResults = []TestStepResult{}
 	for stepResultRows.Next() {
 		var sr TestStepResult
-		var bug string
-		if err := stepResultRows.Scan(&sr.ID, &sr.TestResultID, &sr.TestStepID, &sr.Status,
+		var step, bug string
+		if err := stepResultRows.Scan(&sr.ID, &sr.TestResultID, &step, &sr.CaseRevision,
+			&sr.Position, &sr.Action, &sr.ExpectedResult, &sr.TestData, &sr.Status,
 			&sr.ActualResult, &sr.EvidenceURL, &bug, &sr.CreatedAt, &sr.UpdatedAt); err != nil {
 			return err
 		}
+		sr.TestStepID = parseUUIDPtr(step)
 		sr.BugWorkItemID = parseUUIDPtr(bug)
 		w.StepResults = append(w.StepResults, sr)
 		if index, ok := byResult[sr.TestResultID]; ok {

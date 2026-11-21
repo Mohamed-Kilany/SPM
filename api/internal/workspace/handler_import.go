@@ -185,7 +185,7 @@ func (h *Handler) ImportTestRun(c *gin.Context) {
 		if status == "" {
 			status = TestNotRun
 		}
-		caseID, created, resolveErr := resolveImportCase(c.Request.Context(), tx, projectID, req.FeatureID, input)
+		caseID, created, resolveErr := resolveImportCase(c.Request.Context(), tx, projectID, req.FeatureID, input, actorID(c))
 		if resolveErr != nil {
 			log.Printf("workspace import: resolve case %q: %v", input.Title, resolveErr)
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve imported test case")
@@ -211,8 +211,8 @@ func (h *Handler) ImportTestRun(c *gin.Context) {
 		}
 		var resultID uuid.UUID
 		if err := tx.QueryRow(c.Request.Context(), `
-			INSERT INTO test_results (test_run_id, test_case_id, status, duration_ms, actual_result, completed_at)
-			VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			INSERT INTO test_results (test_run_id, test_case_id, case_revision, status, duration_ms, actual_result, completed_at)
+			VALUES ($1,$2,(SELECT revision FROM test_cases WHERE id=$2),$3,$4,$5,$6) RETURNING id`,
 			runID, caseID, status, input.DurationMS, input.ActualResult, completed).Scan(&resultID); err != nil {
 			log.Printf("workspace import: create result for case %s: %v", caseID, err)
 			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to import test result")
@@ -224,8 +224,10 @@ func (h *Handler) ImportTestRun(c *gin.Context) {
 				stepStatus = TestNotRun
 			}
 			_, _ = tx.Exec(c.Request.Context(), `
-				INSERT INTO test_step_results (test_result_id, test_step_id, status, actual_result, evidence_url)
-				SELECT $1, id, $2, $3, $4 FROM test_steps
+				INSERT INTO test_step_results (test_result_id, test_step_id, case_revision, position, action, expected_result, test_data, status, actual_result, evidence_url)
+				SELECT $1, id, (SELECT revision FROM test_cases WHERE id=$5), position, action, expected_result,
+				       COALESCE(test_data, ''), $2, $3, $4
+				FROM test_steps
 				WHERE test_case_id=$5 AND position=$6
 				ON CONFLICT (test_result_id, test_step_id) DO UPDATE
 				SET status=EXCLUDED.status, actual_result=EXCLUDED.actual_result,
@@ -315,7 +317,7 @@ func normalizeImportStatus(raw string) string {
 	}
 }
 
-func resolveImportCase(ctx context.Context, tx pgx.Tx, projectID uuid.UUID, featureID *uuid.UUID, input importResultInput) (uuid.UUID, bool, error) {
+func resolveImportCase(ctx context.Context, tx pgx.Tx, projectID uuid.UUID, featureID *uuid.UUID, input importResultInput, actor *uuid.UUID) (uuid.UUID, bool, error) {
 	title := strings.TrimSpace(input.Title)
 	ref := strings.TrimSpace(input.AutomationRef)
 	if input.TestCaseID != nil {
@@ -362,6 +364,9 @@ func resolveImportCase(ctx context.Context, tx pgx.Tx, projectID uuid.UUID, feat
 		INSERT INTO test_cases (project_id, feature_id, title, type, priority, status, automation_ref)
 		VALUES ($1,$2,$3,'automated','medium','ready',$4) RETURNING id`,
 		projectID, *featureID, title, ref).Scan(&id); err != nil {
+		return uuid.Nil, false, err
+	}
+	if err := snapshotTestCaseVersion(ctx, tx, projectID, id, actor); err != nil {
 		return uuid.Nil, false, err
 	}
 	return id, true, nil

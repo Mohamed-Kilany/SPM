@@ -33,15 +33,16 @@ type revisionConflictResponse struct {
 // revisionTables is an allowlist for the table identifier used by
 // currentRevision. Table names are never taken from a request.
 var revisionTables = map[string]bool{
-	"prds":       true,
-	"epics":      true,
-	"features":   true,
-	"work_items": true,
-	"test_cases": true,
-	"test_runs":  true,
-	"test_plans": true,
-	"sprints":    true,
-	"releases":   true,
+	"prds":              true,
+	"epics":             true,
+	"features":          true,
+	"work_items":        true,
+	"test_cases":        true,
+	"test_runs":         true,
+	"test_plans":        true,
+	"test_shared_steps": true,
+	"sprints":           true,
+	"releases":          true,
 }
 
 // revisionFromRequest resolves the expected revision from, in order:
