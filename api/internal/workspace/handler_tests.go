@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -621,106 +620,6 @@ func (h *Handler) PatchTestStepResult(c *gin.Context) {
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "test_step_result", &stepResultID, "result_recorded",
 		"Recorded step result: "+req.Status, map[string]interface{}{"status": req.Status})
 	c.JSON(http.StatusOK, gin.H{"id": stepResultID, "status": req.Status})
-}
-
-type createBugRequest struct {
-	Title             string     `json:"title"`
-	Description       string     `json:"description"`
-	Severity          *string    `json:"severity"`
-	Priority          string     `json:"priority"`
-	AssigneeID        *uuid.UUID `json:"assignee_id"`
-	ReproductionSteps string     `json:"reproduction_steps"`
-	ExpectedResult    string     `json:"expected_result"`
-	ActualResult      string     `json:"actual_result"`
-	StepResultID      *uuid.UUID `json:"step_result_id"`
-}
-
-func (h *Handler) CreateBugFromResult(c *gin.Context) {
-	projectID, ok := parseProjectID(c)
-	if !ok {
-		return
-	}
-	runID, ok := parseParamID(c, "runId")
-	if !ok {
-		return
-	}
-	resultID, ok := parseParamID(c, "resultId")
-	if !ok {
-		return
-	}
-	var req createBugRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		apiError(c, http.StatusBadRequest, "INVALID_REQUEST", "Request body is not valid JSON")
-		return
-	}
-	req.Title = strings.TrimSpace(req.Title)
-	if req.Title == "" {
-		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Bug title is required")
-		return
-	}
-	if req.Priority == "" {
-		req.Priority = PriorityHigh
-	}
-
-	// Resolve the test result and its case/feature so the bug is fully linked.
-	var caseID uuid.UUID
-	var featureID *uuid.UUID
-	err := h.store.DB().QueryRow(c.Request.Context(), `
-		SELECT r.test_case_id, c.feature_id
-		FROM test_results r
-		JOIN test_runs tr ON tr.id = r.test_run_id
-		JOIN test_cases c ON c.id = r.test_case_id
-		WHERE r.id=$1 AND r.test_run_id=$2 AND tr.project_id=$3`, resultID, runID, projectID).Scan(&caseID, &featureID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		apiError(c, http.StatusNotFound, "NOT_FOUND", "Test result not found")
-		return
-	}
-	if err != nil {
-		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load test result")
-		return
-	}
-
-	tx, err := h.store.DB().Begin(c.Request.Context())
-	if err != nil {
-		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start transaction")
-		return
-	}
-	defer tx.Rollback(c.Request.Context())
-
-	var bugID uuid.UUID
-	var number int64
-	err = tx.QueryRow(c.Request.Context(), `
-		INSERT INTO work_items (project_id, feature_id, type, title, description, status, priority, severity,
-		assignee_id, reporter_id, reproduction_steps, expected_result, actual_result)
-		VALUES ($1,$2,'bug',$3,$4,'new',$5,$6,$7,$8,$9,$10,$11)
-		RETURNING id, item_number`,
-		projectID, featureID, req.Title, req.Description, req.Priority, req.Severity,
-		req.AssigneeID, actorID(c), req.ReproductionSteps, req.ExpectedResult, req.ActualResult).Scan(&bugID, &number)
-	if err != nil {
-		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create bug")
-		return
-	}
-	if _, err := tx.Exec(c.Request.Context(), `UPDATE test_results SET bug_work_item_id=$2, updated_at=NOW() WHERE id=$1`, resultID, bugID); err != nil {
-		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to link bug to result")
-		return
-	}
-	if req.StepResultID != nil {
-		_, _ = tx.Exec(c.Request.Context(), `UPDATE test_step_results SET bug_work_item_id=$2, updated_at=NOW() WHERE id=$1 AND test_result_id=$3`, *req.StepResultID, bugID, resultID)
-	}
-	_, _ = tx.Exec(c.Request.Context(), `
-		INSERT INTO artifact_links (project_id, source_type, source_id, target_type, target_id, link_type, created_by)
-		VALUES ($1,'test_result',$2,'work_item',$3,'found_bug',$4)
-		ON CONFLICT DO NOTHING`, projectID, resultID, bugID, actorID(c))
-	if err := tx.Commit(c.Request.Context()); err != nil {
-		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit bug")
-		return
-	}
-	var prefix string
-	_ = h.store.DB().QueryRow(c.Request.Context(), `SELECT key_prefix FROM projects WHERE id=$1`, projectID).Scan(&prefix)
-	key := prefix + "-" + fmt.Sprintf("%d", number)
-	h.recordActivity(c.Request.Context(), projectID, actorID(c), "work_item", &bugID, "created_from_test",
-		"Created bug "+key+" from failed test result", map[string]interface{}{"test_result_id": resultID})
-	c.JSON(http.StatusCreated, gin.H{"id": bugID, "key": key})
 }
 
 func validTestStatus(s string) bool {

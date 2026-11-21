@@ -189,6 +189,7 @@ func Routes() []Route {
 		p(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/steps/:stepResultId", auth.CapTestWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/steps/:stepResultId/evidence", auth.CapTestWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/bug", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/bugs", auth.CapTestWrite),
 
 		// Delivery configuration and links.
 		p(http.MethodPost, "/api/v1/projects/:id/environments", auth.CapDeliveryDeploy),

@@ -492,6 +492,65 @@ export interface TestRun {
 
 export type TestRunOutcome = 'passed' | 'failed' | 'incomplete'
 
+export interface BugDuplicate {
+  id: string
+  key: string
+  title: string
+  status: string
+  match_on: 'title' | 'test_result' | string
+}
+
+export interface BugCreateInput {
+  title?: string
+  description?: string
+  severity?: string | null
+  priority?: string
+  assignee_id?: string | null
+  reproduction_steps?: string
+  expected_result?: string
+  actual_result?: string
+  step_result_id?: string | null
+  force?: boolean
+}
+
+export interface BugArtifactLink {
+  source_type: string
+  source_id: string
+  target_type: string
+  target_id: string
+  link_type: string
+}
+
+export interface BugCreateResult {
+  id: string
+  key: string
+  revision: number
+  step_result_id?: string | null
+  links: BugArtifactLink[]
+}
+
+export type BulkBugItemStatus = 'created' | 'duplicate' | 'skipped' | 'failed'
+
+export interface BulkBugItem {
+  result_id: string
+  status: BulkBugItemStatus | string
+  reason?: string
+  bug_id?: string
+  key?: string
+  step_result_id?: string
+  duplicates?: BugDuplicate[]
+}
+
+export interface BulkBugResult {
+  run_id: string
+  requested: number
+  created: number
+  duplicates: number
+  skipped: number
+  failed: number
+  items: BulkBugItem[]
+}
+
 export interface TestRunFinishResult {
   id: string
   status: string

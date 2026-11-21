@@ -417,17 +417,85 @@ properties:
   actual_result: { type: string }
   evidence_url: { type: string, maxLength: 2048 }`,
 	"BugFromResultInput": `type: object
-required: [title, priority]
+description: Creates a bug from one executed result. Traceability context (run, case, step, environment, build, deployment) is appended to the description and linked automatically.
 properties:
-  title: { type: string }
+  title: { type: string, description: Defaults to the case and failed step when omitted. }
   description: { type: string }
-  severity: { type: [string, "null"] }
-  priority: { type: string }
+  severity: { type: [string, "null"], enum: [blocker, critical, major, minor, trivial, null], description: Defaults to major in the UI. }
+  priority: { type: string, enum: [low, medium, high, critical], default: high }
   assignee_id: { type: [string, "null"], format: uuid }
-  reproduction_steps: { type: string }
-  expected_result: { type: string }
-  actual_result: { type: string }
-  step_result_id: { type: [string, "null"], format: uuid }`,
+  reproduction_steps: { type: string, description: Defaults to the executed step actions. }
+  expected_result: { type: string, description: Defaults to the failed step expectation. }
+  actual_result: { type: string, description: Defaults to the failed step or result actual value. }
+  step_result_id: { type: [string, "null"], format: uuid, description: Must belong to the result. Defaults to the first failed step. }
+  force: { type: boolean, default: false, description: Create even when an open duplicate is reported. }
+`,
+	"BulkBugInput": `type: object
+description: Creates defects from failed results in one run. Already linked results and results without a failure are reported as skipped; duplicates are reported per item unless force is true.
+properties:
+  result_ids:
+    type: array
+    description: Selected results. Omit to target every failed result in the run.
+    items: { type: string, format: uuid }
+  force: { type: boolean, default: false, description: Create bugs even when an open duplicate is reported. }
+`,
+	"BugDuplicate": `type: object
+required: [id, key, title, status, match_on]
+properties:
+  id: { type: string, format: uuid }
+  key: { type: string }
+  title: { type: string }
+  status: { type: string }
+  match_on: { type: string, enum: [title, test_result], description: test_result means the result is already linked or an artifact link exists. }
+`,
+	"BugCreateResult": `type: object
+required: [id, key, revision, links]
+properties:
+  id: { type: string, format: uuid }
+  key: { type: string }
+  revision: { type: integer, format: int64, minimum: 1 }
+  step_result_id: { type: [string, "null"], format: uuid }
+  links:
+    type: array
+    description: Artifact links written with the defect.
+    items:
+      type: object
+      required: [source_type, source_id, target_type, target_id, link_type]
+      properties:
+        source_type: { type: string, enum: [test_result, test_run, test_case, build, deployment] }
+        source_id: { type: string, format: uuid }
+        target_type: { type: string, enum: [work_item] }
+        target_id: { type: string, format: uuid }
+        link_type: { type: string, enum: [found_bug] }
+`,
+	"BulkBugItem": `type: object
+required: [result_id, status]
+properties:
+  result_id: { type: string, format: uuid }
+  status: { type: string, enum: [created, duplicate, skipped, failed] }
+  reason: { type: string, enum: [already_linked, not_failed, open_bug_exists, load_failed, duplicate_check_failed, create_failed] }
+  bug_id: { type: string, format: uuid }
+  key: { type: string }
+  step_result_id: { type: string, format: uuid }
+  duplicates:
+    type: array
+    items:
+      $ref: '#/components/schemas/BugDuplicate'
+`,
+	"BulkBugResult": `type: object
+required: [run_id, requested, created, duplicates, skipped, failed, items]
+properties:
+  run_id: { type: string, format: uuid }
+  requested: { type: integer, minimum: 0 }
+  created: { type: integer, minimum: 0 }
+  duplicates: { type: integer, minimum: 0 }
+  skipped: { type: integer, minimum: 0 }
+  failed: { type: integer, minimum: 0 }
+  items:
+    type: array
+    items:
+      $ref: '#/components/schemas/BulkBugItem'
+`,
 	"RepositoryInput": `type: object
 required: [name]
 properties:
@@ -1319,7 +1387,8 @@ func successCode(method, path string) string {
 			strings.HasSuffix(path, "/provision"),
 			strings.HasSuffix(path, "/watch"),
 			strings.Contains(path, "/pull-requests/") && strings.HasSuffix(path, "/merge"),
-			strings.Contains(path, "/test-plans/") && strings.HasSuffix(path, "/cases"):
+			strings.Contains(path, "/test-plans/") && strings.HasSuffix(path, "/cases"),
+			strings.HasSuffix(path, "/test-runs/{runId}/bugs"):
 			return "200"
 		}
 		return "201"
@@ -1461,6 +1530,8 @@ func requestSchema(method, path string) string {
 		}
 	case strings.HasSuffix(path, "/test-runs/import"):
 		return "TestImport"
+	case strings.HasSuffix(path, "/test-runs/{runId}/bugs"):
+		return "BulkBugInput"
 	case strings.HasSuffix(path, "/test-runs/{runId}/finish"):
 		return "TestRunFinishInput"
 	case strings.HasSuffix(path, "/test-runs"), strings.Contains(path, "/test-runs/"):
@@ -1544,6 +1615,10 @@ func successSchema(method, path string) string {
 		return "TestCaseVersionList"
 	case strings.HasSuffix(path, "/test-runs/{runId}/finish"):
 		return "TestRunFinishResult"
+	case strings.HasSuffix(path, "/test-runs/{runId}/bugs"):
+		return "BulkBugResult"
+	case strings.HasSuffix(path, "/test-runs/{runId}/results/{resultId}/bug"):
+		return "BugCreateResult"
 	case isEvidenceUpload(method, path):
 		return "TestStepEvidence"
 	case isTestManagementCreate(method, path) || isTestManagementMutation(method, path):
@@ -1689,6 +1764,8 @@ var summaryOverrides = map[string]string{
 	"POST /api/v1/projects/{id}/test-runs":                                                          "Create a test run",
 	"POST /api/v1/projects/{id}/test-runs/{runId}/finish":                                           "Finish a test run",
 	"POST /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}/steps/{stepResultId}/evidence": "Upload test step evidence",
+	"POST /api/v1/projects/{id}/test-runs/{runId}/results/{resultId}/bug":                           "Create a linked bug",
+	"POST /api/v1/projects/{id}/test-runs/{runId}/bugs":                                             "Create bugs from failed results",
 	"POST /api/v1/webhooks/gitea":                                                                   "Receive a Gitea webhook",
 	"POST /api/v1/webhooks/argocd":                                                                  "Receive an Argo CD webhook",
 	"POST /api/v1/webhooks/git/{provider}":                                                          "Receive a Git provider webhook",
