@@ -142,6 +142,8 @@ docker-compose.test.yml  Isolated test stack
   in [docs/WORK-ITEMS.md](docs/WORK-ITEMS.md).
 - Sprints and releases: start/close, carry-over, velocity, freeze, scope exceptions and sign-off
   are documented in [docs/PLANNING-LIFECYCLE.md](docs/PLANNING-LIFECYCLE.md).
+- Test plans and suites: ordered membership by filter or CSV, run scope resolution and immutable
+  run snapshots are documented in [docs/TEST-MANAGEMENT.md](docs/TEST-MANAGEMENT.md).
 - Health: `/health/live`, `/health/ready`, `/health`; each probe reports the build `version`,
   `commit` and `built_at` injected from the release tag.
 - UI version: shown in the navigation footer from `VITE_APP_VERSION`.

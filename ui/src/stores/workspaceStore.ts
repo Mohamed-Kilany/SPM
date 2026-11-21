@@ -14,7 +14,10 @@ import type {
   Release,
   Sprint,
   TestCase,
+  TestPlan,
   TestRun,
+  TestSuite,
+  TestSuiteCase,
   WorkItem,
   Workspace,
 } from '../types/workspace'
@@ -35,6 +38,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const sprints = computed<Sprint[]>(() => workspace.value?.sprints ?? [])
   const releases = computed<Release[]>(() => workspace.value?.releases ?? [])
   const testCases = computed<TestCase[]>(() => workspace.value?.test_cases ?? [])
+  const testPlans = computed<TestPlan[]>(() => workspace.value?.test_plans ?? [])
+  const testSuites = computed<TestSuite[]>(() => workspace.value?.test_suites ?? [])
+  const testSuiteCases = computed<TestSuiteCase[]>(() => workspace.value?.test_suite_cases ?? [])
   const testRuns = computed<TestRun[]>(() => workspace.value?.test_runs ?? [])
   const repositories = computed(() => workspace.value?.repositories ?? [])
   const branches = computed(() => workspace.value?.branches ?? [])
@@ -115,6 +121,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     sprints,
     releases,
     testCases,
+    testPlans,
+    testSuites,
+    testSuiteCases,
     testRuns,
     repositories,
     branches,

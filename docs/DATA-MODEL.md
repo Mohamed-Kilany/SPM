@@ -38,6 +38,9 @@ Project
 │           ├── Work item ── (optional Feature, self-referencing parent)
 │           └── Test case ── (optional Feature)
 │               └── Test step
+├── Test plan
+│   └── Test suite
+│       └── Test suite case ── Test case
 ├── Sprint
 ├── Release
 │   └── Release scope exception
@@ -75,7 +78,11 @@ unlinked (`SET NULL`).
 | `projects` → project-scoped tables | `CASCADE` | Deleting a project removes all of its planning, delivery, test and collaboration rows. |
 | `epics` → `features` | `CASCADE` | A feature cannot exist without its epic. |
 | `test_cases` → `test_steps` | `CASCADE` | Steps are owned by their case. |
+| `test_plans` → `test_suites` | `CASCADE` | Suites are owned by their plan. |
+| `test_suites` → `test_suite_cases` | `CASCADE` | Membership belongs to its suite. |
+| `test_cases` → `test_suite_cases` | `CASCADE` | Deleting a case removes its suite membership. |
 | `test_runs` → `test_results` | `CASCADE` | Results are owned by their run. |
+| `test_plans`/`test_suites` → `test_runs` | `SET NULL` | Historical runs keep `plan_name`/`suite_name` snapshots. |
 | `test_results` → `test_step_results` | `CASCADE` | Step results are owned by their result. |
 | `git_repositories` → branches, commits, pull requests | `CASCADE` | Repository history is removed with the repository. |
 | `pull_requests` → reviews | `CASCADE` | Reviews are owned by their pull request. |
@@ -98,10 +105,10 @@ a self-cycle. Deeper cycles are rejected by the application hierarchy validation
 
 ## 4. Optimistic concurrency
 
-Eight planning tables carry an internal concurrency token:
+Ten planning tables carry an internal concurrency token:
 
-`prds`, `epics`, `features`, `work_items`, `test_cases`, `test_runs`, `sprints`,
-`releases`.
+`prds`, `epics`, `features`, `work_items`, `test_plans`, `test_suites`,
+`test_cases`, `test_runs`, `sprints`, `releases`.
 
 ```sql
 revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0)
@@ -134,8 +141,16 @@ REVISION_REQUIRED`, a stale token is `409 REVISION_CONFLICT` with the current
 
 Test runs are revisioned but have no update endpoint. Their revision is returned
 on create and bumped by the internal status refresh; result and step patches do
-not require a token. Every other revisioned table enforces a token on `PUT`,
-`PATCH` (work-item status) and `DELETE`.
+not require a token. Test suites are scoped through `test_plans.project_id`
+rather than a project column of their own; their revision token is checked
+inside the update transaction. Every other revisioned table enforces a token on
+`PUT`, `PATCH` (work-item status) and `DELETE`.
+
+Test runs also snapshot `plan_id`, `suite_id`, `plan_name` and `suite_name`, and
+each `test_results` row stores the `case_revision` it executed against. These
+snapshots are append-only history: renaming or archiving a plan, suite or case
+never rewrites a completed run. See
+[`TEST-MANAGEMENT.md`](TEST-MANAGEMENT.md).
 
 The HTTP contract is generated into [`openapi.yaml`](openapi.yaml); the
 concurrency rules are summarized in [`API.md`](API.md). Each rejected stale write

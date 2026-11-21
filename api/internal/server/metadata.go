@@ -166,6 +166,13 @@ func Routes() []Route {
 		p(http.MethodPost, "/api/v1/projects/:id/releases/:releaseId/sign-off", auth.CapPlanningWrite),
 
 		// Test management.
+		p(http.MethodPost, "/api/v1/projects/:id/test-plans", auth.CapTestWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/test-plans/:planId", auth.CapTestWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/test-plans/:planId/suite-order", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-plans/:planId/suites", auth.CapTestWrite),
+		p(http.MethodPut, "/api/v1/projects/:id/test-plans/:planId/suites/:suiteId", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-plans/:planId/suites/:suiteId/cases", auth.CapTestWrite),
+		p(http.MethodDelete, "/api/v1/projects/:id/test-plans/:planId/suites/:suiteId/cases/:caseId", auth.CapTestWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/test-cases", auth.CapTestWrite),
 		p(http.MethodPut, "/api/v1/projects/:id/test-cases/:caseId", auth.CapTestWrite),
 		p(http.MethodDelete, "/api/v1/projects/:id/test-cases/:caseId", auth.CapTestWrite),

@@ -339,10 +339,94 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 		return err
 	}
 
+	// Test plans and suites
+	planRows, err := s.db.Query(ctx, `
+		SELECT id, project_id, name, COALESCE(description, ''), status,
+		       COALESCE(owner_id::text, ''), start_date, end_date,
+		       COALESCE(created_by::text, ''), created_at, updated_at, revision
+		FROM test_plans WHERE project_id = $1
+		ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, updated_at DESC`, projectID)
+	if err != nil {
+		return err
+	}
+	defer planRows.Close()
+	w.TestPlans = []TestPlan{}
+	for planRows.Next() {
+		var plan TestPlan
+		var owner, creator string
+		if err := planRows.Scan(&plan.ID, &plan.ProjectID, &plan.Name, &plan.Description,
+			&plan.Status, &owner, &plan.StartDate, &plan.EndDate, &creator,
+			&plan.CreatedAt, &plan.UpdatedAt, &plan.Revision); err != nil {
+			return err
+		}
+		plan.OwnerID = parseUUIDPtr(owner)
+		plan.CreatedBy = parseUUIDPtr(creator)
+		w.TestPlans = append(w.TestPlans, plan)
+	}
+	if err := planRows.Err(); err != nil {
+		return err
+	}
+
+	suiteRows, err := s.db.Query(ctx, `
+		SELECT s.id, s.plan_id, s.name, COALESCE(s.description, ''),
+		       COALESCE(s.assignee_id::text, ''), s.position, s.archived_at,
+		       s.created_at, s.updated_at, s.revision
+		FROM test_suites s
+		JOIN test_plans p ON p.id = s.plan_id
+		WHERE p.project_id = $1
+		ORDER BY s.position, s.created_at`, projectID)
+	if err != nil {
+		return err
+	}
+	defer suiteRows.Close()
+	w.TestSuites = []TestSuite{}
+	for suiteRows.Next() {
+		var suite TestSuite
+		var assignee string
+		if err := suiteRows.Scan(&suite.ID, &suite.PlanID, &suite.Name, &suite.Description,
+			&assignee, &suite.Position, &suite.ArchivedAt, &suite.CreatedAt, &suite.UpdatedAt,
+			&suite.Revision); err != nil {
+			return err
+		}
+		suite.AssigneeID = parseUUIDPtr(assignee)
+		w.TestSuites = append(w.TestSuites, suite)
+	}
+	if err := suiteRows.Err(); err != nil {
+		return err
+	}
+
+	suiteCaseRows, err := s.db.Query(ctx, `
+		SELECT sc.suite_id, sc.test_case_id, sc.position, COALESCE(sc.added_by::text, ''), sc.created_at
+		FROM test_suite_cases sc
+		JOIN test_suites s ON s.id = sc.suite_id
+		JOIN test_plans p ON p.id = s.plan_id
+		WHERE p.project_id = $1
+		ORDER BY sc.suite_id, sc.position, sc.created_at`, projectID)
+	if err != nil {
+		return err
+	}
+	defer suiteCaseRows.Close()
+	w.SuiteCases = []TestSuiteCase{}
+	for suiteCaseRows.Next() {
+		var member TestSuiteCase
+		var addedBy string
+		if err := suiteCaseRows.Scan(&member.SuiteID, &member.TestCaseID, &member.Position,
+			&addedBy, &member.CreatedAt); err != nil {
+			return err
+		}
+		member.AddedBy = parseUUIDPtr(addedBy)
+		w.SuiteCases = append(w.SuiteCases, member)
+	}
+	if err := suiteCaseRows.Err(); err != nil {
+		return err
+	}
+
 	// Test runs
 	runRows, err := s.db.Query(ctx, `
 		SELECT id, project_id, COALESCE(release_id::text, ''), COALESCE(sprint_id::text, ''),
-		       COALESCE(environment_id::text, ''), COALESCE(build_id::text, ''), name, status,
+		       COALESCE(environment_id::text, ''), COALESCE(build_id::text, ''),
+		       COALESCE(plan_id::text, ''), COALESCE(suite_id::text, ''),
+		       plan_name, suite_name, name, status,
 		       COALESCE(executed_by::text, ''), started_at, completed_at, COALESCE(import_source, ''),
 		       COALESCE(import_ref, ''), COALESCE(metadata, '{}'::jsonb), created_at, updated_at, revision
 		FROM test_runs WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
@@ -354,9 +438,10 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 	byRun := map[uuid.UUID]int{}
 	for runRows.Next() {
 		var tr TestRun
-		var release, sprint, env, build, executed string
+		var release, sprint, env, build, plan, suite, executed string
 		var metadata []byte
-		if err := runRows.Scan(&tr.ID, &tr.ProjectID, &release, &sprint, &env, &build, &tr.Name,
+		if err := runRows.Scan(&tr.ID, &tr.ProjectID, &release, &sprint, &env, &build,
+			&plan, &suite, &tr.PlanName, &tr.SuiteName, &tr.Name,
 			&tr.Status, &executed, &tr.StartedAt, &tr.CompletedAt, &tr.ImportSource, &tr.ImportRef,
 			&metadata, &tr.CreatedAt, &tr.UpdatedAt, &tr.Revision); err != nil {
 			return err
@@ -365,6 +450,8 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 		tr.SprintID = parseUUIDPtr(sprint)
 		tr.EnvironmentID = parseUUIDPtr(env)
 		tr.BuildID = parseUUIDPtr(build)
+		tr.PlanID = parseUUIDPtr(plan)
+		tr.SuiteID = parseUUIDPtr(suite)
 		tr.ExecutedBy = parseUUIDPtr(executed)
 		tr.Metadata = map[string]interface{}{}
 		if len(metadata) > 0 {
@@ -380,7 +467,7 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 
 	// Test results
 	resultRows, err := s.db.Query(ctx, `
-		SELECT r.id, r.test_run_id, r.test_case_id, r.status, COALESCE(r.executed_by::text, ''),
+		SELECT r.id, r.test_run_id, r.test_case_id, r.case_revision, r.status, COALESCE(r.executed_by::text, ''),
 		       r.duration_ms, COALESCE(r.actual_result, ''), COALESCE(r.bug_work_item_id::text, ''),
 		       r.started_at, r.completed_at, r.created_at, r.updated_at
 		FROM test_results r
@@ -397,8 +484,8 @@ func (s *Store) loadTests(ctx context.Context, projectID uuid.UUID, w *Workspace
 	for resultRows.Next() {
 		var tr TestResult
 		var executed, bug string
-		if err := resultRows.Scan(&tr.ID, &tr.TestRunID, &tr.TestCaseID, &tr.Status, &executed,
-			&tr.DurationMS, &tr.ActualResult, &bug, &tr.StartedAt, &tr.CompletedAt,
+		if err := resultRows.Scan(&tr.ID, &tr.TestRunID, &tr.TestCaseID, &tr.CaseRevision, &tr.Status,
+			&executed, &tr.DurationMS, &tr.ActualResult, &bug, &tr.StartedAt, &tr.CompletedAt,
 			&tr.CreatedAt, &tr.UpdatedAt); err != nil {
 			return err
 		}

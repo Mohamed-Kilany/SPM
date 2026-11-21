@@ -39,6 +39,7 @@ var revisionTables = map[string]bool{
 	"work_items": true,
 	"test_cases": true,
 	"test_runs":  true,
+	"test_plans": true,
 	"sprints":    true,
 	"releases":   true,
 }

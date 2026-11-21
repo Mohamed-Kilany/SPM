@@ -12,6 +12,8 @@ const STORY_TITLE = `Checkout as a returning customer ${RUN}`
 const TASK_TITLE = `Implement one-tap payment ${RUN}`
 const SUBTASK_TITLE = `Add payment intent contract ${RUN}`
 const CASE_TITLE = `Guest checkout with saved card ${RUN}`
+const PLAN_NAME = `Release test plan ${RUN}`
+const SUITE_NAME = `Checkout smoke ${RUN}`
 const RUN_NAME = `Release regression ${RUN}`
 const BUG_TITLE = `Saved card checkout returns 500 ${RUN}`
 const RELEASE_NAME = `Checkout release ${RUN}`
@@ -441,8 +443,36 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await expect(page.getByText(CASE_TITLE, { exact: true }).first()).toBeVisible()
   await expectAccessible(page, 'test lab')
 
-  await page.getByRole('button', { name: /New test run/ }).click()
+  // A plan schedules the cycle, a suite keeps an ordered selection and the run
+  // snapshots both names plus each case revision.
+  await page.getByRole('button', { name: /New test plan/ }).click()
+  const planDialog = page.getByRole('dialog', { name: 'New test plan' })
+  await planDialog.locator('#plan-name').fill(PLAN_NAME)
+  await planDialog.locator('#plan-description').fill('Checkout regression cycle for the release candidate.')
+  await planDialog.getByRole('button', { name: 'Create test plan' }).click()
+  await expect(planDialog).toBeHidden()
+  const planBoard = page.getByTestId('test-plan-board')
+  await expect(planBoard).toContainText(PLAN_NAME)
+
+  await planBoard.getByRole('button', { name: /New suite/ }).first().click()
+  const suiteDialog = page.getByRole('dialog', { name: 'New test suite' })
+  await suiteDialog.locator('#suite-name').fill(SUITE_NAME)
+  await suiteDialog.getByRole('button', { name: 'Create test suite' }).click()
+  await expect(suiteDialog).toBeHidden()
+  const suiteRow = page.getByTestId('suite-row').filter({ hasText: SUITE_NAME }).first()
+  await expect(suiteRow).toBeVisible()
+
+  await suiteRow.getByRole('button', { name: 'Add cases' }).click()
+  const addCasesDialog = page.getByRole('dialog', { name: 'Add cases to suite' })
+  await addCasesDialog.locator('#add-cases-mode').selectOption('csv')
+  await addCasesDialog.locator('#add-cases-csv').fill(CASE_TITLE)
+  await addCasesDialog.getByRole('button', { name: 'Add cases' }).click()
+  await expect(addCasesDialog).toBeHidden()
+  await expect(page.getByTestId('suite-case').filter({ hasText: CASE_TITLE })).toBeVisible()
+
+  await suiteRow.getByRole('button', { name: 'Run suite' }).click()
   const runDialog = page.getByRole('dialog', { name: 'New test run' })
+  await expect(runDialog.locator('#run-scope')).toHaveValue('suite')
   await runDialog.locator('#run-name').fill(RUN_NAME)
   await runDialog.locator('#run-env').selectOption({ label: 'Staging' })
   await runDialog.getByRole('button', { name: 'Start test run' }).click()
@@ -450,6 +480,8 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
 
   const detail = page.getByRole('dialog', { name: RUN_NAME })
   await expect(detail).toBeVisible()
+  await expect(detail).toContainText(PLAN_NAME)
+  await expect(detail).toContainText(SUITE_NAME)
   const firstStep = detail.getByTestId('test-step-result').first()
   await firstStep.getByRole('button', { name: 'Failed', exact: true }).click()
   await expect(firstStep.getByRole('button', { name: /Raise bug/ })).toBeVisible()

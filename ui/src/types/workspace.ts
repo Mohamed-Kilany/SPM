@@ -345,6 +345,44 @@ export interface TestCase {
   revision: number
 }
 
+export type TestPlanStatus = 'draft' | 'active' | 'archived'
+
+export interface TestPlan {
+  id: string
+  project_id: string
+  name: string
+  description: string
+  status: TestPlanStatus | string
+  owner_id: string | null
+  start_date: string | null
+  end_date: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
+export interface TestSuite {
+  id: string
+  plan_id: string
+  name: string
+  description: string
+  assignee_id: string | null
+  position: number
+  archived_at: string | null
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
+export interface TestSuiteCase {
+  suite_id: string
+  test_case_id: string
+  position: number
+  added_by: string | null
+  created_at: string
+}
+
 export interface TestStepResult {
   id: string
   test_result_id: string
@@ -361,6 +399,7 @@ export interface TestResult {
   id: string
   test_run_id: string
   test_case_id: string
+  case_revision: number
   status: TestStatus | string
   executed_by: string | null
   duration_ms: number | null
@@ -380,6 +419,10 @@ export interface TestRun {
   sprint_id: string | null
   environment_id: string | null
   build_id: string | null
+  plan_id: string | null
+  suite_id: string | null
+  plan_name: string
+  suite_name: string
   name: string
   status: string
   executed_by: string | null
@@ -657,6 +700,9 @@ export interface Workspace {
   releases: Release[]
   environments: Environment[]
   test_cases: TestCase[]
+  test_plans: TestPlan[]
+  test_suites: TestSuite[]
+  test_suite_cases: TestSuiteCase[]
   test_runs: TestRun[]
   test_results: TestResult[]
   test_step_results: TestStepResult[]

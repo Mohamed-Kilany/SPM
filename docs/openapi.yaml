@@ -2289,6 +2289,310 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/test-plans:
+    post:
+      tags: ["Tests"]
+      summary: "Create a test plan"
+      operationId: post_api_v1_projects_id_test_plans
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestPlanInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-plans/{planId}:
+    put:
+      tags: ["Tests"]
+      summary: "Update a test plan"
+      operationId: put_api_v1_projects_id_test_plans_planId
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestPlanInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "planId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-plans/{planId}/suite-order:
+    put:
+      tags: ["Tests"]
+      summary: "Reorder test suites"
+      operationId: put_api_v1_projects_id_test_plans_planId_suite_order
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuiteOrderInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "planId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-plans/{planId}/suites:
+    post:
+      tags: ["Tests"]
+      summary: "Create a test suite"
+      operationId: post_api_v1_projects_id_test_plans_planId_suites
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSuiteInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "planId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}:
+    put:
+      tags: ["Tests"]
+      summary: "Update a test suite"
+      operationId: put_api_v1_projects_id_test_plans_planId_suites_suiteId
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSuiteInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "planId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "suiteId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases:
+    post:
+      tags: ["Tests"]
+      summary: "Add cases to a test suite"
+      operationId: post_api_v1_projects_id_test_plans_planId_suites_suiteId_cases
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuiteCasesResult'
+          headers:
+            ETag:
+              description: The new revision as a strong ETag.
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuiteCasesInput'
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "planId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "suiteId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/test-plans/{planId}/suites/{suiteId}/cases/{caseId}:
+    delete:
+      tags: ["Tests"]
+      summary: "Remove a case from a test suite"
+      operationId: delete_api_v1_projects_id_test_plans_planId_suites_suiteId_cases_caseId
+      x-spm-auth: project-write
+      x-spm-capability: test.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/RevisionConflict'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: 'Current revision ("N", W/"N", or *). Required unless expected_version is supplied in the query or body.'}
+        - {name: expected_version, in: query, required: false, schema: {type: integer, format: int64, minimum: 1}, description: Current revision; alternative to If-Match.}
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "planId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "suiteId"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "caseId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/test-runs:
     post:
       tags: ["Tests"]
@@ -3443,13 +3747,22 @@ components:
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
     TestRunInput:
       type: object
-      required: [name, case_ids]
+      description: Runs snapshot plan and suite names plus each result's case revision. Precedence is test_case_ids, then filter, then suite_id, then plan_id, then every case in the project.
       properties:
         name: {type: string}
-        environment_id: {type: string, format: uuid}
-        build_id: {type: string, format: uuid}
-        release_id: {type: string, format: uuid}
-        case_ids: {type: array, items: {type: string, format: uuid}}
+        status: {type: string, default: planned}
+        release_id: {type: [string, "null"], format: uuid}
+        sprint_id: {type: [string, "null"], format: uuid}
+        environment_id: {type: string, format: uuid, description: Required; must belong to the project.}
+        build_id: {type: [string, "null"], format: uuid}
+        plan_id: {type: [string, "null"], format: uuid, description: Archived plans cannot start a run.}
+        suite_id: {type: [string, "null"], format: uuid, description: Archived suites cannot start a run; must belong to plan_id when both are supplied.}
+        filter:
+          $ref: '#/components/schemas/TestSuiteFilter'
+        test_case_ids:
+          type: array
+          items: {type: string, format: uuid}
+        executed_by: {type: [string, "null"], format: uuid}
     TestImport:
       type: object
       required: [cases]
@@ -3976,4 +4289,65 @@ components:
     SprintStartInput:
       type: object
       properties:
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    TestSuiteFilter:
+      type: object
+      description: Empty fields are ignored. Supplied fields are combined with AND.
+      properties:
+        feature_id: {type: [string, "null"], format: uuid}
+        type: {type: string, enum: [manual, automated]}
+        priority: {type: string, enum: [low, medium, high, critical]}
+        status: {type: string, enum: [draft, ready, deprecated]}
+    SuiteCasesInput:
+      type: object
+      description: Provide at least one of test_case_ids, filter or csv. Results from all supplied selectors are merged, deduplicated and appended in title order.
+      properties:
+        test_case_ids:
+          type: array
+          items: {type: string, format: uuid}
+        filter:
+          $ref: '#/components/schemas/TestSuiteFilter'
+        csv:
+          type: string
+          maxLength: 100000
+          description: One exact case title per line. A leading title/case/name header is ignored. Any unknown title rejects the whole request.
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current suite revision; alternative to If-Match and the query parameter.}
+    SuiteCasesResult:
+      type: object
+      required: [id, revision, added, skipped, requested]
+      properties:
+        id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 1}
+        added: {type: integer, minimum: 0}
+        skipped: {type: integer, minimum: 0, description: Cases already present in the suite.}
+        requested: {type: integer, minimum: 0}
+    SuiteOrderInput:
+      type: object
+      required: [suite_ids]
+      properties:
+        suite_ids:
+          type: array
+          description: Must list every active suite in the plan exactly once; archived suites are omitted.
+          items: {type: string, format: uuid}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current plan revision; alternative to If-Match and the query parameter.}
+    TestPlanInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 255}
+        description: {type: string}
+        status: {type: string, enum: [draft, active, archived], default: draft, description: Archived is terminal and cannot be reactivated.}
+        owner_id: {type: [string, "null"], format: uuid, description: Must be a project member.}
+        start_date: {type: [string, "null"], format: date}
+        end_date: {type: [string, "null"], format: date, description: Must not be before start_date.}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    TestSuiteInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 255}
+        description: {type: string}
+        assignee_id: {type: [string, "null"], format: uuid, description: Must be a project member.}
+        position: {type: [integer, "null"], minimum: 0, description: Omit on create to append.}
+        archived: {type: boolean, default: false}
         expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
