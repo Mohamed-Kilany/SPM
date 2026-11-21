@@ -184,8 +184,10 @@ func Routes() []Route {
 		p(http.MethodDelete, "/api/v1/projects/:id/test-shared-steps/:sharedStepId", auth.CapTestWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/test-runs", auth.CapTestWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/test-runs/import", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/finish", auth.CapTestWrite),
 		p(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId", auth.CapTestWrite),
 		p(http.MethodPatch, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/steps/:stepResultId", auth.CapTestWrite),
+		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/steps/:stepResultId/evidence", auth.CapTestWrite),
 		p(http.MethodPost, "/api/v1/projects/:id/test-runs/:runId/results/:resultId/bug", auth.CapTestWrite),
 
 		// Delivery configuration and links.

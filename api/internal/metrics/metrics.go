@@ -49,6 +49,8 @@ type Registry struct {
 	authzInvalidations *prometheus.CounterVec
 	planningConflicts  *prometheus.CounterVec
 
+	testRunCompletions *prometheus.CounterVec
+
 	auditWrites            *prometheus.CounterVec
 	auditWriteDuration     prometheus.Histogram
 	auditChainValid        prometheus.Gauge
@@ -129,6 +131,10 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_planning_conflicts_total",
 			Help: "Rejected optimistic-concurrency writes by planning resource.",
 		}, []string{"resource"}),
+		testRunCompletions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "spm_test_runs_completed_total",
+			Help: "Completed test runs by outcome: passed, failed or incomplete.",
+		}, []string{"outcome"}),
 		auditWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "spm_audit_writes_total",
 			Help: "Audit log writes by outcome.",
@@ -183,6 +189,7 @@ func New(info BuildInfo) *Registry {
 		metrics.reconcileLastSuccess,
 		metrics.authzInvalidations,
 		metrics.planningConflicts,
+		metrics.testRunCompletions,
 		metrics.auditWrites,
 		metrics.auditWriteDuration,
 		metrics.auditChainValid,
@@ -280,6 +287,20 @@ func (r *Registry) ObservePlanningConflict(resource string) {
 		return
 	}
 	r.planningConflicts.WithLabelValues(resource).Inc()
+}
+
+// ObserveTestRunCompleted records one run that transitioned to completed. The
+// outcome label is a bounded enumeration (passed, failed or incomplete).
+func (r *Registry) ObserveTestRunCompleted(outcome string) {
+	if r == nil {
+		return
+	}
+	switch outcome {
+	case "passed", "failed":
+	default:
+		outcome = "incomplete"
+	}
+	r.testRunCompletions.WithLabelValues(outcome).Inc()
 }
 
 // ObserveAuditWrite records one audit persistence attempt.

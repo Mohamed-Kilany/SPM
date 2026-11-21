@@ -490,6 +490,37 @@ export interface TestRun {
   revision: number
 }
 
+export type TestRunOutcome = 'passed' | 'failed' | 'incomplete'
+
+export interface TestRunFinishResult {
+  id: string
+  status: string
+  outcome: TestRunOutcome | string
+  total: number
+  passed: number
+  failed: number
+  blocked: number
+  skipped: number
+  not_run: number
+  completed_at: string | null
+  already_completed: boolean
+}
+
+export interface TestStepEvidence {
+  id: string
+  test_step_result_id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  checksum_sha256: string
+  scan_status: string
+  scan_engine: string
+  scan_detail?: string
+  uploaded_by: string | null
+  evidence_url: string
+  created_at: string
+}
+
 export interface GitRepository {
   id: string
   project_id: string
