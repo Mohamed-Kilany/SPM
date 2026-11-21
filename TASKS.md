@@ -3291,18 +3291,43 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   [`docs/API.md`](docs/API.md) records the 120-operation contract.
 
 #### TST-04 · Defect creation and traceability
-- **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/tests-defect-links`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/tst-04-defect-traceability`
 - **Depends on:** TST-03, PLN-02
 - **Scope:** Create a bug from a failed step/run with prefilled context, evidence, environment,
   build/deployment and bidirectional links; support bulk bug creation from failures.
 - **Acceptance criteria:**
-  - [ ] The bug contains test case, run, step, environment and build/deployment.
-  - [ ] The test result links back to the bug.
-  - [ ] Duplicate prevention warns when a similar open bug exists.
-  - [ ] Bulk creation reports per-item results.
-  - [ ] Creating a bug is audited and emits SSE.
-- **Tests/evidence:** API link tests, Playwright create-bug flow, duplicate test.
-- **Docs/telemetry:** Defect workflow + traceability rules.
+  - [x] The bug contains test case, run, step, environment and build/deployment.
+  - [x] The test result links back to the bug.
+  - [x] Duplicate prevention warns when a similar open bug exists.
+  - [x] Bulk creation reports per-item results.
+  - [x] Creating a bug is audited and emits SSE.
+- **Tests/evidence:** `POST /test-runs/{runId}/results/{resultId}/bug` loads the immutable run
+  snapshot, defaults the title/reproduction/expected/actual values to the first failed step, and
+  appends run, case revision, result, step, environment, release, sprint, build, deployment and
+  every executed step with its expected/actual/evidence values to the description. The bug stores
+  the run's feature, environment, release and sprint; `test_results.bug_work_item_id` and the
+  selected step point back to it, and `artifact_links` records `found_bug` from the result, run,
+  case and optional build/deployment. Open duplicates are matched by normalized title or an
+  existing result link and return `409 DUPLICATE_BUG` with `duplicates[]`; `force: true` creates
+  and relinks. `POST /test-runs/{runId}/bugs` creates from selected or all failed results, skips
+  `already_linked`/`not_failed`, rejects foreign IDs with `400 INVALID_RESULT_IDS`, and returns
+  per-item `created`/`duplicate`/`skipped`/`failed` plus summary counts without rolling back
+  successful items. Both paths record `test.bug.create`/`test.bug.bulk_create` and
+  `recordActivity` for the `workspace.changed` SSE event. The UI previews the captured context,
+  renders duplicate matches with "Create anyway", and offers a run-level bulk dialog with
+  preselected unlinked failures and per-item outcomes. 11 Go helper tests cover title
+  normalization, automatic titles/reproduction, step selection, context composition, link targets,
+  skip reasons and summaries; 10 UI helper tests cover context preview, deployment selection,
+  duplicate extraction and bulk labels. The linked-SDLC Playwright flow was extended with context,
+  duplicate and bulk assertions but was not run locally because the Docker stack is unavailable.
+  The OpenAPI contract has 121 operations with `BugFromResultInput`, `BulkBugInput`,
+  `BugDuplicate`, `BugCreateResult`, `BulkBugItem` and `BulkBugResult`. Full `go build ./...`,
+  `go vet ./...`, `go test ./... -count=1`, OpenAPI `-check`, Redocly lint, and UI `typecheck`,
+  `test` (52 passed) and `build` pass. Merged as PR #38 at `b14d5e7` after all required checks
+  passed.
+- **Docs/telemetry:** [`docs/TEST-MANAGEMENT.md`](docs/TEST-MANAGEMENT.md) documents the defect
+  workflow, captured context, duplicate rules, bulk statuses, artifact links, audit actions and
+  SSE behavior. [`docs/API.md`](docs/API.md) records the 121-operation contract.
 
 #### TST-05 · Automated result ingestion and coverage
 - **Status:** TODO · **Priority:** P2 · **Estimate:** L · **Branch:** `feature/tests-automation-ingest`
@@ -5228,13 +5253,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 6 | 0 | 7 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 7 | 0 | 6 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **18** | **0** | **110** |
+| **Total** | - | **128** | **19** | **0** | **109** |
 
 ### C.2 Card index by phase
 
@@ -5291,6 +5316,7 @@ labels must exist in the repository.
 | 2026-11-21 | Closed TST-01: added `test_plans`, ordered `test_suites` and `test_suite_cases` with revision triggers, archived-terminal plan state and suite archive/restore; added plan/suite CRUD, complete-set suite reordering, membership by explicit IDs, filter or CSV with all-or-nothing validation and duplicate skipping, and project-member owner/assignee checks. Runs now resolve explicit cases, filter, suite or plan scope and snapshot `plan_id`/`suite_id`/`plan_name`/`suite_name` plus each result's `case_revision`; historical runs survive renames and plan deletion. Added the plan board and suite dialogs to the Test lab, 7 routes (112 operations) with revision metadata, `019_test_plans_suites` and its contract companion, and `docs/TEST-MANAGEMENT.md`. Verified with Go/UI tests, OpenAPI drift, a 56-check PGlite forward/rollback rehearsal and the Playwright plan/suite/run flow. Merged as PR #32 (`495419d`) after all nine required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-02: added immutable `test_case_versions`/`test_case_version_steps`, shared step templates with copy-on-use semantics, and step-result snapshots tied to the executed case revision. Case create/edit/import now snapshot in the same transaction; `GET /test-cases/{caseId}/versions` exposes newest-first history with steps, and `spm.test-cases.v1` export/import is all-or-nothing with `feature_title` resolution. Added shared-step revisioned CRUD, the history modal, step reordering (`Alt+↑`/`Alt+↓`), template manager and import/export controls, 6 routes (118 operations), `020_test_case_versions` and its contract companion, and updated `docs/TEST-MANAGEMENT.md`/`DATA-MODEL.md`/`API.md`. Verified with Go/UI tests, OpenAPI drift and a 66-check PGlite forward/reapply/rollback rehearsal. Merged as PR #34 (`188c385`) after all required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-03: added the idempotent run finish endpoint with forced incomplete confirmation (`409 RUN_INCOMPLETE`), deterministic `passed`/`failed`/`incomplete` outcomes capped by `not_run`, and `spm_test_runs_completed_total{outcome}` with exactly one increment per completion. Step evidence reuses the scanned attachment pipeline and links through `test_step_results.evidence_url`. Added the focused runner (P/F/B/S, arrows, G bug handoff, E evidence, 700 ms autosave, localStorage resume, progress and summary), 2 routes (120 operations), OpenAPI schemas and runner/evidence/finish documentation. Verified with Go tests, 42 UI tests including mounted shortcut/autosave/finish/resume cases, `go vet`, OpenAPI drift and Redocly lint; the linked-SDLC Playwright path was extended but not run locally because the Docker stack is unavailable. Merged as PR #36 (`bf86651`) after all required checks passed | Maintainer |
+| 2026-11-21 | Closed TST-04: added traceable defect creation from an executed result with snapshot-derived title/reproduction/expected/actual values, appended run/case/step/environment/release/sprint/build/deployment context, bidirectional result/step pointers and `found_bug` artifact links from the result, run, case and optional build/deployment. Added normalized-title and existing-link duplicate detection (`409 DUPLICATE_BUG` with `duplicates[]`, forced override) and a bulk endpoint with per-item `created`/`duplicate`/`skipped`/`failed` outcomes and `400 INVALID_RESULT_IDS`. Both paths record audit actions and `workspace.changed` activity. Added the context/duplicate/bulk UI, 1 route (121 operations), 11 Go and 10 UI helper tests, OpenAPI schemas and `docs/TEST-MANAGEMENT.md` coverage. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint and UI typecheck/test (52 passed)/build; the Playwright flow was extended but not run locally because the Docker stack is unavailable. Merged as PR #38 (`b14d5e7`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
