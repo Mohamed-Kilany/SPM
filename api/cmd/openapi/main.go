@@ -856,7 +856,7 @@ properties:
   mime_type: { type: string }
   size_bytes: { type: integer, format: int64 }
   checksum_sha256: { type: string }
-  scan_status: { type: string, description: clean, skipped or infected. Downloads require clean. }
+  scan_status: { type: string, description: "clean, skipped or infected. Downloads require clean." }
   scan_engine: { type: string }
   scan_detail: { type: string }
   uploaded_by: { type: [string, "null"], format: uuid }
