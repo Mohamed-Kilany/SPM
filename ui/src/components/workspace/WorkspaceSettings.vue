@@ -6,11 +6,13 @@ import EmptyState from './EmptyState.vue'
 import LabelManager from './LabelManager.vue'
 import CustomFieldManager from './CustomFieldManager.vue'
 import { api } from '../../api/client'
+import { boardColumns } from '../../lib/workspace'
 import { useAuthStore } from '../../stores/authStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useToastStore } from '../../stores/toastStore'
 import { PROJECT_ROLES } from '../../types/admin'
 import type { DirectoryUser, ProjectMember } from '../../types/admin'
+import type { BoardSettings } from '../../types/workspace'
 
 const auth = useAuthStore()
 const store = useWorkspaceStore()
@@ -175,6 +177,65 @@ function initials(member: ProjectMember): string {
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('')
 }
+
+// ---------------------------------------------------------------------------
+// Board policy (WIP limits)
+// ---------------------------------------------------------------------------
+
+const boardBusy = ref(false)
+const boardError = ref('')
+const boardForm = reactive<{ wip_limits: Record<string, string>; wip_hard_block: boolean }>({
+  wip_limits: {},
+  wip_hard_block: false,
+})
+
+function hydrateBoard(): void {
+  const board = store.project?.settings?.board
+  for (const key of Object.keys(boardForm.wip_limits)) delete boardForm.wip_limits[key]
+  for (const column of boardColumns) {
+    const limit = board?.wip_limits?.[column.key] ?? 0
+    boardForm.wip_limits[column.key] = limit > 0 ? String(limit) : ''
+  }
+  boardForm.wip_hard_block = board?.wip_hard_block ?? false
+}
+
+watch(project, hydrateBoard, { immediate: true })
+
+async function saveBoardPolicy(): Promise<void> {
+  if (!canEditSettings.value || !project.value) return
+  boardError.value = ''
+  const limits: Record<string, number> = {}
+  for (const column of boardColumns) {
+    const raw = String(boardForm.wip_limits[column.key] ?? '').trim()
+    if (!raw) continue
+    const value = Number(raw)
+    if (!Number.isInteger(value) || value < 0 || value > 999) {
+      boardError.value = `${column.label} must be a whole number between 0 and 999.`
+      return
+    }
+    if (value > 0) limits[column.key] = value
+  }
+  boardBusy.value = true
+  try {
+    const board: BoardSettings = {
+      wip_limits: limits,
+      wip_hard_block: boardForm.wip_hard_block,
+    }
+    await api.updateSettings(project.value.id, { ...project.value.settings, board })
+    await store.refresh()
+    toast.success(
+      boardForm.wip_hard_block
+        ? 'Board policy saved. Moves above a limit will be blocked.'
+        : 'Board policy saved. Limits warn only.',
+      'Board policy',
+    )
+  } catch (error) {
+    boardError.value = error instanceof Error ? error.message : 'Failed to save board policy'
+  } finally {
+    boardBusy.value = false
+  }
+}
+
 </script>
 
 <template>
@@ -334,6 +395,56 @@ function initials(member: ProjectMember): string {
       <div v-else class="p-6">
         <EmptyState title="No members" />
       </div>
+    </section>
+
+    <section class="card p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-900">Board policy</h3>
+          <p class="mt-1 text-xs text-slate-500">
+            Work-in-progress limits are per column. Limits warn by default; the hard block is explicit and enforced by the API.
+          </p>
+        </div>
+        <span class="badge bg-slate-100 text-slate-600 ring-slate-200">
+          {{ boardForm.wip_hard_block ? 'Hard block' : 'Warn only' }}
+        </span>
+      </div>
+
+      <form class="mt-5 space-y-4" @submit.prevent="saveBoardPolicy">
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <label v-for="column in boardColumns" :key="column.key" class="block">
+            <span class="field-label">{{ column.label }}</span>
+            <input
+              v-model="boardForm.wip_limits[column.key]"
+              type="number"
+              min="0"
+              max="999"
+              step="1"
+              class="field-input"
+              :placeholder="'No limit'"
+              :disabled="!canEditSettings"
+              :aria-label="`WIP limit for ${column.label}`"
+            />
+          </label>
+        </div>
+        <label class="flex items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <input v-model="boardForm.wip_hard_block" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-slate-300" :disabled="!canEditSettings" />
+          <span>
+            <span class="block text-xs font-semibold text-slate-800">Reject moves that exceed a limit</span>
+            <span class="mt-0.5 block text-[11px] text-slate-500">
+              When enabled, the API returns <code class="font-mono">409 WIP_LIMIT</code> for a move or create that would overfill a column.
+              Leave it off to let the board warn without blocking delivery.
+            </span>
+          </span>
+        </label>
+        <p v-if="boardError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">{{ boardError }}</p>
+        <div class="flex justify-end">
+          <button type="submit" class="btn-primary" :disabled="boardBusy || !canEditSettings">
+            <AppIcon v-if="boardBusy" name="loader" :size="14" class="animate-spin" />
+            {{ boardBusy ? 'Saving…' : 'Save board policy' }}
+          </button>
+        </div>
+      </form>
     </section>
 
     <LabelManager />

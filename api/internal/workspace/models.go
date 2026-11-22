@@ -64,13 +64,23 @@ type MergePolicy struct {
 	RequirePassingChecks  bool `json:"require_passing_checks"`
 }
 
+// BoardSettings carries the project board policy. WIP limits are keyed by the
+// board column key shown in the board header; zero means "no limit". HardBlock
+// is an explicit opt-in: when false the board only warns, and the API never
+// rejects a move because of a limit.
+type BoardSettings struct {
+	WIPLimits    map[string]int `json:"wip_limits"`
+	WIPHardBlock bool           `json:"wip_hard_block"`
+}
+
 // ProjectSettings stores configurable delivery and automation policy.
 type ProjectSettings struct {
-	MergePolicy        MergePolicy `json:"merge_policy"`
-	AutoRollback       bool        `json:"auto_rollback"`
-	AutoDeployOnBuild  bool        `json:"auto_deploy_on_build"`
-	AutoDeployEnv      string      `json:"auto_deploy_environment"`
-	RequireHealthCheck bool        `json:"require_health_check"`
+	MergePolicy        MergePolicy   `json:"merge_policy"`
+	Board              BoardSettings `json:"board"`
+	AutoRollback       bool          `json:"auto_rollback"`
+	AutoDeployOnBuild  bool          `json:"auto_deploy_on_build"`
+	AutoDeployEnv      string        `json:"auto_deploy_environment"`
+	RequireHealthCheck bool          `json:"require_health_check"`
 }
 
 // DefaultProjectSettings returns the policy used when a project has no explicit
@@ -82,6 +92,10 @@ func DefaultProjectSettings() ProjectSettings {
 			RequireLinkedWorkItem: true,
 			RequireApprovedReview: false,
 			RequirePassingChecks:  true,
+		},
+		Board: BoardSettings{
+			WIPLimits:    map[string]int{},
+			WIPHardBlock: false,
 		},
 		AutoRollback:       false,
 		AutoDeployOnBuild:  false,
@@ -750,6 +764,7 @@ type SavedFilter struct {
 	Filters    map[string]any `json:"filters"`
 	Sort       map[string]any `json:"sort"`
 	Columns    []string       `json:"columns"`
+	Swimlane   string         `json:"swimlane"`
 	Pinned     bool           `json:"pinned"`
 	IsDefault  bool           `json:"is_default"`
 	CreatedAt  time.Time      `json:"created_at"`

@@ -234,8 +234,19 @@ func TestValidateSavedFilter(t *testing.T) {
 	if request.Name != "My Board" || request.Scope != "board" || request.Visibility != "private" {
 		t.Fatalf("normalized filter = %+v", request)
 	}
+	if request.Swimlane != "none" {
+		t.Fatalf("default swimlane = %q, want none", request.Swimlane)
+	}
 	if request.Filters == nil || request.Sort == nil {
 		t.Fatal("default filters/sort should be empty maps")
+	}
+
+	assignee := savedFilterRequest{Name: "Mine", Scope: "board", Swimlane: " ASSIGNEE "}
+	if err := validateSavedFilter(&assignee); err != nil {
+		t.Fatalf("validateSavedFilter() error = %v", err)
+	}
+	if assignee.Swimlane != "assignee" {
+		t.Fatalf("normalized swimlane = %q, want assignee", assignee.Swimlane)
 	}
 
 	invalid := []savedFilterRequest{
@@ -243,12 +254,13 @@ func TestValidateSavedFilter(t *testing.T) {
 		{Name: strings.Repeat("a", 81), Scope: "board"},
 		{Name: "ok", Scope: "calendar"},
 		{Name: "ok", Scope: "board", Visibility: "public"},
+		{Name: "ok", Scope: "board", Swimlane: "epic"},
 		{Name: "ok", Scope: "board", Columns: []string{""}},
 		{Name: "ok", Scope: "board", Columns: []string{strings.Repeat("a", 41)}},
 		{Name: "ok", Scope: "board", Columns: make([]string, 21)},
 	}
-	for index := range invalid[6].Columns {
-		invalid[6].Columns[index] = "status"
+	for index := range invalid[7].Columns {
+		invalid[7].Columns[index] = "status"
 	}
 	for _, candidate := range invalid {
 		if err := validateSavedFilter(&candidate); err == nil {

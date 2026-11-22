@@ -155,6 +155,10 @@ const settingsForm = reactive<ProjectSettings>({
     require_approved_review: false,
     require_passing_checks: true,
   },
+  board: {
+    wip_limits: {},
+    wip_hard_block: false,
+  },
   auto_rollback: false,
   auto_deploy_on_build: false,
   auto_deploy_environment: 'staging',
@@ -167,6 +171,10 @@ function openSettings(): void {
   if (settings) {
     Object.assign(settingsForm, {
       merge_policy: { ...settings.merge_policy },
+      board: {
+        wip_limits: { ...(settings.board?.wip_limits ?? {}) },
+        wip_hard_block: settings.board?.wip_hard_block ?? false,
+      },
       auto_rollback: settings.auto_rollback,
       auto_deploy_on_build: settings.auto_deploy_on_build,
       auto_deploy_environment: settings.auto_deploy_environment || 'staging',

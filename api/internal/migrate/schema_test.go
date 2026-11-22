@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "021_labels_custom_fields_saved_filters.sql" {
-		t.Fatalf("latest migration = %q, want 021_labels_custom_fields_saved_filters.sql", names[len(names)-1])
+	if names[len(names)-1] != "022_board_view_swimlanes.sql" {
+		t.Fatalf("latest migration = %q, want 022_board_view_swimlanes.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -414,6 +414,25 @@ func TestLabelsCustomFieldsSavedFiltersRollbackIsComplete(t *testing.T) {
 		if !strings.Contains(forward, fragment) {
 			t.Errorf("021 is missing %q", fragment)
 		}
+	}
+}
+
+func TestBoardViewSwimlaneRollbackIsComplete(t *testing.T) {
+	forward := readMigration(t, "022_board_view_swimlanes.sql")
+	rollback, err := os.ReadFile("rollback/022_board_view_swimlanes.sql")
+	if err != nil {
+		t.Fatalf("read board view rollback companion: %v", err)
+	}
+	body := string(rollback)
+
+	if !strings.Contains(forward, "ADD COLUMN IF NOT EXISTS swimlane VARCHAR(16) NOT NULL DEFAULT 'none'") {
+		t.Error("022 does not add saved_filters.swimlane with a safe default")
+	}
+	if !strings.Contains(forward, "swimlane IN ('none', 'assignee', 'priority', 'type')") {
+		t.Error("022 does not constrain swimlane values")
+	}
+	if !strings.Contains(body, "DROP COLUMN IF EXISTS swimlane;") {
+		t.Error("rollback does not drop saved_filters.swimlane")
 	}
 }
 

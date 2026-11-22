@@ -39,6 +39,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	if strings.TrimSpace(req.AutoDeployEnv) == "" {
 		req.AutoDeployEnv = "staging"
 	}
+	if err := validateBoardSettings(&req.Board); err != nil {
+		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
 	var previous []byte
 	if err := h.store.DB().QueryRow(c.Request.Context(),
 		`SELECT settings FROM projects WHERE id = $1`, projectID).Scan(&previous); err != nil {
@@ -57,10 +61,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "project_settings", nil, "updated",
-		"Updated merge and delivery policy", map[string]interface{}{
+		"Updated merge, board and delivery policy", map[string]interface{}{
 			"require_linked_work_item": req.MergePolicy.RequireLinkedWorkItem,
 			"require_approved_review":  req.MergePolicy.RequireApprovedReview,
 			"require_passing_checks":   req.MergePolicy.RequirePassingChecks,
+			"wip_limits":               len(req.Board.WIPLimits),
+			"wip_hard_block":           req.Board.WIPHardBlock,
 		})
 	h.recordAudit(c, projectID, audit.Entry{
 		Action: "project.settings.update", TargetType: "project", TargetID: projectID.String(),

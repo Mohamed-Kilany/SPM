@@ -14,6 +14,7 @@ import { useToastStore } from '../../stores/toastStore'
 import { api, isRevisionConflict, revisionConflictMessage } from '../../api/client'
 import {
   allowedTransitions,
+  boardColumnFor,
   boardColumns,
   branchNameFor,
   dateInputValue,
@@ -23,26 +24,44 @@ import {
   workItemStatusOptions,
   workItemTypeLabels,
 } from '../../lib/workspace'
-import { priorityRank, timeAgo } from '../../lib/format'
+import { timeAgo } from '../../lib/format'
 import {
+  BOARD_QUICK_FILTERS,
+  BOARD_SORT_OPTIONS,
+  BOARD_SWIMLANES,
+  BOARD_VISIBLE_FIELDS,
   boardFilterCount,
   boardFiltersFromQuery,
   boardFiltersToQuery,
   boardFiltersToSaved,
+  boardSortFromId,
+  boardSortId,
+  boardSortToSaved,
+  boardViewFromSaved,
   canManageSavedFilter,
   colorForLabel,
+  compareBoardItems,
   customFieldDisplay,
   customFieldDraft,
   customFieldPayload,
   customValueMap,
+  defaultBoardView,
+  fieldVisible,
+  groupBySwimlane,
+  itemMatchesQuickFilters,
   labelDot,
   labelTone,
   missingRequiredCustomField,
   normalizeLabelInput,
-  savedFilterToBoard,
+  quickFiltersFromValue,
+  quickFiltersToSaved,
+  toggleQuickFilter,
+  visibleFieldsFromValue,
+  visibleFieldsToSaved,
+  wipState,
   workItemMatchesFilters,
 } from '../../lib/planning'
-import type { BoardFilters } from '../../lib/planning'
+import type { BoardFilters, BoardQuickFilter, BoardSort } from '../../lib/planning'
 import type { CustomField, SavedFilter, WorkItem } from '../../types/workspace'
 
 const store = useWorkspaceStore()
@@ -58,8 +77,12 @@ const featureFilter = ref('')
 const labelFilter = ref('')
 const customFilters = reactive<Record<string, string>>({})
 const selectedViewId = ref('')
+const swimlane = ref('none')
+const sort = ref<BoardSort>({ field: 'priority', direction: 'asc' })
+const visibleFields = ref<string[]>(BOARD_VISIBLE_FIELDS.map((field) => field.value))
+const quickFilters = ref<BoardQuickFilter[]>([])
 const draggingId = ref<string | null>(null)
-const dropColumn = ref<string | null>(null)
+const dropTarget = ref<string | null>(null)
 const movingId = ref<string | null>(null)
 
 const boardScope = 'board'
@@ -72,6 +95,7 @@ const boardViews = computed(() =>
     return a.name.localeCompare(b.name)
   }),
 )
+const boardPolicy = computed(() => store.project?.settings?.board)
 
 function currentFilters(): BoardFilters {
   return {
@@ -94,10 +118,25 @@ function applyFilters(filters: BoardFilters): void {
   Object.assign(customFilters, filters.custom)
 }
 
+function applyLayout(layout: { swimlane: string; sort: BoardSort; fields: string[]; quick: BoardQuickFilter[] }): void {
+  swimlane.value = layout.swimlane
+  sort.value = { ...layout.sort }
+  visibleFields.value = [...layout.fields]
+  quickFilters.value = [...layout.quick]
+}
+
+function currentSortId(): string {
+  return boardSortId(sort.value)
+}
+
 function syncQuery(): void {
   const query: Record<string, string> = { tab: 'board' }
   if (typeof route.query.item === 'string') query.item = route.query.item
   if (selectedViewId.value) query.view = selectedViewId.value
+  if (swimlane.value !== 'none') query.swimlane = swimlane.value
+  if (currentSortId() !== 'priority:asc') query.sort = currentSortId()
+  if (visibleFields.value.length !== BOARD_VISIBLE_FIELDS.length) query.fields = visibleFieldsToSaved(visibleFields.value).join(',')
+  if (quickFilters.value.length) query.quick = quickFiltersToSaved(quickFilters.value).join(',')
   Object.assign(query, boardFiltersToQuery(currentFilters(), boardFields.value))
   void router.replace({ name: 'workspace', params: { id: store.projectId }, query })
 }
@@ -105,6 +144,27 @@ function syncQuery(): void {
 function onFiltersChanged(): void {
   selectedViewId.value = ''
   syncQuery()
+}
+
+function onLayoutChanged(): void {
+  selectedViewId.value = ''
+  syncQuery()
+}
+
+function applySortId(id: string): void {
+  sort.value = boardSortFromId(id)
+  onLayoutChanged()
+}
+
+function toggleQuick(value: BoardQuickFilter): void {
+  quickFilters.value = toggleQuickFilter(quickFilters.value, value)
+  onFiltersChanged()
+}
+
+function applyView(filter: SavedFilter): void {
+  const state = boardViewFromSaved(filter, boardFields.value)
+  applyFilters(state.filters)
+  applyLayout(state)
 }
 
 function applySavedView(id: string): void {
@@ -115,17 +175,36 @@ function applySavedView(id: string): void {
   }
   const filter = store.savedFilters.find((entry) => entry.id === id)
   if (!filter) return
-  applyFilters(savedFilterToBoard(filter, boardFields.value))
+  applyView(filter)
   syncQuery()
 }
 
 const initialFilters = boardFiltersFromQuery(route.query, boardFields.value)
 applyFilters(initialFilters)
+applyLayout({
+  swimlane:
+    typeof route.query.swimlane === 'string' && BOARD_SWIMLANES.some((entry) => entry.value === route.query.swimlane)
+      ? route.query.swimlane
+      : 'none',
+  sort: boardSortFromId(typeof route.query.sort === 'string' ? route.query.sort : ''),
+  fields: visibleFieldsFromValue(route.query.fields),
+  quick: quickFiltersFromValue(route.query.quick),
+})
 const initialView = typeof route.query.view === 'string' ? route.query.view : ''
-if (initialView && store.savedFilters.some((filter) => filter.id === initialView && filter.scope === boardScope)) {
-  selectedViewId.value = initialView
-  const saved = store.savedFilters.find((filter) => filter.id === initialView)
-  if (saved) applyFilters(savedFilterToBoard(saved, boardFields.value))
+const requestedView = store.savedFilters.find(
+  (filter) => filter.id === initialView && filter.scope === boardScope,
+)
+if (requestedView) {
+  selectedViewId.value = requestedView.id
+  applyView(requestedView)
+} else if (!initialView) {
+  // The default view is per user and is applied on every load, so a reload
+  // restores the same layout without requiring the view id in the URL.
+  const fallback = defaultBoardView(boardViews.value, auth.user?.id ?? '')
+  if (fallback) {
+    selectedViewId.value = fallback.id
+    applyView(fallback)
+  }
 }
 
 watch(
@@ -138,7 +217,7 @@ watch(
 const members = computed(() => store.workspace?.members ?? [])
 const features = computed(() => store.features)
 const sprints = computed(() => store.sprints)
-const activeFilterCount = computed(() => boardFilterCount(currentFilters()))
+const activeFilterCount = computed(() => boardFilterCount(currentFilters()) + quickFilters.value.length)
 
 function customValueSet(itemId: string): Record<string, string | number | null> {
   return customValueMap(store.customValuesFor(itemId), itemId)
@@ -159,24 +238,53 @@ function cardCustomValues(item: WorkItem): Array<{ field: CustomField; label: st
 
 const filteredItems = computed(() => {
   const filters = currentFilters()
+  const quickContext = { userId: auth.user?.id ?? '' }
   return store.workItems.filter((item) => {
     const feature = features.value.find((entry) => entry.id === item.feature_id)
-    return workItemMatchesFilters(item, filters, boardFields.value, customValueSet(item.id), feature?.title ?? '')
+    if (!workItemMatchesFilters(item, filters, boardFields.value, customValueSet(item.id), feature?.title ?? '')) {
+      return false
+    }
+    return itemMatchesQuickFilters(item, quickFilters.value, quickContext)
   })
 })
 
-const columns = computed(() =>
-  boardColumns.map((column) => ({
-    ...column,
-    items: filteredItems.value
-      .filter((item) => column.statuses.includes(item.status))
-      .sort((a, b) => {
-        const rank = (priorityRank[a.priority] ?? 9) - (priorityRank[b.priority] ?? 9)
-        if (rank !== 0) return rank
-        return b.item_number - a.item_number
-      }),
+function wipFor(columnKey: string) {
+  const limit = boardPolicy.value?.wip_limits?.[columnKey] ?? 0
+  const current = store.workItems.filter((item) => boardColumnFor(item.status).key === columnKey).length
+  return wipState(limit, current)
+}
+
+// lanes renders the board once for swimlane "none" and once per bucket
+// otherwise. Columns always come from the shared board definition so a lane
+// cannot drift from the header order.
+const lanes = computed(() =>
+  groupBySwimlane(filteredItems.value, swimlane.value, memberName).map((lane) => ({
+    ...lane,
+    columns: boardColumns.map((column) => ({
+      ...column,
+      wip: wipFor(column.key),
+      items: lane.items
+        .filter((item) => column.statuses.includes(item.status))
+        .sort((a, b) => compareBoardItems(a, b, sort.value)),
+    })),
   })),
 )
+
+function dueLabel(item: WorkItem): string {
+  if (!item.due_date) return ''
+  const date = new Date(item.due_date)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function dueTone(item: WorkItem): string {
+  if (!item.due_date) return ''
+  const date = new Date(item.due_date)
+  if (Number.isNaN(date.getTime())) return ''
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return date.getTime() < today.getTime() ? 'bg-red-50 text-red-700 ring-red-200' : 'bg-slate-100 text-slate-600 ring-slate-200'
+}
 
 const stats = computed(() => ({
   total: store.workItems.length,
@@ -275,8 +383,9 @@ function clearFilters(): void {
   featureFilter.value = ''
   labelFilter.value = ''
   selectedViewId.value = ''
+  quickFilters.value = []
   for (const key of Object.keys(customFilters)) delete customFilters[key]
-  void router.replace({ name: 'workspace', params: { id: store.projectId }, query: { tab: 'board' } })
+  syncQuery()
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +397,9 @@ const viewName = ref('')
 const viewVisibility = ref<'private' | 'shared'>('private')
 const viewPinned = ref(false)
 const viewDefault = ref(false)
+const viewSwimlane = ref('none')
+const viewSortId = ref('priority:asc')
+const viewFields = ref<string[]>([])
 const viewBusy = ref(false)
 const viewError = ref('')
 const editingViewId = ref('')
@@ -317,6 +429,9 @@ function openSaveView(asNew = false): void {
   viewVisibility.value = current?.visibility === 'shared' ? 'shared' : 'private'
   viewPinned.value = current?.pinned ?? false
   viewDefault.value = current?.is_default ?? false
+  viewSwimlane.value = swimlane.value
+  viewSortId.value = currentSortId()
+  viewFields.value = [...visibleFields.value]
   viewError.value = ''
   viewModal.value = true
 }
@@ -334,13 +449,19 @@ async function saveView(): Promise<void> {
   viewBusy.value = true
   viewError.value = ''
   try {
+    swimlane.value = viewSwimlane.value
+    sort.value = boardSortFromId(viewSortId.value)
+    visibleFields.value = [...viewFields.value]
+    const filters: Record<string, unknown> = boardFiltersToSaved(currentFilters(), boardFields.value)
+    filters.quick = quickFiltersToSaved(quickFilters.value)
     const payload = {
       name: viewName.value.trim(),
       scope: boardScope,
       visibility: viewVisibility.value,
-      filters: boardFiltersToSaved(currentFilters(), boardFields.value),
-      sort: {},
-      columns: [],
+      filters,
+      sort: boardSortToSaved(sort.value),
+      columns: visibleFieldsToSaved(visibleFields.value),
+      swimlane: swimlane.value,
       pinned: viewPinned.value,
       is_default: viewDefault.value,
     }
@@ -402,12 +523,22 @@ function onDragStart(item: WorkItem, event: DragEvent): void {
 async function onDrop(columnKey: string): Promise<void> {
   const id = draggingId.value
   draggingId.value = null
-  dropColumn.value = null
+  dropTarget.value = null
   if (!id || movingId.value) return
   const item = store.workItemById(id)
   if (!item) return
   const target = targetStatusForColumn(item.type, columnKey)
   if (target === item.status) return
+  if (boardPolicy.value?.wip_hard_block && boardColumnFor(item.status).key !== columnKey) {
+    const wip = wipFor(columnKey)
+    if (wip?.reached) {
+      toast.warning(
+        `${columnKey.replace(/_/g, ' ')} is at its WIP limit of ${wip.limit}. Clear work before pulling more in.`,
+        'WIP limit',
+      )
+      return
+    }
+  }
   if (!allowedTransitions(item.type, item.status).includes(target)) {
     toast.warning(
       `${statusLabel(item.status)} cannot move directly to ${statusLabel(target)}. Open the item to choose a valid next step.`,
@@ -550,12 +681,12 @@ function resetItemForm(): void {
   clearCustomDraft()
 }
 
-function openCreateItem(type = 'task'): void {
+function openCreateItem(type = 'task', columnKey = ''): void {
   if (isTester.value) type = 'bug'
   itemEditingId.value = null
   resetItemForm()
   itemForm.type = type
-  itemForm.status = defaultStatusFor(type)
+  itemForm.status = columnKey ? targetStatusForColumn(type, columnKey) : defaultStatusFor(type)
   itemError.value = ''
   itemModal.value = true
 }
@@ -907,6 +1038,22 @@ function openDelivery(): void {
       >
         <AppIcon name="trash" :size="14" />
       </button>
+      <select
+        v-model="swimlane"
+        class="field-input w-auto min-w-[150px]"
+        aria-label="Swimlane grouping"
+        @change="onLayoutChanged"
+      >
+        <option v-for="lane in BOARD_SWIMLANES" :key="lane.value" :value="lane.value">{{ lane.label }}</option>
+      </select>
+      <select
+        :value="currentSortId()"
+        class="field-input w-auto min-w-[170px]"
+        aria-label="Work item sort"
+        @change="applySortId(($event.target as HTMLSelectElement).value)"
+      >
+        <option v-for="option in BOARD_SORT_OPTIONS" :key="option.id" :value="option.id">{{ option.label }}</option>
+      </select>
       <div class="relative min-w-[190px] flex-1">
         <AppIcon name="search" :size="15" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
         <input
@@ -973,6 +1120,25 @@ function openDelivery(): void {
       >
         <AppIcon name="close" :size="14" /> Clear ({{ activeFilterCount }})
       </button>
+      <div class="flex w-full flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2">
+        <span class="mr-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Quick filters</span>
+        <button
+          v-for="entry in BOARD_QUICK_FILTERS"
+          :key="entry.value"
+          type="button"
+          class="rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 transition"
+          :class="quickFilters.includes(entry.value)
+            ? 'bg-indigo-600 text-white ring-indigo-600'
+            : 'bg-white text-slate-600 ring-slate-200 hover:border-indigo-200 hover:text-indigo-700'"
+          :aria-pressed="quickFilters.includes(entry.value)"
+          @click="toggleQuick(entry.value)"
+        >
+          {{ entry.label }}
+        </button>
+        <span v-if="boardPolicy?.wip_hard_block" class="badge bg-amber-50 text-amber-800 ring-amber-200">
+          <AppIcon name="lock" :size="11" class="mr-1" /> WIP moves are enforced
+        </span>
+      </div>
     </div>
 
     <EmptyState
@@ -983,108 +1149,147 @@ function openDelivery(): void {
       @action="openCreateItem(canManageWorkItems ? 'task' : 'bug')"
     />
 
-    <div v-else class="overflow-x-auto pb-2">
-      <div class="flex min-w-[1180px] gap-3">
-        <section
-          v-for="column in columns"
-          :key="column.key"
-          class="flex w-[230px] flex-none flex-col rounded-xl border border-slate-200 bg-slate-100/70"
-          :class="dropColumn === column.key ? 'ring-2 ring-indigo-300' : ''"
-          @dragover.prevent="dropColumn = column.key"
-          @dragleave="dropColumn = dropColumn === column.key ? null : dropColumn"
-          @drop.prevent="onDrop(column.key)"
-        >
-          <div class="flex items-center gap-2 px-3 pb-2 pt-3">
-            <span class="h-2 w-2 rounded-full" :class="column.accent" />
-            <h3 class="text-xs font-semibold text-slate-700">{{ column.label }}</h3>
-            <span class="ml-auto rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200">{{ column.items.length }}</span>
-          </div>
-
-          <div class="flex-1 space-y-2 px-2 pb-2">
-            <article
-              v-for="item in column.items"
-              :key="item.id"
-              class="group cursor-pointer rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:border-indigo-200 hover:shadow"
-              :class="draggingId === item.id || movingId === item.id ? 'opacity-50' : ''"
-              :draggable="canWriteWorkItems"
-              @dragstart="onDragStart(item, $event)"
-              @dragend="draggingId = null; dropColumn = null"
-              @click="openItemDrawer(item)"
-            >
-              <div class="flex items-center justify-between gap-2">
-                <div class="flex items-center gap-1.5">
-                  <span class="flex h-5 w-5 items-center justify-center rounded" :class="typeTone(item.type)">
-                    <AppIcon :name="typeIcon(item.type)" :size="12" />
-                  </span>
-                  <span class="font-mono text-[10px] font-semibold text-slate-600">{{ item.key }}</span>
-                </div>
-                <PriorityPill :priority="item.priority" />
-              </div>
-              <p class="mt-2 line-clamp-2 text-[13px] font-medium leading-snug text-slate-800">{{ item.title }}</p>
-              <button
-                v-if="item.parent_id && parentItem(item.parent_id)"
-                type="button"
-                class="mt-1.5 flex max-w-full items-center gap-1 truncate text-left text-[10px] font-medium text-indigo-600 hover:text-indigo-800"
-                :title="`Open parent ${parentItem(item.parent_id)?.key}`"
-                @click.stop="openParent(item.parent_id)"
+    <div v-else class="space-y-4 overflow-x-auto pb-2">
+      <div v-for="lane in lanes" :key="lane.key" class="space-y-2">
+        <div v-if="lane.label" class="flex items-center gap-2 pl-1">
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{{ lane.label }}</h3>
+          <span class="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200">
+            {{ lane.items.length }}
+          </span>
+        </div>
+        <div class="flex min-w-[1180px] gap-3">
+          <section
+            v-for="column in lane.columns"
+            :key="`${lane.key}:${column.key}`"
+            class="flex w-[230px] flex-none flex-col rounded-xl border border-slate-200 bg-slate-100/70"
+            :class="dropTarget === `${lane.key}:${column.key}` ? 'ring-2 ring-indigo-300' : ''"
+            @dragover.prevent="dropTarget = `${lane.key}:${column.key}`"
+            @dragleave="dropTarget = dropTarget === `${lane.key}:${column.key}` ? null : dropTarget"
+            @drop.prevent="onDrop(column.key)"
+          >
+            <div class="flex items-center gap-2 px-3 pb-2 pt-3">
+              <span class="h-2 w-2 rounded-full" :class="column.accent" />
+              <h3 class="text-xs font-semibold text-slate-700">{{ column.label }}</h3>
+              <span
+                v-if="column.wip"
+                class="rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1"
+                :class="column.wip.exceeded
+                  ? 'bg-red-50 text-red-700 ring-red-200'
+                  : column.wip.reached
+                    ? 'bg-amber-50 text-amber-800 ring-amber-200'
+                    : 'bg-white text-slate-500 ring-slate-200'"
+                :title="`WIP ${column.wip.current} of ${column.wip.limit}`"
               >
-                <AppIcon name="arrowLeft" :size="10" />
-                <span class="font-mono">{{ parentItem(item.parent_id)?.key }}</span>
-                <span class="truncate">{{ parentItem(item.parent_id)?.title }}</span>
-              </button>
-              <p v-else class="mt-1.5 truncate text-[10px] text-slate-600">{{ featureName(item.feature_id) }}</p>
-              <div v-if="cardLabels(item).length || cardCustomValues(item).length" class="mt-1.5 flex flex-wrap gap-1">
-                <span
-                  v-for="label in cardLabels(item)"
-                  :key="label"
-                  class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ring-1"
-                  :class="labelTone(labelColor(label))"
+                {{ column.wip.current }}/{{ column.wip.limit }}
+              </span>
+              <span class="ml-auto rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200">{{ column.items.length }}</span>
+            </div>
+
+            <div class="flex-1 space-y-2 px-2 pb-2">
+              <article
+                v-for="item in column.items"
+                :key="item.id"
+                class="group cursor-pointer rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:border-indigo-200 hover:shadow"
+                :class="draggingId === item.id || movingId === item.id ? 'opacity-50' : ''"
+                :draggable="canWriteWorkItems"
+                @dragstart="onDragStart(item, $event)"
+                @dragend="draggingId = null; dropTarget = null"
+                @click="openItemDrawer(item)"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-1.5">
+                    <span class="flex h-5 w-5 items-center justify-center rounded" :class="typeTone(item.type)">
+                      <AppIcon :name="typeIcon(item.type)" :size="12" />
+                    </span>
+                    <span class="font-mono text-[10px] font-semibold text-slate-600">{{ item.key }}</span>
+                  </div>
+                  <PriorityPill v-if="fieldVisible(visibleFields, 'priority')" :priority="item.priority" />
+                </div>
+                <p class="mt-2 line-clamp-2 text-[13px] font-medium leading-snug text-slate-800">{{ item.title }}</p>
+                <template v-if="fieldVisible(visibleFields, 'feature')">
+                  <button
+                    v-if="item.parent_id && parentItem(item.parent_id)"
+                    type="button"
+                    class="mt-1.5 flex max-w-full items-center gap-1 truncate text-left text-[10px] font-medium text-indigo-600 hover:text-indigo-800"
+                    :title="`Open parent ${parentItem(item.parent_id)?.key}`"
+                    @click.stop="openParent(item.parent_id)"
+                  >
+                    <AppIcon name="arrowLeft" :size="10" />
+                    <span class="font-mono">{{ parentItem(item.parent_id)?.key }}</span>
+                    <span class="truncate">{{ parentItem(item.parent_id)?.title }}</span>
+                  </button>
+                  <p v-else class="mt-1.5 truncate text-[10px] text-slate-600">{{ featureName(item.feature_id) }}</p>
+                </template>
+                <div
+                  v-if="(fieldVisible(visibleFields, 'labels') && cardLabels(item).length) || (fieldVisible(visibleFields, 'custom') && cardCustomValues(item).length)"
+                  class="mt-1.5 flex flex-wrap gap-1"
                 >
-                  <span class="h-1 w-1 rounded-full" :class="labelDot(labelColor(label))" />
-                  {{ label }}
-                </span>
-                <span
-                  v-for="entry in cardCustomValues(item)"
-                  :key="entry.field.id"
-                  class="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 ring-1 ring-slate-200"
-                  :title="entry.field.name"
-                >
-                  {{ entry.field.name }}: {{ entry.label }}
-                </span>
-              </div>
-              <div class="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
-                <div class="flex items-center gap-2 text-[10px] text-slate-600">
-                  <span v-if="branchesFor(item.id).length" class="inline-flex items-center gap-1" title="Linked branches">
-                    <AppIcon name="branch" :size="11" /> {{ branchesFor(item.id).length }}
+                  <span
+                    v-for="label in fieldVisible(visibleFields, 'labels') ? cardLabels(item) : []"
+                    :key="label"
+                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ring-1"
+                    :class="labelTone(labelColor(label))"
+                  >
+                    <span class="h-1 w-1 rounded-full" :class="labelDot(labelColor(label))" />
+                    {{ label }}
                   </span>
-                  <span v-if="prsFor(item.id).length" class="inline-flex items-center gap-1" title="Linked pull requests">
-                    <AppIcon name="repo" :size="11" /> {{ prsFor(item.id).length }}
-                  </span>
-                  <span v-if="item.type === 'bug'" class="inline-flex items-center gap-1">
-                    <StatusPill :status="item.status" :dot="false" />
+                  <span
+                    v-for="entry in fieldVisible(visibleFields, 'custom') ? cardCustomValues(item) : []"
+                    :key="entry.field.id"
+                    class="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 ring-1 ring-slate-200"
+                    :title="entry.field.name"
+                  >
+                    {{ entry.field.name }}: {{ entry.label }}
                   </span>
                 </div>
                 <span
-                  v-if="item.assignee_id"
-                  class="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-[8px] font-bold text-indigo-700"
-                  :title="memberName(item.assignee_id)"
+                  v-if="fieldVisible(visibleFields, 'due_date') && dueLabel(item)"
+                  class="mt-1.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ring-1"
+                  :class="dueTone(item)"
                 >
-                  {{ initials(item.assignee_id) }}
+                  <AppIcon name="clock" :size="10" /> {{ dueLabel(item) }}
                 </span>
-                <span v-else class="text-[10px] text-slate-600">Unassigned</span>
-              </div>
-            </article>
+                <div
+                  v-if="fieldVisible(visibleFields, 'delivery') || item.type === 'bug' || fieldVisible(visibleFields, 'assignee')"
+                  class="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-2"
+                >
+                  <div class="flex items-center gap-2 text-[10px] text-slate-600">
+                    <template v-if="fieldVisible(visibleFields, 'delivery')">
+                      <span v-if="branchesFor(item.id).length" class="inline-flex items-center gap-1" title="Linked branches">
+                        <AppIcon name="branch" :size="11" /> {{ branchesFor(item.id).length }}
+                      </span>
+                      <span v-if="prsFor(item.id).length" class="inline-flex items-center gap-1" title="Linked pull requests">
+                        <AppIcon name="repo" :size="11" /> {{ prsFor(item.id).length }}
+                      </span>
+                    </template>
+                    <span v-if="item.type === 'bug'" class="inline-flex items-center gap-1">
+                      <StatusPill :status="item.status" :dot="false" />
+                    </span>
+                  </div>
+                  <template v-if="fieldVisible(visibleFields, 'assignee')">
+                    <span
+                      v-if="item.assignee_id"
+                      class="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-[8px] font-bold text-indigo-700"
+                      :title="memberName(item.assignee_id)"
+                    >
+                      {{ initials(item.assignee_id) }}
+                    </span>
+                    <span v-else class="text-[10px] text-slate-600">Unassigned</span>
+                  </template>
+                </div>
+              </article>
 
-            <button
-              v-if="!column.items.length && canManageWorkItems"
-              type="button"
-              class="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 py-5 text-[11px] font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
-              @click="openCreateItem(column.key === 'backlog' ? 'task' : 'task')"
-            >
-              <AppIcon name="plus" :size="12" /> Add item
-            </button>
-          </div>
-        </section>
+              <button
+                v-if="!column.items.length && canManageWorkItems"
+                type="button"
+                class="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 py-5 text-[11px] font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
+                @click="openCreateItem('task', column.key)"
+              >
+                <AppIcon name="plus" :size="12" /> Add item
+              </button>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
 
@@ -1452,6 +1657,34 @@ function openDelivery(): void {
           </select>
           <span v-if="!canShareView" class="mt-1 block text-[11px] text-slate-500">Shared views need <code class="font-mono">planning.write</code>.</span>
         </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="block">
+            <span class="field-label">Swimlanes</span>
+            <select v-model="viewSwimlane" class="field-input">
+              <option v-for="lane in BOARD_SWIMLANES" :key="lane.value" :value="lane.value">{{ lane.label }}</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="field-label">Sort</span>
+            <select v-model="viewSortId" class="field-input">
+              <option v-for="option in BOARD_SORT_OPTIONS" :key="option.id" :value="option.id">{{ option.label }}</option>
+            </select>
+          </label>
+        </div>
+        <fieldset>
+          <legend class="field-label">Visible card fields</legend>
+          <div class="mt-1 grid gap-1.5 sm:grid-cols-2">
+            <label
+              v-for="field in BOARD_VISIBLE_FIELDS"
+              :key="field.value"
+              class="flex items-center gap-2 text-xs font-medium text-slate-700"
+            >
+              <input v-model="viewFields" type="checkbox" :value="field.value" class="h-4 w-4 rounded border-slate-300" />
+              {{ field.label }}
+            </label>
+          </div>
+          <p class="mt-1 text-[11px] text-slate-500">Unchecked fields are hidden on cards in this view.</p>
+        </fieldset>
         <div class="flex flex-wrap gap-4">
           <label class="flex items-center gap-2 text-xs font-medium text-slate-700">
             <input v-model="viewPinned" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
