@@ -39,12 +39,14 @@ const InvalidationSubject = "spm.authz.invalidation"
 
 // AuthzInvalidation is the control message published on InvalidationSubject.
 // Scope selects the eviction: "user" closes every stream owned by UserID;
-// "project" closes every stream subscribed to ProjectID. Reasons are fixed
-// operational strings, never user input, because they become metric labels.
+// "project" closes every stream subscribed to ProjectID; "session" closes the
+// stream bound to SessionID. Reasons are fixed operational strings, never user
+// input, because they become metric labels.
 type AuthzInvalidation struct {
 	Scope     string `json:"scope"`
 	UserID    string `json:"user_id,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 	Reason    string `json:"reason"`
 }
 
@@ -269,6 +271,25 @@ func (c *Client) InvalidateProject(ctx context.Context, projectID, reason string
 		return err
 	}
 	metrics.Default().ObserveAuthzInvalidation("project", reason)
+	return nil
+}
+
+// InvalidateSession publishes a session-scoped eviction. The auth_sessions row
+// is already revoked when this is called; the message lets every replica close
+// the matching SSE stream immediately instead of waiting for its heartbeat.
+func (c *Client) InvalidateSession(ctx context.Context, sessionID, userID, reason string) error {
+	if c == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	inv := AuthzInvalidation{Scope: "session", SessionID: sessionID, UserID: userID, Reason: reason}
+	if err := c.publishInvalidation(ctx, inv); err != nil {
+		return err
+	}
+	metrics.Default().ObserveAuthzInvalidation("session", reason)
 	return nil
 }
 

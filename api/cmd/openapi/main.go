@@ -803,10 +803,36 @@ properties:
       $ref: '#/components/schemas/ProjectAccess'`,
 	"LoginResponse": `type: object
 properties:
-  token: { type: string }
-  expires_in: { type: integer }
+  token: { type: string, description: Short-lived access token. }
+  refresh_token: { type: string, description: Opaque refresh token. Rotated on every refresh; stored only by the client. }
+  session_id: { type: string, format: uuid, description: Server-side session that can be listed and revoked. }
+  expires_in: { type: integer, description: Access-token lifetime in seconds. }
   user:
     $ref: '#/components/schemas/User'`,
+	"RefreshInput": `type: object
+required: [refresh_token]
+properties:
+  refresh_token: { type: string, description: Current refresh token. Reuse of an already rotated token revokes the whole session family. }`,
+	"Session": `type: object
+properties:
+  id: { type: string, format: uuid }
+  device: { type: string, description: Human-readable browser and operating-system label. }
+  ip: { type: string }
+  user_agent: { type: string }
+  created_at: { type: string, format: date-time }
+  last_seen_at: { type: string, format: date-time }
+  idle_expires_at: { type: string, format: date-time }
+  expires_at: { type: string, format: date-time }
+  current: { type: boolean, description: True for the session that authenticated this request. }`,
+	"SessionList": `type: object
+properties:
+  sessions:
+    type: array
+    items:
+      $ref: '#/components/schemas/Session'`,
+	"RevokeSessionsResponse": `type: object
+properties:
+  revoked: { type: integer, minimum: 0, description: Number of sessions revoked by this request. }`,
 	"AuditEvent": `type: object
 properties:
   id: { type: string, format: uuid }
@@ -1531,7 +1557,11 @@ func successCode(method, path string) string {
 		return "204"
 	case "POST":
 		switch {
+		case strings.HasSuffix(path, "/auth/logout"):
+			return "204"
 		case strings.HasSuffix(path, "/auth/login"),
+			strings.HasSuffix(path, "/auth/refresh"),
+			strings.HasSuffix(path, "/auth/sessions/revoke-others"),
 			strings.HasSuffix(path, "/auth/stream-ticket"),
 			strings.HasSuffix(path, "/ai/ask"),
 			strings.HasSuffix(path, "/provision"),
@@ -1579,7 +1609,7 @@ func errorCodes(route server.Route, path string) []string {
 	if isRevisionedMutation(route.Method, path) || isLifecycleMutation(route.Method, path) || isTestManagementMutation(route.Method, path) {
 		codes = appendUnique(codes, "400", "409", "428")
 	}
-	if strings.Contains(path, "/auth/login") {
+	if strings.Contains(path, "/auth/login") || strings.HasSuffix(path, "/auth/refresh") {
 		codes = append(codes, "429")
 	}
 	codes = append(codes, "500")
@@ -1609,10 +1639,15 @@ func requestSchema(method, path string) string {
 		return ""
 	}
 	switch {
-	case strings.HasSuffix(path, "/auth/stream-ticket"), strings.HasSuffix(path, "/provision"):
+	case strings.HasSuffix(path, "/auth/stream-ticket"),
+		strings.HasSuffix(path, "/provision"),
+		strings.HasSuffix(path, "/auth/logout"),
+		strings.HasSuffix(path, "/auth/sessions/revoke-others"):
 		return ""
 	case strings.HasSuffix(path, "/auth/login"):
 		return "LoginInput"
+	case strings.HasSuffix(path, "/auth/refresh"):
+		return "RefreshInput"
 	case strings.Contains(path, "/webhooks/"):
 		return "WebhookPayload"
 	case strings.HasSuffix(path, "/ai/ask"):
@@ -1806,8 +1841,12 @@ func successSchema(method, path string) string {
 		return "RevisionResult"
 	case isRevisionedCreate(method, path) || isRevisionedMutation(method, path):
 		return "RevisionResult"
-	case strings.HasSuffix(path, "/auth/login"):
+	case strings.HasSuffix(path, "/auth/login"), strings.HasSuffix(path, "/auth/refresh"):
 		return "LoginResponse"
+	case strings.HasSuffix(path, "/auth/sessions"):
+		return "SessionList"
+	case strings.HasSuffix(path, "/auth/sessions/revoke-others"):
+		return "RevokeSessionsResponse"
 	case strings.HasSuffix(path, "/auth/me"):
 		return "User"
 	case strings.HasSuffix(path, "/admin/audit/events"):
@@ -1874,9 +1913,14 @@ var summaryOverrides = map[string]string{
 	"GET /health/live":                                                                              "Liveness probe",
 	"GET /health/ready":                                                                             "Readiness probe",
 	"POST /api/v1/auth/login":                                                                       "Sign in",
+	"POST /api/v1/auth/refresh":                                                                     "Rotate the refresh token",
 	"GET /api/v1/auth/me":                                                                           "Get the current user",
 	"PATCH /api/v1/auth/me":                                                                         "Update the current profile",
 	"POST /api/v1/auth/password":                                                                    "Change the current password",
+	"POST /api/v1/auth/logout":                                                                      "Revoke the current session",
+	"GET /api/v1/auth/sessions":                                                                     "List active sessions",
+	"DELETE /api/v1/auth/sessions/{sessionId}":                                                      "Revoke one session",
+	"POST /api/v1/auth/sessions/revoke-others":                                                      "Revoke every other session",
 	"POST /api/v1/auth/stream-ticket":                                                               "Issue a stream ticket",
 	"GET /api/v1/users":                                                                             "List directory users",
 	"GET /api/v1/search":                                                                            "Search artifacts",

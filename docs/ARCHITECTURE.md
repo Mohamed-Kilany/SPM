@@ -96,7 +96,9 @@ The AI service is a stateless Python FastAPI application:
 
 ## 7. Security
 
-- JWT HS256 with short expiry.
+- JWT HS256 with short expiry and a server-side session ID; refresh tokens rotate on every use and
+  reuse revokes the session family. Sessions are listed and revoked per device in the profile; see
+  [`SESSIONS.md`](SESSIONS.md).
 - Single-use SSE tickets; JWTs never in query strings.
 - Webhook HMAC or bearer tokens with constant-time comparison.
 - Password hashing with bcrypt.

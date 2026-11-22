@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "022_board_view_swimlanes.sql" {
-		t.Fatalf("latest migration = %q, want 022_board_view_swimlanes.sql", names[len(names)-1])
+	if names[len(names)-1] != "023_auth_sessions.sql" {
+		t.Fatalf("latest migration = %q, want 023_auth_sessions.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -512,6 +512,46 @@ func TestEveryForeignKeyHasALeadingIndex(t *testing.T) {
 		if !covered[fk.table][fk.column] {
 			t.Errorf("foreign key %s.%s -> %s has no index with %s as its leading column",
 				fk.table, fk.column, fk.target, fk.column)
+		}
+	}
+}
+
+func TestAuthSessionMigrationIsComplete(t *testing.T) {
+	forward := readMigration(t, "023_auth_sessions.sql")
+	for _, fragment := range []string{
+		"CREATE TABLE IF NOT EXISTS auth_sessions",
+		"current_jti          UUID NOT NULL",
+		"current_refresh_hash VARCHAR(64) NOT NULL",
+		"ip                   INET",
+		"user_agent           VARCHAR(1024) NOT NULL DEFAULT ''",
+		"last_seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+		"idle_expires_at      TIMESTAMPTZ NOT NULL",
+		"expires_at           TIMESTAMPTZ NOT NULL",
+		"revoked_at           TIMESTAMPTZ",
+		"revoke_reason        VARCHAR(100) NOT NULL DEFAULT ''",
+		"auth_sessions_idle_within_absolute",
+		"auth_sessions_expiry_after_creation",
+		"auth_sessions_refresh_hash_sha256",
+		"CREATE TABLE IF NOT EXISTS auth_session_rotations",
+		"session_id   UUID NOT NULL REFERENCES auth_sessions(id) ON DELETE CASCADE",
+		"refresh_hash VARCHAR(64) NOT NULL",
+		"reused_at    TIMESTAMPTZ",
+		"auth_session_rotations_hash_idx",
+		"auth_session_rotations_session_idx",
+	} {
+		if !strings.Contains(forward, fragment) {
+			t.Errorf("023 is missing %q", fragment)
+		}
+	}
+
+	rollback, err := os.ReadFile("rollback/023_auth_sessions.sql")
+	if err != nil {
+		t.Fatalf("read session rollback companion: %v", err)
+	}
+	body := string(rollback)
+	for _, table := range []string{"auth_session_rotations", "auth_sessions"} {
+		if !strings.Contains(body, "DROP TABLE IF EXISTS "+table+";") {
+			t.Errorf("rollback does not drop %s", table)
 		}
 	}
 }

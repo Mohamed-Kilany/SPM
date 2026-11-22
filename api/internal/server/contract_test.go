@@ -165,7 +165,9 @@ func routeNeedsBody(route Route) bool {
 	switch strings.ToUpper(route.Method) {
 	case "POST", "PUT", "PATCH":
 		return !strings.HasSuffix(route.Path, "/provision") &&
-			!strings.HasSuffix(route.Path, "/auth/stream-ticket")
+			!strings.HasSuffix(route.Path, "/auth/stream-ticket") &&
+			!strings.HasSuffix(route.Path, "/auth/logout") &&
+			!strings.HasSuffix(route.Path, "/auth/sessions/revoke-others")
 	default:
 		return false
 	}

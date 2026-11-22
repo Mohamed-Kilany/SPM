@@ -281,6 +281,15 @@ func (h *Handler) AdminUpdateUser(c *gin.Context) {
 	if (req.Password != nil || req.Role != nil || req.IsActive != nil) && h.invalidator != nil {
 		_ = h.invalidator.InvalidateUser(c.Request.Context(), targetID.String())
 	}
+	if req.Password != nil || req.Role != nil || req.IsActive != nil {
+		if h.sessions != nil {
+			if revoked, revokeErr := h.sessions.RevokeOthers(c.Request.Context(), targetID.String(), "", "admin_update"); revokeErr == nil {
+				for _, revokedID := range revoked {
+					h.invalidateSession(c.Request.Context(), revokedID, targetID.String(), "admin_update")
+				}
+			}
+		}
+	}
 	var nextEmail, nextDisplayName, nextAvatar string
 	if req.Email != nil || req.DisplayName != nil || req.AvatarURL != nil {
 		_ = h.db.QueryRow(c.Request.Context(),

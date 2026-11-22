@@ -204,8 +204,9 @@ type User struct {
 // ParseToken and Middleware call Normalize to populate it from Subject.
 type AuthClaims struct {
 	UserID     string   `json:"-"`
-	Role       string   `json:"role"`        // "admin" | "member" | "viewer"
-	ProjectIDs []string `json:"project_ids"` // projects explicitly assigned
+	SessionID  string   `json:"sid,omitempty"` // server-side auth_sessions row
+	Role       string   `json:"role"`          // "admin" | "member" | "viewer"
+	ProjectIDs []string `json:"project_ids"`   // projects explicitly assigned
 	jwt.RegisteredClaims
 }
 

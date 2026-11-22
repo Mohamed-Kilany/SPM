@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -35,13 +36,24 @@ func abortUnauthorized(c *gin.Context, code, message string) {
 	})
 }
 
+// SessionValidator checks that a JWT's session is still active. SessionStore
+// implements it; tests may pass a fake.
+type SessionValidator interface {
+	Validate(ctx context.Context, sessionID string) error
+}
+
 // Middleware returns a Gin middleware that validates the JWT present in the
 // Authorization: Bearer <token> header and injects the parsed AuthClaims into
-// the Gin context under ClaimsKey.
+// the Gin context under ClaimsKey. An optional SessionValidator rejects tokens
+// whose persistent session has been revoked or has expired.
 //
 // JWTs are never accepted from query parameters. EventSource clients must use
 // the short-lived stream ticket flow instead.
-func Middleware(invalidationKV nats.KeyValue) gin.HandlerFunc {
+func Middleware(invalidationKV nats.KeyValue, validators ...SessionValidator) gin.HandlerFunc {
+	var sessionValidator SessionValidator
+	if len(validators) > 0 {
+		sessionValidator = validators[0]
+	}
 	return func(c *gin.Context) {
 		secret := os.Getenv("JWT_SECRET")
 		if secret == "" {
@@ -106,6 +118,25 @@ func Middleware(invalidationKV nats.KeyValue) gin.HandlerFunc {
 			// outage does not block every authenticated request.
 		}
 
+		if sessionValidator != nil && claims.SessionID != "" {
+			switch err := sessionValidator.Validate(c.Request.Context(), claims.SessionID); {
+			case err == nil:
+			case errors.Is(err, ErrSessionRevoked):
+				abortUnauthorized(c, "SESSION_REVOKED", "This session has been revoked")
+				return
+			case errors.Is(err, ErrSessionExpired), errors.Is(err, ErrSessionNotFound):
+				abortUnauthorized(c, "SESSION_EXPIRED", "This session has expired")
+				return
+			default:
+				// Session state is security-critical. A database failure must
+				// not silently accept a token that may have been revoked.
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, errorResponse{
+					Error: errorBody{Code: "SESSION_CHECK_FAILED", Message: "Session state is temporarily unavailable"},
+				})
+				return
+			}
+		}
+
 		c.Set(ClaimsKey, claims)
 		c.Next()
 	}
@@ -125,8 +156,8 @@ func ClaimsFrom(c *gin.Context) (*models.AuthClaims, bool) {
 
 // RequireAuth is a convenience middleware for routes that only need a valid
 // JWT and not project-scoped RBAC.
-func RequireAuth(invalidationKV nats.KeyValue) gin.HandlerFunc {
-	return Middleware(invalidationKV)
+func RequireAuth(invalidationKV nats.KeyValue, validators ...SessionValidator) gin.HandlerFunc {
+	return Middleware(invalidationKV, validators...)
 }
 
 // tokenExpiryFromEnv reads JWT_EXPIRY_HOURS with a safe default.

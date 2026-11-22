@@ -62,9 +62,14 @@ func Routes() []Route {
 
 		// Authentication and session.
 		r(http.MethodPost, "/api/v1/auth/login", AuthPublic),
+		r(http.MethodPost, "/api/v1/auth/refresh", AuthPublic),
 		r(http.MethodGet, "/api/v1/auth/me", AuthBearer),
 		r(http.MethodPatch, "/api/v1/auth/me", AuthBearer),
 		r(http.MethodPost, "/api/v1/auth/password", AuthBearer),
+		r(http.MethodPost, "/api/v1/auth/logout", AuthBearer),
+		r(http.MethodGet, "/api/v1/auth/sessions", AuthBearer),
+		r(http.MethodDelete, "/api/v1/auth/sessions/:sessionId", AuthBearer),
+		r(http.MethodPost, "/api/v1/auth/sessions/revoke-others", AuthBearer),
 		r(http.MethodPost, "/api/v1/auth/stream-ticket", AuthBearer),
 		r(http.MethodGet, "/api/v1/users", AuthBearer),
 		r(http.MethodGet, "/api/v1/search", AuthBearer),

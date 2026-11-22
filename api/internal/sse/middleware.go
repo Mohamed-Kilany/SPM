@@ -19,11 +19,15 @@ var uuidV4RE = regexp.MustCompile(
 //  1. ?token= query param present → reject 401 UNAUTHORIZED (JWT URL params not accepted)
 //  2. ?ticket= query param present → validate UUID v4 format, redeem via TicketStore
 //  3. No ?ticket= → fall through to Bearer JWT validation via auth.Middleware
+//
+// Persistent-session validation happens in Manager.Stream on connect and on
+// every heartbeat, so both ticket and bearer paths are covered.
 func StreamAuthMiddleware(
 	store *auth.TicketStore,
 	invalidationKV nats.KeyValue,
+	validators ...auth.SessionValidator,
 ) gin.HandlerFunc {
-	jwtMW := auth.Middleware(invalidationKV)
+	jwtMW := auth.Middleware(invalidationKV, validators...)
 
 	return func(c *gin.Context) {
 		// 1. Reject legacy ?token= URL parameter unconditionally.

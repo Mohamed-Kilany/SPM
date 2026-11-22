@@ -13,7 +13,7 @@ inventory, not hand-maintained.
 | Generator and drift check | `api/cmd/openapi` |
 
 `TestRoutesMatchRegistration` proves the metadata table and the real Gin engine serve the same
-135 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
+140 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
 describe the same operations in both directions. `TestUIClientPathsExist` proves every API path
 used by `ui/src/api/client.ts` is documented.
 
@@ -59,8 +59,13 @@ or a document that fails OpenAPI validation, fails the gate.
 
 ## Authentication
 
-- Bearer JWT: `Authorization: Bearer <token>` on all `/api/v1` routes except login, webhooks and
-  the health probes.
+- Bearer JWT: `Authorization: Bearer <token>` on all `/api/v1` routes except login, refresh,
+  webhooks and the health probes.
+- Access tokens are short-lived and carry a server-side session ID (`sid`). `POST
+  /api/v1/auth/refresh` rotates the opaque refresh token; `POST /api/v1/auth/logout`,
+  `GET /api/v1/auth/sessions`, `DELETE /api/v1/auth/sessions/{sessionId}` and `POST
+  /api/v1/auth/sessions/revoke-others` manage the caller's devices. The model, error codes
+  and replay detection are documented in [`SESSIONS.md`](SESSIONS.md).
 - Server-sent events: `POST /api/v1/auth/stream-ticket` issues a single-use ticket; the stream
   accepts it through the `ticket` query parameter. Legacy `?token=` URLs are rejected.
 - Webhooks: Gitea and Argo CD authenticate with their configured signature or token; generic

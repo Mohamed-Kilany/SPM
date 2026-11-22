@@ -1,4 +1,11 @@
-import { getStoredToken } from '../lib/storage'
+import {
+  clearStoredSession,
+  getStoredRefreshToken,
+  getStoredToken,
+  setStoredRefreshToken,
+  setStoredSessionId,
+  setStoredToken,
+} from '../lib/storage'
 import type { AdminUser, DirectoryUser, ProjectMember } from '../types/admin'
 import type { AuditEvent, AuditFilters, AuditPage, AuditVerification } from '../types/audit'
 import type { AiAskResponse, AiInsightResponse, AiSearchResponse } from '../types/ai'
@@ -11,6 +18,7 @@ import type {
   LoginResponse,
   ProjectSnapshot,
   ProjectSummary,
+  SessionListResponse,
   StreamTicketResponse,
   UpdateTicketPayload,
 } from '../types/project'
@@ -67,6 +75,10 @@ interface RequestOptions {
   signal?: AbortSignal
   timeoutMs?: number
   headers?: Record<string, string>
+  /** Internal: prevents a retried request from starting another refresh. */
+  skipAuthRefresh?: boolean
+  /** Internal: suppresses the global sign-out event for expected 401s. */
+  suppressUnauthorized?: boolean
 }
 
 export interface RevisionedResult {
@@ -93,13 +105,83 @@ interface RawResult<T> {
 }
 
 function notifyUnauthorized(): void {
-  if (typeof window !== 'undefined' && getStoredToken()) {
+  if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('spm:unauthorized'))
   }
 }
 
+function notifyTokenRefreshed(session: LoginResponse): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent<LoginResponse>('spm:token-refreshed', { detail: session }))
+  }
+}
+
+let refreshInFlight: Promise<void> | null = null
+
+/**
+ * Serializes refresh across tabs when the Web Locks API is available. Without
+ * it, two tabs could rotate the same token and trip server-side reuse
+ * detection, which revokes the whole session family.
+ */
+async function withRefreshLock(task: () => Promise<void>): Promise<void> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+  if (locks?.request) {
+    await locks.request('spm-token-refresh', task)
+    return
+  }
+  await task()
+}
+
+/**
+ * Exchanges the stored refresh token for a new access token. Concurrent
+ * callers share one request so a burst of 401s cannot rotate the token twice
+ * and trip server-side reuse detection.
+ */
+async function refreshAccessToken(): Promise<void> {
+  const observedToken = getStoredRefreshToken()
+  if (!observedToken) {
+    throw new ApiError('Your session has expired. Please sign in again.', 401, 'SESSION_EXPIRED')
+  }
+
+  if (!refreshInFlight) {
+    refreshInFlight = withRefreshLock(async () => {
+      const refreshToken = getStoredRefreshToken()
+      if (!refreshToken) {
+        throw new ApiError('Your session has expired. Please sign in again.', 401, 'SESSION_EXPIRED')
+      }
+      // Another tab rotated the token while this one waited for the lock.
+      if (refreshToken !== observedToken) return
+
+      const session = await request<LoginResponse>('/api/v1/auth/refresh', {
+        method: 'POST',
+        body: { refresh_token: refreshToken },
+        auth: false,
+        timeoutMs: 15_000,
+        skipAuthRefresh: true,
+      })
+      setStoredToken(session.token)
+      setStoredRefreshToken(session.refresh_token)
+      setStoredSessionId(session.session_id)
+      notifyTokenRefreshed(session)
+    }).finally(() => {
+      refreshInFlight = null
+    })
+  }
+
+  return refreshInFlight
+}
+
 async function requestRaw<T>(path: string, options: RequestOptions = {}): Promise<RawResult<T>> {
-  const { method = 'GET', body, auth = true, signal, timeoutMs, headers: extraHeaders } = options
+  const {
+    method = 'GET',
+    body,
+    auth = true,
+    signal,
+    timeoutMs,
+    headers: extraHeaders,
+    skipAuthRefresh = false,
+    suppressUnauthorized = false,
+  } = options
   const headers = new Headers({ Accept: 'application/json' })
 
   if (extraHeaders) {
@@ -142,7 +224,27 @@ async function requestRaw<T>(path: string, options: RequestOptions = {}): Promis
       : null
 
     if (!response.ok) {
-      if (response.status === 401) notifyUnauthorized()
+      if (response.status === 401 && auth) {
+        if (!skipAuthRefresh && getStoredRefreshToken()) {
+          try {
+            await refreshAccessToken()
+            return await requestRaw<T>(path, { ...options, skipAuthRefresh: true })
+          } catch (refreshError) {
+            if (
+              refreshError instanceof ApiError &&
+              (refreshError.status === 401 || refreshError.status === 403)
+            ) {
+              clearStoredSession()
+              if (!suppressUnauthorized) notifyUnauthorized()
+            } else {
+              // Network or server failures must not silently sign the user out.
+              throw refreshError
+            }
+          }
+        } else if (!suppressUnauthorized) {
+          notifyUnauthorized()
+        }
+      }
       const message =
         data?.error?.message ??
         (response.status === 401
@@ -199,6 +301,39 @@ export const api = {
     await requestRaw<void>('/api/v1/auth/password', {
       method: 'POST',
       body: { current_password: currentPassword, new_password: newPassword },
+      timeoutMs: 15_000,
+    })
+  },
+
+  /** Revokes the server-side session. Failures are ignored so local sign-out
+   * always succeeds; an expired access token is refreshed first so the session
+   * is still revoked server-side. */
+  async logout(): Promise<void> {
+    try {
+      await requestRaw<void>('/api/v1/auth/logout', {
+        method: 'POST',
+        timeoutMs: 10_000,
+        suppressUnauthorized: true,
+      })
+    } catch {
+      // Best effort.
+    }
+  },
+
+  async listSessions(): Promise<SessionListResponse> {
+    return request<SessionListResponse>('/api/v1/auth/sessions', { timeoutMs: 15_000 })
+  },
+
+  async revokeSession(sessionId: string): Promise<void> {
+    await requestRaw<void>(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      timeoutMs: 15_000,
+    })
+  },
+
+  async revokeOtherSessions(): Promise<{ revoked: number }> {
+    return request<{ revoked: number }>('/api/v1/auth/sessions/revoke-others', {
+      method: 'POST',
       timeoutMs: 15_000,
     })
   },

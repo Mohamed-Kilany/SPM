@@ -121,8 +121,26 @@ export interface AuthUser {
 
 export interface LoginResponse {
   token: string
+  refresh_token: string
+  session_id: string
   expires_in: number
   user: AuthUser
+}
+
+export interface AuthSession {
+  id: string
+  device: string
+  ip: string
+  user_agent: string
+  created_at: string
+  last_seen_at: string
+  idle_expires_at: string
+  expires_at: string
+  current: boolean
+}
+
+export interface SessionListResponse {
+  sessions: AuthSession[]
 }
 
 export interface StreamTicketResponse {

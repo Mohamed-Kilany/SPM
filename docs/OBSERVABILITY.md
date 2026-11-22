@@ -97,7 +97,30 @@ join key between a metric anomaly and a released tag.
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `spm_sse_connections_active` | gauge | - | Live project update streams |
-| `spm_authz_invalidations_total` | counter | `scope`, `reason` | Published token/project invalidations (`user`/`project`, fixed reasons) |
+| `spm_authz_invalidations_total` | counter | `scope`, `reason` | Published token/project/session invalidations (`user`/`project`/`session`, fixed reasons) |
+
+### Sessions
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `spm_auth_sessions_active` | gauge | - | Sessions that can currently authenticate |
+| `spm_auth_session_events_total` | counter | `event` | Session lifecycle events |
+
+`event` is one of `created`, `refreshed`, `revoked`, `revoke_all`, `expired`,
+`session_limit` or `reuse_detected`. `revoke_all` counts a bulk revocation pass
+(password change, account deactivation, admin update), not the number of
+sessions it revoked. `session_limit` means the per-user cap evicted older
+sessions; a sustained rate points at a client that signs in on every launch or a
+cap that is too low. `reuse_detected` means an already rotated refresh token was
+presented again and the whole family was revoked. Treat any sustained reuse rate
+as a security incident and correlate it with `auth.refresh` audit events.
+
+```promql
+sum(rate(spm_auth_session_events_total{event="reuse_detected"}[15m])) > 0
+```
+
+The session model and client refresh flow are documented in
+[`SESSIONS.md`](SESSIONS.md).
 
 ### Planning
 

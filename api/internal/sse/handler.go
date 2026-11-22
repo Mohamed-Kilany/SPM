@@ -29,19 +29,21 @@ const (
 // UI updates; per-project ring buffers exist independently of connections, and
 // active connections receive fan-out copies.
 type Manager struct {
-	nc     *nats.Conn
-	pool   *pgxpool.Pool
-	sub    *nats.Subscription
-	authz  *nats.Subscription
-	mu     sync.Mutex
-	bufs   map[string]*RingBuffer
-	subs   map[string]map[int64]*subscriber
-	nextID int64
+	nc               *nats.Conn
+	pool             *pgxpool.Pool
+	sub              *nats.Subscription
+	authz            *nats.Subscription
+	sessionValidator auth.SessionValidator
+	mu               sync.Mutex
+	bufs             map[string]*RingBuffer
+	subs             map[string]map[int64]*subscriber
+	nextID           int64
 }
 
 type subscriber struct {
-	userID string
-	ch     chan SSEEvent
+	userID    string
+	sessionID string
+	ch        chan SSEEvent
 }
 
 // NewManager creates an SSE Manager. Start must be called to consume updates.
@@ -55,6 +57,12 @@ func NewManager(nc *nats.Conn, pool *pgxpool.Pool) *Manager {
 		bufs: make(map[string]*RingBuffer),
 		subs: make(map[string]map[int64]*subscriber),
 	}
+}
+
+// SetSessionValidator attaches the persistent-session check used on connect and
+// on every heartbeat. Without it, SSE relies solely on NATS eviction.
+func (m *Manager) SetSessionValidator(validator auth.SessionValidator) {
+	m.sessionValidator = validator
 }
 
 // Start subscribes the hub to UI updates and authorization invalidations.
@@ -167,9 +175,36 @@ func (m *Manager) handleInvalidation(data []byte) {
 		m.evictUser(invalidation.UserID)
 	case "project":
 		m.evictProject(invalidation.ProjectID)
+	case "session":
+		m.evictSession(invalidation.SessionID)
 	default:
 		log.Printf("sse: unknown authz invalidation scope %q", invalidation.Scope)
 	}
+}
+
+// evictSession closes the stream bound to sessionID and returns the number of
+// connections that were disconnected.
+func (m *Manager) evictSession(sessionID string) int {
+	if sessionID == "" {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	evicted := 0
+	for projectID, subs := range m.subs {
+		for id, sub := range subs {
+			if sub.sessionID != sessionID {
+				continue
+			}
+			close(sub.ch)
+			delete(subs, id)
+			evicted++
+		}
+		if len(subs) == 0 {
+			delete(m.subs, projectID)
+		}
+	}
+	return evicted
 }
 
 // evictUser closes every stream owned by userID and returns the number of
@@ -219,6 +254,12 @@ func (m *Manager) Stream(c *gin.Context) {
 		return
 	}
 	userID := claims.CanonicalUserID()
+	if m.sessionValidator != nil && claims.SessionID != "" {
+		if err := m.sessionValidator.Validate(c.Request.Context(), claims.SessionID); err != nil {
+			writeError(c, http.StatusUnauthorized, "SESSION_REVOKED", "This session has been revoked")
+			return
+		}
+	}
 
 	projectID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -234,7 +275,7 @@ func (m *Manager) Stream(c *gin.Context) {
 			latestSeq = seq
 		}
 	}
-	replay, ch, unsubscribe, ok := m.subscribe(key, userID, fromID, hasFromID, latestSeq)
+	replay, ch, unsubscribe, ok := m.subscribe(key, userID, claims.SessionID, fromID, hasFromID, latestSeq)
 	if !ok {
 		writeSSEHeaders(c)
 		c.Status(http.StatusOK)
@@ -264,6 +305,11 @@ func (m *Manager) Stream(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return
 		case <-ticker.C:
+			if m.sessionValidator != nil && claims.SessionID != "" {
+				if err := m.sessionValidator.Validate(c.Request.Context(), claims.SessionID); err != nil {
+					return
+				}
+			}
 			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
 				return
 			}
@@ -280,7 +326,7 @@ func (m *Manager) Stream(c *gin.Context) {
 	}
 }
 
-func (m *Manager) subscribe(projectID, userID string, fromID int64, replay bool, latestSeq int64) ([]SSEEvent, chan SSEEvent, func(), bool) {
+func (m *Manager) subscribe(projectID, userID, sessionID string, fromID int64, replay bool, latestSeq int64) ([]SSEEvent, chan SSEEvent, func(), bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -316,7 +362,7 @@ func (m *Manager) subscribe(projectID, userID string, fromID int64, replay bool,
 	}
 	m.nextID++
 	subID := m.nextID
-	m.subs[projectID][subID] = &subscriber{userID: userID, ch: ch}
+	m.subs[projectID][subID] = &subscriber{userID: userID, sessionID: sessionID, ch: ch}
 
 	unsubscribe := func() {
 		m.mu.Lock()
