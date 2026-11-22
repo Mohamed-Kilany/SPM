@@ -4,6 +4,7 @@ import {
   boardFiltersFromQuery,
   boardFiltersToQuery,
   boardFiltersToSaved,
+  boardMoveAnnouncement,
   boardSortFromId,
   boardSortFromSaved,
   boardSortId,
@@ -20,9 +21,11 @@ import {
   defaultBoardView,
   groupBySwimlane,
   itemMatchesQuickFilters,
+  keyboardMoveTarget,
   labelDot,
   labelTone,
   missingRequiredCustomField,
+  moveTargetForColumn,
   normalizeLabelInput,
   optionLines,
   parseOptionLines,
@@ -30,6 +33,7 @@ import {
   quickFiltersFromValue,
   quickFiltersToSaved,
   savedFilterToBoard,
+  summarizeBoardMoves,
   toggleQuickFilter,
   visibleFieldsFromSaved,
   visibleFieldsFromValue,
@@ -410,5 +414,47 @@ describe('WIP policy', () => {
     expect(wipState(5, 4)).toEqual({ current: 4, limit: 5, reached: false, exceeded: false })
     expect(wipState(5, 5)).toEqual({ current: 5, limit: 5, reached: true, exceeded: false })
     expect(wipState(5, 6)).toEqual({ current: 6, limit: 5, reached: true, exceeded: true })
+  })
+})
+
+describe('board moves', () => {
+  it('resolves the canonical status for a column', () => {
+    expect(moveTargetForColumn(item({ status: 'ready' }), 'in_progress')).toMatchObject({
+      status: 'in_progress',
+      column: { key: 'in_progress' },
+    })
+    expect(moveTargetForColumn(item({ type: 'bug', status: 'new' }), 'ready')?.status).toBe('triaged')
+    expect(moveTargetForColumn(item({ status: 'ready' }), 'missing')).toBeNull()
+  })
+
+  it('returns null instead of a status the workflow forbids', () => {
+    expect(moveTargetForColumn(item({ status: 'done' }), 'backlog')).toBeNull()
+    expect(moveTargetForColumn(item({ status: 'done' }), 'blocked')).toBeNull()
+    expect(moveTargetForColumn(item({ status: 'blocked' }), 'ready')?.status).toBe('ready')
+  })
+
+  it('walks to the nearest legal column in each direction', () => {
+    expect(keyboardMoveTarget(item({ status: 'ready' }), 1)?.column.key).toBe('in_progress')
+    expect(keyboardMoveTarget(item({ status: 'blocked' }), -1)?.column.key).toBe('qa')
+    expect(keyboardMoveTarget(item({ status: 'done' }), -1)?.column.key).toBe('in_progress')
+    expect(keyboardMoveTarget(item({ status: 'done' }), 1)).toBeNull()
+    expect(keyboardMoveTarget(item({ status: 'backlog' }), -1)).toBeNull()
+  })
+
+  it('announces the new column and position', () => {
+    expect(boardMoveAnnouncement('SPM-7', 'Ready', 2, 5)).toBe(
+      'SPM-7 moved to Ready, position 2 of 5.',
+    )
+    expect(boardMoveAnnouncement('SPM-7', 'Ready', 0, 0)).toBe('SPM-7 moved to Ready.')
+  })
+
+  it('summarizes per-item bulk outcomes', () => {
+    const results = [
+      { itemId: 'a', key: 'SPM-1', title: 'A', outcome: 'moved' as const, message: '' },
+      { itemId: 'b', key: 'SPM-2', title: 'B', outcome: 'moved' as const, message: '' },
+      { itemId: 'c', key: 'SPM-3', title: 'C', outcome: 'failed' as const, message: 'WIP limit' },
+      { itemId: 'd', key: 'SPM-4', title: 'D', outcome: 'skipped' as const, message: 'Already here' },
+    ]
+    expect(summarizeBoardMoves(results)).toEqual({ moved: 2, failed: 1, skipped: 1 })
   })
 })

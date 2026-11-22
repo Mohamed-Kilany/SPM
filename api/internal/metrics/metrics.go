@@ -48,6 +48,7 @@ type Registry struct {
 
 	authzInvalidations *prometheus.CounterVec
 	planningConflicts  *prometheus.CounterVec
+	boardMoveFailures  *prometheus.CounterVec
 
 	testRunCompletions *prometheus.CounterVec
 
@@ -131,6 +132,10 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_planning_conflicts_total",
 			Help: "Rejected optimistic-concurrency writes by planning resource.",
 		}, []string{"resource"}),
+		boardMoveFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "spm_board_move_failures_total",
+			Help: "Rejected or failed board moves by bounded reason.",
+		}, []string{"reason"}),
 		testRunCompletions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "spm_test_runs_completed_total",
 			Help: "Completed test runs by outcome: passed, failed or incomplete.",
@@ -189,6 +194,7 @@ func New(info BuildInfo) *Registry {
 		metrics.reconcileLastSuccess,
 		metrics.authzInvalidations,
 		metrics.planningConflicts,
+		metrics.boardMoveFailures,
 		metrics.testRunCompletions,
 		metrics.auditWrites,
 		metrics.auditWriteDuration,
@@ -287,6 +293,21 @@ func (r *Registry) ObservePlanningConflict(resource string) {
 		return
 	}
 	r.planningConflicts.WithLabelValues(resource).Inc()
+}
+
+// ObserveBoardMoveFailure records a rejected or failed work item move. The
+// reason label is a bounded enumeration; unknown values collapse to "error" so
+// user input can never create an unbounded series.
+func (r *Registry) ObserveBoardMoveFailure(reason string) {
+	if r == nil {
+		return
+	}
+	switch reason {
+	case "conflict", "wip", "invalid_transition", "invalid_request", "not_found":
+	default:
+		reason = "error"
+	}
+	r.boardMoveFailures.WithLabelValues(reason).Inc()
 }
 
 // ObserveTestRunCompleted records one run that transitioned to completed. The

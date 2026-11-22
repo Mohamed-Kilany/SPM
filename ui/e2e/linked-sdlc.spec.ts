@@ -105,6 +105,22 @@ async function openTab(page: Page, tab: string): Promise<void> {
   await expect(page.getByTestId(`workspace-tab-${tab}`)).toBeVisible()
 }
 
+async function dragCardToColumn(page: Page, card: Locator, columnKey: string): Promise<void> {
+  const column = page.locator(`[data-board-column$=":${columnKey}"]`).first()
+  const source = await card.boundingBox()
+  const target = await column.boundingBox()
+  if (!source || !target) throw new Error(`Cannot drag to column ${columnKey}`)
+  const startX = source.x + source.width / 2
+  const startY = source.y + source.height / 2
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  // Cross the 6 px pointer threshold, then move to the column header area so
+  // the drop target is unambiguous even when the column is tall.
+  await page.mouse.move(startX + 12, startY + 6, { steps: 3 })
+  await page.mouse.move(target.x + target.width / 2, target.y + 80, { steps: 12 })
+  await page.mouse.up()
+}
+
 let cachedAdminToken = ''
 
 async function adminToken(request: APIRequestContext): Promise<string> {
@@ -420,6 +436,74 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
   await subtaskDialog.getByRole('button', { name: 'Create work item' }).click()
   await expect(subtaskDialog).toBeHidden()
   await expect(page.getByText(SUBTASK_TITLE, { exact: true }).first()).toBeVisible()
+
+  // BRD-02: pointer drag rolls back on failure and retries; keyboard moves
+  // announce the new position; bulk moves report a per-item result.
+  const boardColumn = (key: string) =>
+    page.locator(`[data-board-column$=":${key}"]`).first()
+  const cardByTitle = (title: string) =>
+    page.locator('[data-board-card]').filter({ hasText: title }).first()
+  const statusMutations: string[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'PATCH' &&
+      /\/work-items\/[^/]+\/status$/.test(request.url())
+    ) {
+      statusMutations.push(request.url())
+    }
+  })
+  let failNextMove = true
+  const statusRoute = '**/api/v1/projects/*/work-items/*/status'
+  await page.route(statusRoute, async (route) => {
+    if (route.request().method() === 'PATCH' && failNextMove) {
+      failNextMove = false
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { code: 'INTERNAL_ERROR', message: 'Simulated board move failure' },
+        }),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  const taskCard = cardByTitle(TASK_TITLE)
+  await expect(taskCard).toBeVisible()
+  await dragCardToColumn(page, taskCard, 'in_progress')
+  const failureBanner = page.getByTestId('board-move-failure')
+  await expect(failureBanner).toContainText('Simulated board move failure')
+  await expect(boardColumn('backlog')).toContainText(TASK_TITLE)
+  await failureBanner.getByRole('button', { name: 'Retry' }).click()
+  await expect(boardColumn('in_progress')).toContainText(TASK_TITLE)
+  await expect(failureBanner).toBeHidden()
+  // One failed PATCH for the drag and one successful PATCH for Retry. A second
+  // mutation from the same gesture would make this three.
+  await expect.poll(() => statusMutations.length).toBe(2)
+  await page.unroute(statusRoute)
+
+  const storyCard = cardByTitle(STORY_TITLE)
+  await storyCard.focus()
+  await page.keyboard.press('Alt+ArrowRight')
+  await expect(boardColumn('ready')).toContainText(STORY_TITLE)
+  await expect(page.getByTestId('board-announcer')).toContainText('position')
+  await page.keyboard.press('Alt+ArrowLeft')
+  await expect(boardColumn('backlog')).toContainText(STORY_TITLE)
+
+  await cardByTitle(STORY_TITLE).getByRole('checkbox', { name: /Select/ }).check()
+  await cardByTitle(SUBTASK_TITLE).getByRole('checkbox', { name: /Select/ }).check()
+  const bulkBar = page.getByTestId('board-bulk-bar')
+  await expect(bulkBar).toContainText('2 selected')
+  await bulkBar.getByLabel('Bulk move target column').selectOption('ready')
+  await bulkBar.getByRole('button', { name: 'Move selected' }).click()
+  const bulkDialog = page.getByRole('dialog', { name: 'Bulk move results' })
+  await expect(bulkDialog).toBeVisible()
+  await expect(bulkDialog).toContainText('2 moved')
+  await expect(bulkDialog.getByTestId('bulk-move-results')).toContainText(STORY_TITLE)
+  await bulkDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(bulkDialog).toBeHidden()
+
   await expectAccessible(page, 'board')
 
   // -----------------------------------------------------------------------
@@ -535,10 +619,10 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
 
   // Bulk entry stays available but disables results that already have a bug.
   await detail.getByTestId('open-bulk-bugs').click()
-  const bulkDialog = page.getByRole('dialog', { name: 'Create defects from failures' })
-  await expect(bulkDialog.getByTestId('bulk-bug-candidates')).toContainText('Bug already linked')
-  await bulkDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(bulkDialog).toBeHidden()
+  const bulkBugDialog = page.getByRole('dialog', { name: 'Create defects from failures' })
+  await expect(bulkBugDialog.getByTestId('bulk-bug-candidates')).toContainText('Bug already linked')
+  await bulkBugDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(bulkBugDialog).toBeHidden()
 
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(detail).toBeHidden()

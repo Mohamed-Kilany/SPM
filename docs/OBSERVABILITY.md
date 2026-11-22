@@ -104,11 +104,36 @@ join key between a metric anomaly and a released tag.
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `spm_planning_conflicts_total` | counter | `resource` | Rejected stale writes on revisioned planning resources |
+| `spm_board_move_failures_total` | counter | `reason` | Rejected or failed board moves by bounded reason |
 
 `resource` is a fixed lowercase name (`prd`, `epic`, `feature`, `work item`, `test case`,
 `sprint`, `release`), never an ID. A sustained conflict rate means clients hold
 stale revisions; investigate the UI/API snapshot path before raising it. Revision and ETag
 semantics are in [`docs/DATA-MODEL.md`](DATA-MODEL.md).
+
+`reason` for board moves is one of `conflict`, `wip`, `invalid_transition`,
+`invalid_request`, `not_found` or `error`. The counter increments once for each
+rejected `PATCH /projects/{id}/work-items/{itemId}/status`; successful moves are
+covered by the HTTP request metric and the `work_item.move` audit event. A move
+that fails after the client applied it optimistically is retried by the board,
+so a short burst of `conflict` or `error` is expected during a stale-snapshot
+recovery. Alert on a sustained failure share or on `wip` rejections rising after
+a policy change:
+
+```promql
+sum(rate(spm_board_move_failures_total[5m]))
+/
+clamp_min(
+  sum(rate(spm_http_requests_total{
+    method="PATCH",
+    route="/api/v1/projects/:id/work-items/:itemId/status"
+  }[5m])),
+  1
+) > 0.25
+```
+
+Move audit events and the UI retry contract are described in
+[`docs/BOARD-VIEWS.md`](BOARD-VIEWS.md#8-moving-work-items).
 
 ### Test execution
 

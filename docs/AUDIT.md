@@ -131,6 +131,7 @@ stream tickets. Password changes record `password_changed: true` instead.
 | `project.member.add` | `internal/workspace` | Includes ownership transfer flag |
 | `project.member.update` | `internal/workspace` | Before/after role |
 | `project.member.remove` | `internal/workspace` | Before state includes the removed role |
+| `work_item.move` | `internal/workspace` | Before/after status for every successful board or drawer status change |
 | `repository.create` | `internal/workspace` | Webhook token is never recorded |
 | `branch.create` | `internal/workspace` | - |
 | `pull_request.create` | `internal/workspace` | - |
