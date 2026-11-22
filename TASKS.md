@@ -3196,18 +3196,42 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   audit entry.
 
 #### BRD-02 · Drag, keyboard moves and optimistic updates
-- **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/board-interactions`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/board-interactions`
 - **Depends on:** BRD-01
 - **Scope:** Implement pointer drag with drop indicators, optimistic status changes, rollback,
   keyboard moves (`Alt+arrows`), multi-select and bulk move.
 - **Acceptance criteria:**
-  - [ ] Drag works with mouse/touch and does not fire duplicate mutations.
-  - [ ] A failed move restores the card and offers retry.
-  - [ ] Keyboard moves work across columns and announce the new position.
-  - [ ] Bulk move is transactional or reports per-item results.
-  - [ ] WIP and permission rules are enforced server-side.
-- **Tests/evidence:** Playwright drag/keyboard, API conflict tests, axe.
-- **Docs/telemetry:** Move audit events + failure metric.
+  - [x] Drag works with mouse/touch and does not fire duplicate mutations. Cards use pointer
+    events with a 6 px activation threshold, `touch-action: pan-y`, a floating drag preview and a
+    `suppressClickUntil` guard so the drop cannot also open the card. The Playwright drag covers a
+    failed move plus retry and asserts exactly two PATCHes, so one gesture cannot mutate twice.
+  - [x] A failed move restores the card and offers retry. Moves render through a `pendingMoves`
+    overlay keyed by work item id; a rejected PATCH removes the overlay, restores the previous
+    column and shows a retry banner that replays the same target status.
+  - [x] Keyboard moves work across columns and announce the new position. `Alt+Left/Right` scans
+    to the nearest column with a legal transition, the `aria-live` region announces the new column
+    and position, and focus returns to the moved card.
+  - [x] Bulk move is transactional or reports per-item results. Multi-select sends one revisioned
+    PATCH per item, then reports `moved`/`failed`/`skipped` per item with a `Retry failed` action
+    and a summary count; no partial success is hidden.
+  - [x] WIP and permission rules are enforced server-side. `enforceWIPLimit` runs on create,
+    update and status change, returns `409 WIP_LIMIT` with the structured `wip` payload when the
+    hard block is on, and same-column moves stay allowed; the existing project-role guards remain
+    the authority for who may write.
+- **Tests/evidence:** `planning.test.ts` adds five move-target, keyboard, announcement and
+  bulk-summary tests (27 planning tests; 80 UI tests / 10 files), and `workspaceStore.test.ts`
+  proves concurrent refreshes coalesce and resolve after the snapshot lands. Go coverage includes
+  `board_wip_test.go` for column mapping and settings decoding, `revision_test.go` for the
+  revision/conflict contract used by move PATCHes, and `metrics_test.go` for the bounded failure
+  counter. `ui/e2e/linked-sdlc.spec.ts` covers pointer drag failure/retry, keyboard move with the
+  live region and bulk results, with an axe scan of the board. OpenAPI stays at 135 operations
+  with no route or schema changes. The full-stack Playwright path needs the Docker stack and was
+  not run locally; CI is the authority. Merged as PR #44 (`030e4a6`) after all required checks
+  passed.
+- **Docs/telemetry:** [`docs/BOARD-VIEWS.md`](docs/BOARD-VIEWS.md) documents moves, rollback/retry
+  and bulk semantics; [`docs/AUDIT.md`](docs/AUDIT.md) catalogues `work_item.move` with
+  `before.status`/`after.status`; [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) documents
+  `spm_board_move_failures_total{reason}` and its alert query.
 
 #### BRD-03 · Board performance and scale
 - **Status:** TODO · **Priority:** P2 · **Estimate:** M · **Branch:** `perf/board-scale`
@@ -5285,13 +5309,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 9 | 0 | 4 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 10 | 0 | 3 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **21** | **0** | **107** |
+| **Total** | - | **128** | **22** | **0** | **106** |
 
 ### C.2 Card index by phase
 
@@ -5351,6 +5375,7 @@ labels must exist in the repository.
 | 2026-11-21 | Closed TST-04: added traceable defect creation from an executed result with snapshot-derived title/reproduction/expected/actual values, appended run/case/step/environment/release/sprint/build/deployment context, bidirectional result/step pointers and `found_bug` artifact links from the result, run, case and optional build/deployment. Added normalized-title and existing-link duplicate detection (`409 DUPLICATE_BUG` with `duplicates[]`, forced override) and a bulk endpoint with per-item `created`/`duplicate`/`skipped`/`failed` outcomes and `400 INVALID_RESULT_IDS`. Both paths record audit actions and `workspace.changed` activity. Added the context/duplicate/bulk UI, 1 route (121 operations), 11 Go and 10 UI helper tests, OpenAPI schemas and `docs/TEST-MANAGEMENT.md` coverage. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint and UI typecheck/test (52 passed)/build; the Playwright flow was extended but not run locally because the Docker stack is unavailable. Merged as PR #38 (`b14d5e7`) after all required checks passed | Maintainer |
 | 2026-11-22 | Closed PLN-05: added reusable `project_labels` with color tokens, rename/delete rewrites and automatic registration on work item writes; typed `custom_fields` definitions (`text`, `number`, `select`, `date`, `user`) with option/range/required validation and values stored in `custom_field_values`, plus archive/restore and a permission-gated purge; and `saved_filters` across planning/board/test with private/shared visibility, per-owner default uniqueness and `If-Match` revisions. Added 14 routes (135 operations), `021_labels_custom_fields_saved_filters` with a contract companion, label/custom-field administration, URL-backed board views and `docs/PLANNING-CUSTOMIZATION.md`. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (63 passed)/build and a 30-check PGlite forward/re-apply/rollback rehearsal; the `BenchmarkFilterVisibleSavedFilters` benchmark filters 1,000 views in ~29 µs. Merged as PR #40 (`34295af`) after all required checks passed | Maintainer |
 | 2026-11-22 | Closed BRD-01: board views now capture filters (facets plus quick filters), sort, swimlane grouping and visible card fields on `saved_filters`; added `022_board_view_swimlanes` with a contract companion. Added `mine`/`unassigned`/`blocked`/`bugs`/`due_soon` quick filters, eight sort options with unscheduled cards last, four swimlane modes, seven switchable card fields, URL-backed layout state and a per-user default view that survives reload. Added per-column WIP limits in `settings.board` with explicit `wip_hard_block`, board `current/limit` badges, a drop pre-check and structured `409 WIP_LIMIT` responses; same-column moves stay allowed. Added `docs/BOARD-VIEWS.md` and updated `API.md`/`DATA-MODEL.md`/`PLANNING-CUSTOMIZATION.md`/`openapi.yaml` (135 operations unchanged). Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (74 passed)/build and a 28-check PGlite forward/re-apply/rollback/re-expand rehearsal. Merged as PR #42 (`290bdf5`) after all required checks passed | Maintainer |
+| 2026-11-22 | Closed BRD-02: added pointer drag with a 6 px threshold, touch support, a floating preview and click suppression, plus optimistic status changes backed by a `pendingMoves` overlay that rolls back and offers retry on failure. Added `Alt+Left/Right` keyboard moves that scan to the nearest legal column, announce the position through `aria-live` and restore focus, and multi-select bulk moves with per-item revisioned PATCHes, a `moved`/`failed`/`skipped` results dialog and `Retry failed`. Coalesced `workspaceStore.refresh()` callers, recorded `work_item.move` audit entries with before/after status, and added `spm_board_move_failures_total{reason}` with bounded reasons. OpenAPI stays at 135 operations. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (80 passed)/build and `git diff --check`; the Playwright drag/keyboard/bulk/axe path was extended but not run locally because the Docker stack is unavailable. Merged as PR #44 (`030e4a6`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
