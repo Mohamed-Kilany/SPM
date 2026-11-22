@@ -2484,19 +2484,55 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** `docs/MFA.md`, MFA adoption and failure metrics.
 
 #### GOV-09 · Session and device management
-- **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-sessions`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-sessions`
 - **Depends on:** GOV-02
 - **Scope:** Persist sessions (JTI, user, IP, user agent, created/last seen/revoked), list them
   in the profile, revoke one/all, and expire idle sessions. Introduce short-lived access tokens
   with refresh rotation if required by the security model.
 - **Acceptance criteria:**
-  - [ ] Active sessions are listed with device/browser/IP/last seen.
-  - [ ] Revoking a session blocks the next request and closes its SSE stream.
-  - [ ] "Revoke all others" requires confirmation and is audited.
-  - [ ] Refresh rotation detects reuse and revokes the family.
-  - [ ] Session limits and idle timeout are configurable.
-- **Tests/evidence:** session revocation integration test, refresh-reuse test.
-- **Docs/telemetry:** session count metric, revocation audit event.
+  - [x] Active sessions are listed with device/browser/IP/last seen. `GET /api/v1/auth/sessions`
+    returns the device label derived from the user agent, IP, created/last-seen timestamps,
+    idle/absolute expiry and a `current` flag; the profile page renders the list and marks the
+    caller's row as **This device**.
+  - [x] Revoking a session blocks the next request and closes its SSE stream. Every authenticated
+    request validates `sid` against `auth_sessions` (`401 SESSION_REVOKED` / `SESSION_EXPIRED`,
+    fail-closed `503 SESSION_CHECK_FAILED` on database errors). Revocation publishes
+    `spm.authz.invalidation` with `scope: "session"`; every replica evicts matching SSE
+    subscribers, and the 20-second heartbeat revalidates as a fallback.
+  - [x] "Revoke all others" requires confirmation and is audited. The profile uses
+    `ConfirmDialog`, calls `POST /auth/sessions/revoke-others`, keeps the current session and
+    records `auth.session.revoke_others` with the revoked count; single revokes record
+    `auth.session.revoke`.
+  - [x] Refresh rotation detects reuse and revokes the family. Refresh tokens are 32 random bytes;
+    only SHA-256 hashes are stored. Rotation moves the old hash to `auth_session_rotations`;
+    presenting it again revokes the session with reason `refresh_reuse`, marks `reused_at` and
+    returns `401 REFRESH_TOKEN_REUSE`. The client uses single-flight refresh, one retry and the
+    Web Locks API across tabs.
+  - [x] Session limits and idle timeout are configurable. `ACCESS_TOKEN_TTL_MINUTES` (legacy
+    `JWT_EXPIRY_HOURS` fallback), `REFRESH_TOKEN_TTL_DAYS`, `SESSION_IDLE_TIMEOUT_MINUTES`,
+    `SESSION_LIMIT_PER_USER` (0 disables) and `SESSION_RETENTION_DAYS` default to 15 minutes,
+    30 days, 24 hours, 20 and 30 days. Sessions beyond the cap are revoked as `session_limit`;
+    cleanup runs at startup and daily.
+- **Tests/evidence:** `auth/session_test.go` covers defaults, environment parsing, invalid values,
+  the idle cap, device labels, token randomness/hashing and reuse errors;
+  `auth/session_middleware_test.go` covers active, revoked, expired/missing, fail-closed 503 and
+  legacy tokens without `sid`; `sse/handler_test.go` proves session-scoped eviction leaves other
+  sessions connected; `ui/src/api/client.test.ts` proves one rotation for concurrent 401s,
+  sign-out on rejected refresh, session preservation on a transient 503 and retry with the rotated
+  token. `api/tests/integration/session_test.go` adds four end-to-end cases (list/revoke blocks
+  `/auth/me`, rotation plus reuse revokes the family, revoke-others keeps the current session,
+  logout revokes the current session); the package compiles with `-tags integration` but needs
+  `DATABASE_URL`/`NATS_URL`, which are not available locally, so real-database execution remains
+  with QAT-02/CI. Verified locally with `go build ./...`, `go vet ./...`, `go test ./...`,
+  `go run ./cmd/openapi -check`, UI typecheck, 89 tests / 11 files, production build and bundle
+  check (JS 201.5 KiB / 224.6 KiB, CSS 11.3 KiB / 15.6 KiB, largest chunk 103.3 KiB /
+  122.1 KiB). Migration `023_auth_sessions` and its rollback companion are pinned by
+  `schema_test.go`. OpenAPI grows from 135 to 140 operations. Merged as PR #48 (`fd604dc`) after
+  all required checks passed.
+- **Docs/telemetry:** [`docs/SESSIONS.md`](docs/SESSIONS.md) documents the model, configuration,
+  endpoints, error codes, reuse detection, SSE fanout and operations; `docs/OBSERVABILITY.md`
+  adds `spm_auth_sessions_active` and `spm_auth_session_events_total{event}`; `docs/API.md`,
+  `docs/ARCHITECTURE.md`, `.env.example` and Compose are updated.
 
 #### GOV-10 · Password policy, lockout and reset
 - **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-password-policy`
@@ -5140,6 +5176,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Active (`GOV-04`) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
+| `docs/SESSIONS.md` | Session model, refresh rotation, revocation and UI flow | Maintainer | Active (`GOV-09`) |
 | `docs/METRICS.md` | Metric catalog and formulas | Maintainer | Planned (`ANL-04`) |
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
 | `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
@@ -5339,7 +5376,7 @@ labels must exist in the repository.
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
 | 0 - Baseline, truth and delivery gate | `BASE` | 9 | 8 | 0 | 1 |
-| 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
+| 1 - Identity, authorization, audit | `GOV` | 12 | 4 | 0 | 8 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
 | 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 11 | 0 | 2 |
@@ -5348,7 +5385,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **23** | **0** | **105** |
+| **Total** | - | **128** | **24** | **0** | **104** |
 
 ### C.2 Card index by phase
 
@@ -5410,6 +5447,7 @@ labels must exist in the repository.
 | 2026-11-22 | Closed BRD-01: board views now capture filters (facets plus quick filters), sort, swimlane grouping and visible card fields on `saved_filters`; added `022_board_view_swimlanes` with a contract companion. Added `mine`/`unassigned`/`blocked`/`bugs`/`due_soon` quick filters, eight sort options with unscheduled cards last, four swimlane modes, seven switchable card fields, URL-backed layout state and a per-user default view that survives reload. Added per-column WIP limits in `settings.board` with explicit `wip_hard_block`, board `current/limit` badges, a drop pre-check and structured `409 WIP_LIMIT` responses; same-column moves stay allowed. Added `docs/BOARD-VIEWS.md` and updated `API.md`/`DATA-MODEL.md`/`PLANNING-CUSTOMIZATION.md`/`openapi.yaml` (135 operations unchanged). Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (74 passed)/build and a 28-check PGlite forward/re-apply/rollback/re-expand rehearsal. Merged as PR #42 (`290bdf5`) after all required checks passed | Maintainer |
 | 2026-11-22 | Closed BRD-02: added pointer drag with a 6 px threshold, touch support, a floating preview and click suppression, plus optimistic status changes backed by a `pendingMoves` overlay that rolls back and offers retry on failure. Added `Alt+Left/Right` keyboard moves that scan to the nearest legal column, announce the position through `aria-live` and restore focus, and multi-select bulk moves with per-item revisioned PATCHes, a `moved`/`failed`/`skipped` results dialog and `Retry failed`. Coalesced `workspaceStore.refresh()` callers, recorded `work_item.move` audit entries with before/after status, and added `spm_board_move_failures_total{reason}` with bounded reasons. OpenAPI stays at 135 operations. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (80 passed)/build and `git diff --check`; the Playwright drag/keyboard/bulk/axe path was extended but not run locally because the Docker stack is unavailable. Merged as PR #44 (`030e4a6`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed BRD-03: made the board predictable at 2,000 cards by grouping each swimlane into columns in one pass, paginating columns at 40 cards with `Show next … of … hidden`, revealing the target page on keyboard/drag moves, debouncing search by 180 ms and resetting pages when filters/sort/swimlanes change. Replaced per-card scans of features, custom values, branches, PRs and parents with lookup maps, computed WIP counts and board stats in single passes, added a five-project LRU workspace snapshot cache and documented the existing 220 ms SSE refresh coalescing. Added `data-render-ms`/`data-move-ms` diagnostics, the `ui/e2e/board-scale.spec.ts` 2,000-card stress test with a Chrome performance trace and accelerated forced-GC heap soak, and gzip bundle budgets enforced by `npm run bundle:check` in the PR gate. Verified with UI typecheck, 86 unit tests / 10 files, production build, bundle check (JS 199.6 KiB / 224.6 KiB, CSS 11.3 KiB / 15.6 KiB, largest chunk 103.3 KiB / 122.1 KiB) and `playwright test --list`; the full-stack stress spec needs the Docker stack and was not run locally, so CI/full-stack is the authority. No API or migration change; OpenAPI stays at 135 operations. Merged as PR #46 (`6eed163`) after all required checks passed | Maintainer |
+| 2026-11-23 | Closed GOV-09: added persistent `auth_sessions` and `auth_session_rotations` (migration `023` plus rollback) with a 15-minute access token (`sid`/`jti`), a 30-day rotating refresh token stored only as SHA-256, a 24-hour idle timeout, a 20-session cap and 30-day retention. Every authenticated request now validates the session row (`401 SESSION_REVOKED`/`SESSION_EXPIRED`, fail-closed `503 SESSION_CHECK_FAILED`), and revocation publishes a session-scoped NATS invalidation so every replica closes the matching SSE stream with a 20-second heartbeat fallback. Added `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/sessions`, `DELETE /auth/sessions/{sessionId}` and `POST /auth/sessions/revoke-others` (140 operations), plus `spm_auth_sessions_active` and `spm_auth_session_events_total{event}`. The profile lists device/browser/IP/last seen, marks the current device and confirms "revoke other sessions"; the client stores the refresh token, performs single-flight refresh with one retry, serializes rotation across tabs with the Web Locks API and syncs tabs through `storage` events. Password changes, deactivation and admin password/role changes revoke all target sessions. Added `docs/SESSIONS.md` and updated `API.md`, `OBSERVABILITY.md`, `ARCHITECTURE.md`, `.env.example` and Compose. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (89 passed)/build/bundle check; the four new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #48 (`fd604dc`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
