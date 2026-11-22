@@ -3157,18 +3157,43 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   custom-field administration guide; `API.md`, `DATA-MODEL.md` and `openapi.yaml` are updated.
 
 #### BRD-01 · Saved views, WIP limits and swimlanes
-- **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/board-saved-views`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/board-saved-views`
 - **Depends on:** PLN-05
 - **Scope:** Add personal/shared saved views (filters, columns, swimlanes, sort), WIP limits per
   column, quick filters and view management.
 - **Acceptance criteria:**
-  - [ ] A view captures filters, swimlane, sort and visible fields.
-  - [ ] Shared views respect project membership and can be pinned.
-  - [ ] WIP limits warn and expose the policy; optional hard block is explicit.
-  - [ ] Quick filters combine with facets.
-  - [ ] The default view is per user and survives reload.
-- **Tests/evidence:** API/UI tests, permission tests, Playwright saved view.
-- **Docs/telemetry:** Board view guide.
+  - [x] A view captures filters, swimlane, sort and visible fields. Board views store `filters`
+    (facets plus `quick`), `sort`, `columns` as the visible card fields, `swimlane`, `pinned` and
+    `is_default` on the existing `saved_filters` row; the URL reproduces the same layout with
+    `view`, `swimlane`, `sort`, `fields`, `quick` and the facet parameters.
+  - [x] Shared views respect project membership and can be pinned. Private views stay owner-only;
+    shared views are readable by project members, writes keep the PLN-05 owner/`planning.write`/
+    `settings.write` rules, and pinned views sort first.
+  - [x] WIP limits warn and expose the policy; optional hard block is explicit.
+    `settings.board.wip_limits` is keyed by board column and validated to 0–999; the board shows
+    `current/limit` badges, and `wip_hard_block` is an opt-in that makes the API reject a
+    cross-column create or move with `409 WIP_LIMIT` and a structured `wip` payload.
+    Same-column moves are always allowed.
+  - [x] Quick filters combine with facets. `mine`, `unassigned`, `blocked`, `bugs` and `due_soon`
+    are AND-combined with each other and with the facet filters; unscheduled cards never match
+    `due_soon`.
+  - [x] The default view is per user and survives reload. The user's `is_default` view is applied
+    when no `?view=` is present (falling back to the first visible default), and `022` enforces
+    the swimlane values at the schema level.
+- **Tests/evidence:** `board_wip_test.go` covers the column/status map, WIP settings normalization,
+  defaults and settings decoding; `handler_planning_fields_test.go` covers swimlane normalization
+  and rejection of unknown values; `schema_test.go` pins migration `022` and verifies its rollback
+  companion. `planning.test.ts` adds 22 layout, sort, swimlane, quick-filter, default-view and WIP
+  tests (74 UI tests / 9 files). A 28-check PGlite rehearsal applied 001–022, verified the
+  column/check constraint and default, exercised valid/invalid/null writes, re-applied `022`,
+  rolled it back without losing rows/index/trigger, and re-expanded with a `none` backfill.
+  OpenAPI stays at 135 operations with `swimlane` and `BoardSettings`. The full-stack Playwright
+  saved-view flow needs the Docker stack and was not run locally. Merged as PR #42 (`290bdf5`)
+  after all required checks passed.
+- **Docs/telemetry:** [`docs/BOARD-VIEWS.md`](docs/BOARD-VIEWS.md) is the board view guide;
+  `API.md`, `DATA-MODEL.md`, `PLANNING-CUSTOMIZATION.md` and `openapi.yaml` are updated. Settings
+  changes record the board policy in the `project_settings` activity and `project.settings.update`
+  audit entry.
 
 #### BRD-02 · Drag, keyboard moves and optimistic updates
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/board-interactions`
@@ -5260,13 +5285,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 8 | 0 | 5 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 9 | 0 | 4 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **20** | **0** | **108** |
+| **Total** | - | **128** | **21** | **0** | **107** |
 
 ### C.2 Card index by phase
 
@@ -5325,6 +5350,7 @@ labels must exist in the repository.
 | 2026-11-21 | Closed TST-03: added the idempotent run finish endpoint with forced incomplete confirmation (`409 RUN_INCOMPLETE`), deterministic `passed`/`failed`/`incomplete` outcomes capped by `not_run`, and `spm_test_runs_completed_total{outcome}` with exactly one increment per completion. Step evidence reuses the scanned attachment pipeline and links through `test_step_results.evidence_url`. Added the focused runner (P/F/B/S, arrows, G bug handoff, E evidence, 700 ms autosave, localStorage resume, progress and summary), 2 routes (120 operations), OpenAPI schemas and runner/evidence/finish documentation. Verified with Go tests, 42 UI tests including mounted shortcut/autosave/finish/resume cases, `go vet`, OpenAPI drift and Redocly lint; the linked-SDLC Playwright path was extended but not run locally because the Docker stack is unavailable. Merged as PR #36 (`bf86651`) after all required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-04: added traceable defect creation from an executed result with snapshot-derived title/reproduction/expected/actual values, appended run/case/step/environment/release/sprint/build/deployment context, bidirectional result/step pointers and `found_bug` artifact links from the result, run, case and optional build/deployment. Added normalized-title and existing-link duplicate detection (`409 DUPLICATE_BUG` with `duplicates[]`, forced override) and a bulk endpoint with per-item `created`/`duplicate`/`skipped`/`failed` outcomes and `400 INVALID_RESULT_IDS`. Both paths record audit actions and `workspace.changed` activity. Added the context/duplicate/bulk UI, 1 route (121 operations), 11 Go and 10 UI helper tests, OpenAPI schemas and `docs/TEST-MANAGEMENT.md` coverage. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint and UI typecheck/test (52 passed)/build; the Playwright flow was extended but not run locally because the Docker stack is unavailable. Merged as PR #38 (`b14d5e7`) after all required checks passed | Maintainer |
 | 2026-11-22 | Closed PLN-05: added reusable `project_labels` with color tokens, rename/delete rewrites and automatic registration on work item writes; typed `custom_fields` definitions (`text`, `number`, `select`, `date`, `user`) with option/range/required validation and values stored in `custom_field_values`, plus archive/restore and a permission-gated purge; and `saved_filters` across planning/board/test with private/shared visibility, per-owner default uniqueness and `If-Match` revisions. Added 14 routes (135 operations), `021_labels_custom_fields_saved_filters` with a contract companion, label/custom-field administration, URL-backed board views and `docs/PLANNING-CUSTOMIZATION.md`. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (63 passed)/build and a 30-check PGlite forward/re-apply/rollback rehearsal; the `BenchmarkFilterVisibleSavedFilters` benchmark filters 1,000 views in ~29 µs. Merged as PR #40 (`34295af`) after all required checks passed | Maintainer |
+| 2026-11-22 | Closed BRD-01: board views now capture filters (facets plus quick filters), sort, swimlane grouping and visible card fields on `saved_filters`; added `022_board_view_swimlanes` with a contract companion. Added `mine`/`unassigned`/`blocked`/`bugs`/`due_soon` quick filters, eight sort options with unscheduled cards last, four swimlane modes, seven switchable card fields, URL-backed layout state and a per-user default view that survives reload. Added per-column WIP limits in `settings.board` with explicit `wip_hard_block`, board `current/limit` badges, a drop pre-check and structured `409 WIP_LIMIT` responses; same-column moves stay allowed. Added `docs/BOARD-VIEWS.md` and updated `API.md`/`DATA-MODEL.md`/`PLANNING-CUSTOMIZATION.md`/`openapi.yaml` (135 operations unchanged). Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (74 passed)/build and a 28-check PGlite forward/re-apply/rollback/re-expand rehearsal. Merged as PR #42 (`290bdf5`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
