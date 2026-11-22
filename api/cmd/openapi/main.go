@@ -344,6 +344,134 @@ properties:
   key_prefix: { type: string, maxLength: 12 }
   default_branch: { type: string }
   status: { type: string }`,
+	"ProjectLabelInput": `type: object
+required: [name]
+properties:
+  name: { type: string, maxLength: 24, description: 'Lowercase; letters, digits, spaces, hyphens and underscores.' }
+  color: { type: string, enum: [slate, blue, green, amber, red, purple, pink, teal], default: slate }`,
+	"ProjectLabel": `type: object
+required: [id, project_id, name, color, created_at, updated_at]
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  name: { type: string }
+  color: { type: string, enum: [slate, blue, green, amber, red, purple, pink, teal] }
+  created_by: { type: [string, "null"], format: uuid }
+  created_at: { type: string, format: date-time }
+  updated_at: { type: string, format: date-time }`,
+	"ProjectLabelList": `type: array
+items:
+  $ref: '#/components/schemas/ProjectLabel'`,
+	"CustomFieldInput": `type: object
+required: [name, type]
+properties:
+  key: { type: string, maxLength: 40, description: 'Generated from the name when omitted. Lowercase letters, digits and underscores.' }
+  name: { type: string, maxLength: 80 }
+  type: { type: string, enum: [text, number, select, date, user] }
+  description: { type: string }
+  options:
+    type: array
+    maxItems: 50
+    description: Required for select fields; forbidden for other types.
+    items:
+      type: object
+      required: [value, label]
+      properties:
+        value: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,39}$' }
+        label: { type: string }
+        color: { type: string }
+  config:
+    type: object
+    description: Number fields accept min and max.
+    additionalProperties: true
+  required: { type: boolean, default: false }
+  position: { type: integer, minimum: 0 }
+  archived: { type: boolean, description: Set false to restore an archived field. }`,
+	"CustomField": `type: object
+required: [id, project_id, key, name, type, options, required, position, created_at, updated_at]
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  key: { type: string }
+  name: { type: string }
+  type: { type: string, enum: [text, number, select, date, user] }
+  description: { type: string }
+  options:
+    type: array
+    items:
+      type: object
+      required: [value, label]
+      properties:
+        value: { type: string }
+        label: { type: string }
+        color: { type: string }
+  config: { type: object, additionalProperties: true }
+  required: { type: boolean }
+  position: { type: integer }
+  archived_at: { type: [string, "null"], format: date-time }
+  created_by: { type: [string, "null"], format: uuid }
+  created_at: { type: string, format: date-time }
+  updated_at: { type: string, format: date-time }`,
+	"CustomFieldList": `type: array
+items:
+  $ref: '#/components/schemas/CustomField'`,
+	"CustomFieldValuesInput": `type: object
+description: Replaces every custom field value for the work item. An omitted field is cleared.
+properties:
+  values:
+    type: object
+    additionalProperties: true
+    description: Map of custom field ID to a typed value (string, number, YYYY-MM-DD date or user UUID).`,
+	"CustomFieldValue": `type: object
+required: [id, project_id, field_id, entity_type, entity_id, value, updated_at]
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  field_id: { type: string, format: uuid }
+  entity_type: { type: string, enum: [work_item, test_case] }
+  entity_id: { type: string, format: uuid }
+  value: { description: Typed value matching the field definition. }
+  updated_at: { type: string, format: date-time }`,
+	"CustomFieldValueList": `type: array
+items:
+  $ref: '#/components/schemas/CustomFieldValue'`,
+	"SavedFilterInput": `type: object
+required: [name, scope]
+properties:
+  name: { type: string, maxLength: 80 }
+  scope: { type: string, enum: [planning, board, test] }
+  visibility: { type: string, enum: [private, shared], default: private }
+  filters: { type: object, additionalProperties: true }
+  sort: { type: object, additionalProperties: true }
+  columns:
+    type: array
+    maxItems: 20
+    items: { type: string, maxLength: 40 }
+  pinned: { type: boolean, default: false }
+  is_default: { type: boolean, default: false }
+  expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
+	"SavedFilter": `type: object
+required: [id, project_id, name, scope, visibility, owner_id, filters, sort, columns, pinned, is_default, created_at, updated_at, revision]
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  name: { type: string }
+  scope: { type: string, enum: [planning, board, test] }
+  visibility: { type: string, enum: [private, shared] }
+  owner_id: { type: string, format: uuid }
+  filters: { type: object, additionalProperties: true }
+  sort: { type: object, additionalProperties: true }
+  columns:
+    type: array
+    items: { type: string }
+  pinned: { type: boolean }
+  is_default: { type: boolean }
+  created_at: { type: string, format: date-time }
+  updated_at: { type: string, format: date-time }
+  revision: { type: integer, format: int64, minimum: 1 }`,
+	"SavedFilterList": `type: array
+items:
+  $ref: '#/components/schemas/SavedFilter'`,
 	"ProfileUpdateInput": `type: object
 properties:
   display_name: { type: string, maxLength: 255 }
@@ -1489,10 +1617,18 @@ func requestSchema(method, path string) string {
 		return "FeatureInput"
 	case strings.Contains(path, "/comments/"), strings.HasSuffix(path, "/comments"):
 		return "CommentInput"
+	case strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/custom-fields"):
+		return "CustomFieldValuesInput"
 	case strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/links"):
 		return "WorkItemLinkInput"
 	case strings.HasSuffix(path, "/attachments"), strings.HasSuffix(path, "/watch"):
 		return ""
+	case strings.HasSuffix(path, "/labels"), strings.Contains(path, "/labels/"):
+		return "ProjectLabelInput"
+	case strings.HasSuffix(path, "/custom-fields"), strings.Contains(path, "/custom-fields/"):
+		return "CustomFieldInput"
+	case strings.HasSuffix(path, "/saved-filters"), strings.Contains(path, "/saved-filters/"):
+		return "SavedFilterInput"
 	case strings.HasSuffix(path, "/work-items"), strings.Contains(path, "/work-items/"):
 		if strings.HasSuffix(path, "/status") {
 			return "StatusInput"
@@ -1595,6 +1731,29 @@ func successSchema(method, path string) string {
 		return "ReleaseExceptionList"
 	case strings.HasSuffix(path, "/releases/{releaseId}/sign-off"):
 		return "ReleaseSignOffResult"
+	case strings.Contains(path, "/work-items/") && strings.HasSuffix(path, "/custom-fields"):
+		return "CustomFieldValueList"
+	case strings.HasSuffix(path, "/labels"):
+		if strings.EqualFold(method, "GET") {
+			return "ProjectLabelList"
+		}
+		return "ProjectLabel"
+	case strings.Contains(path, "/labels/"):
+		return "ProjectLabel"
+	case strings.HasSuffix(path, "/custom-fields"):
+		if strings.EqualFold(method, "GET") {
+			return "CustomFieldList"
+		}
+		return "CustomField"
+	case strings.Contains(path, "/custom-fields/"):
+		return "CustomField"
+	case strings.HasSuffix(path, "/saved-filters"):
+		if strings.EqualFold(method, "GET") {
+			return "SavedFilterList"
+		}
+		return "SavedFilter"
+	case strings.Contains(path, "/saved-filters/"):
+		return "SavedFilter"
 	case isWorkItemDetailPath(method, path):
 		return "WorkItemDetail"
 	case strings.Contains(path, "/comments/"), strings.HasSuffix(path, "/comments"):
@@ -1671,7 +1830,8 @@ func tagFor(path string) string {
 		strings.Contains(path, "/features"), strings.Contains(path, "/work-items"),
 		strings.Contains(path, "/sprints"), strings.Contains(path, "/releases"),
 		strings.Contains(path, "/tickets"), strings.Contains(path, "/comments"),
-		strings.Contains(path, "/attachments"):
+		strings.Contains(path, "/attachments"), strings.Contains(path, "/labels"),
+		strings.Contains(path, "/custom-fields"), strings.Contains(path, "/saved-filters"):
 		return "Planning"
 	case strings.Contains(path, "/test-"):
 		return "Tests"

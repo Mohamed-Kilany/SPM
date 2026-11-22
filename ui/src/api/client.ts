@@ -29,6 +29,10 @@ import type {
   BugCreateInput,
   BugCreateResult,
   BulkBugResult,
+  CustomField,
+  CustomFieldValue,
+  ProjectLabel,
+  SavedFilter,
   TestCaseVersionList,
   TestRunFinishResult,
   TestStepEvidence,
@@ -717,6 +721,124 @@ export const api = {
   async deleteWorkItemLink(projectId: string, itemId: string, linkId: string): Promise<void> {
     await request<null>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/links/${encodeURIComponent(linkId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async listLabels(projectId: string): Promise<ProjectLabel[]> {
+    return request<ProjectLabel[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/labels`)
+  },
+
+  async createLabel(
+    projectId: string,
+    payload: { name: string; color: string },
+  ): Promise<ProjectLabel> {
+    return request<ProjectLabel>(`/api/v1/projects/${encodeURIComponent(projectId)}/labels`, {
+      method: 'POST',
+      body: payload,
+    })
+  },
+
+  async updateLabel(
+    projectId: string,
+    labelId: string,
+    payload: { name: string; color: string },
+  ): Promise<ProjectLabel> {
+    return request<ProjectLabel>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/labels/${encodeURIComponent(labelId)}`,
+      { method: 'PUT', body: payload },
+    )
+  },
+
+  async deleteLabel(projectId: string, labelId: string): Promise<void> {
+    await request<null>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/labels/${encodeURIComponent(labelId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async listCustomFields(projectId: string, includeArchived = false): Promise<CustomField[]> {
+    const suffix = includeArchived ? '?include_archived=true' : ''
+    return request<CustomField[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/custom-fields${suffix}`,
+    )
+  },
+
+  async createCustomField(projectId: string, payload: unknown): Promise<CustomField> {
+    return request<CustomField>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/custom-fields`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async updateCustomField(
+    projectId: string,
+    fieldId: string,
+    payload: unknown,
+  ): Promise<CustomField> {
+    return request<CustomField>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/custom-fields/${encodeURIComponent(fieldId)}`,
+      { method: 'PUT', body: payload },
+    )
+  },
+
+  async deleteCustomField(projectId: string, fieldId: string, purge = false): Promise<void> {
+    const suffix = purge ? '?purge=true' : ''
+    await request<null>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/custom-fields/${encodeURIComponent(fieldId)}${suffix}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async getWorkItemCustomFields(
+    projectId: string,
+    itemId: string,
+  ): Promise<CustomFieldValue[]> {
+    return request<CustomFieldValue[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/custom-fields`,
+    )
+  },
+
+  async putWorkItemCustomFields(
+    projectId: string,
+    itemId: string,
+    values: Record<string, unknown>,
+  ): Promise<CustomFieldValue[]> {
+    return request<CustomFieldValue[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(itemId)}/custom-fields`,
+      { method: 'PUT', body: { values } },
+    )
+  },
+
+  async listSavedFilters(projectId: string, scope?: string): Promise<SavedFilter[]> {
+    const suffix = scope ? `?scope=${encodeURIComponent(scope)}` : ''
+    return request<SavedFilter[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/saved-filters${suffix}`,
+    )
+  },
+
+  async createSavedFilter(projectId: string, payload: unknown): Promise<SavedFilter> {
+    return request<SavedFilter>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/saved-filters`,
+      { method: 'POST', body: payload },
+    )
+  },
+
+  async updateSavedFilter(
+    projectId: string,
+    filterId: string,
+    payload: unknown,
+    revision: number,
+  ): Promise<SavedFilter> {
+    return request<SavedFilter>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/saved-filters/${encodeURIComponent(filterId)}`,
+      { method: 'PUT', body: payload, headers: ifMatch(revision) },
+    )
+  },
+
+  async deleteSavedFilter(projectId: string, filterId: string): Promise<void> {
+    await request<null>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/saved-filters/${encodeURIComponent(filterId)}`,
       { method: 'DELETE' },
     )
   },

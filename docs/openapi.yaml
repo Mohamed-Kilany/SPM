@@ -682,6 +682,123 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/custom-fields:
+    get:
+      tags: ["Planning"]
+      summary: "Get custom field"
+      operationId: get_api_v1_projects_id_custom_fields
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomFieldList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Planning"]
+      summary: "Create custom field"
+      operationId: post_api_v1_projects_id_custom_fields
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomField'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomFieldInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/custom-fields/{fieldId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete custom field"
+      operationId: delete_api_v1_projects_id_custom_fields_fieldId
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "fieldId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update custom field"
+      operationId: put_api_v1_projects_id_custom_fields_fieldId
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomField'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomFieldInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "fieldId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/environments:
     post:
       tags: ["Delivery"]
@@ -939,6 +1056,123 @@ paths:
           required: true
           schema: {type: string}
         - name: "featureId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/labels:
+    get:
+      tags: ["Planning"]
+      summary: "Get label"
+      operationId: get_api_v1_projects_id_labels
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectLabelList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Planning"]
+      summary: "Create label"
+      operationId: post_api_v1_projects_id_labels
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectLabel'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectLabelInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/labels/{labelId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete label"
+      operationId: delete_api_v1_projects_id_labels_labelId
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "labelId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update label"
+      operationId: put_api_v1_projects_id_labels_labelId
+      x-spm-auth: project-write
+      x-spm-capability: planning.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectLabel'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectLabelInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "labelId"
           in: path
           required: true
           schema: {type: string}
@@ -1864,6 +2098,123 @@ paths:
           required: true
           schema: {type: string}
         - name: "repoId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/saved-filters:
+    get:
+      tags: ["Planning"]
+      summary: "Get saved filter"
+      operationId: get_api_v1_projects_id_saved_filters
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedFilterList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Planning"]
+      summary: "Create saved filter"
+      operationId: post_api_v1_projects_id_saved_filters
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedFilter'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedFilterInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/saved-filters/{filterId}:
+    delete:
+      tags: ["Planning"]
+      summary: "Delete saved filter"
+      operationId: delete_api_v1_projects_id_saved_filters_filterId
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "filterId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update saved filter"
+      operationId: put_api_v1_projects_id_saved_filters_filterId
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedFilter'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedFilterInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "filterId"
           in: path
           required: true
           schema: {type: string}
@@ -3478,6 +3829,70 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/projects/{id}/work-items/{itemId}/custom-fields:
+    get:
+      tags: ["Planning"]
+      summary: "Get custom field"
+      operationId: get_api_v1_projects_id_work_items_itemId_custom_fields
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomFieldValueList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
+    put:
+      tags: ["Planning"]
+      summary: "Update custom field"
+      operationId: put_api_v1_projects_id_work_items_itemId_custom_fields
+      x-spm-auth: project-write
+      x-spm-capability: work_item.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomFieldValueList'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomFieldValuesInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "itemId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/projects/{id}/work-items/{itemId}/links:
     post:
       tags: ["Planning"]
@@ -4937,3 +5352,143 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/BulkBugItem'
+    CustomField:
+      type: object
+      required: [id, project_id, key, name, type, options, required, position, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        key: {type: string}
+        name: {type: string}
+        type: {type: string, enum: [text, number, select, date, user]}
+        description: {type: string}
+        options:
+          type: array
+          items:
+            type: object
+            required: [value, label]
+            properties:
+              value: {type: string}
+              label: {type: string}
+              color: {type: string}
+        config: {type: object, additionalProperties: true}
+        required: {type: boolean}
+        position: {type: integer}
+        archived_at: {type: [string, "null"], format: date-time}
+        created_by: {type: [string, "null"], format: uuid}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CustomFieldInput:
+      type: object
+      required: [name, type]
+      properties:
+        key: {type: string, maxLength: 40, description: 'Generated from the name when omitted. Lowercase letters, digits and underscores.'}
+        name: {type: string, maxLength: 80}
+        type: {type: string, enum: [text, number, select, date, user]}
+        description: {type: string}
+        options:
+          type: array
+          maxItems: 50
+          description: Required for select fields; forbidden for other types.
+          items:
+            type: object
+            required: [value, label]
+            properties:
+              value: {type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,39}$'}
+              label: {type: string}
+              color: {type: string}
+        config:
+          type: object
+          description: Number fields accept min and max.
+          additionalProperties: true
+        required: {type: boolean, default: false}
+        position: {type: integer, minimum: 0}
+        archived: {type: boolean, description: Set false to restore an archived field.}
+    CustomFieldList:
+      type: array
+      items:
+        $ref: '#/components/schemas/CustomField'
+    CustomFieldValue:
+      type: object
+      required: [id, project_id, field_id, entity_type, entity_id, value, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        field_id: {type: string, format: uuid}
+        entity_type: {type: string, enum: [work_item, test_case]}
+        entity_id: {type: string, format: uuid}
+        value: {description: Typed value matching the field definition.}
+        updated_at: {type: string, format: date-time}
+    CustomFieldValueList:
+      type: array
+      items:
+        $ref: '#/components/schemas/CustomFieldValue'
+    CustomFieldValuesInput:
+      type: object
+      description: Replaces every custom field value for the work item. An omitted field is cleared.
+      properties:
+        values:
+          type: object
+          additionalProperties: true
+          description: Map of custom field ID to a typed value (string, number, YYYY-MM-DD date or user UUID).
+    ProjectLabel:
+      type: object
+      required: [id, project_id, name, color, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        name: {type: string}
+        color: {type: string, enum: [slate, blue, green, amber, red, purple, pink, teal]}
+        created_by: {type: [string, "null"], format: uuid}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ProjectLabelInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 24, description: 'Lowercase; letters, digits, spaces, hyphens and underscores.'}
+        color: {type: string, enum: [slate, blue, green, amber, red, purple, pink, teal], default: slate}
+    ProjectLabelList:
+      type: array
+      items:
+        $ref: '#/components/schemas/ProjectLabel'
+    SavedFilter:
+      type: object
+      required: [id, project_id, name, scope, visibility, owner_id, filters, sort, columns, pinned, is_default, created_at, updated_at, revision]
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        name: {type: string}
+        scope: {type: string, enum: [planning, board, test]}
+        visibility: {type: string, enum: [private, shared]}
+        owner_id: {type: string, format: uuid}
+        filters: {type: object, additionalProperties: true}
+        sort: {type: object, additionalProperties: true}
+        columns:
+          type: array
+          items: {type: string}
+        pinned: {type: boolean}
+        is_default: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        revision: {type: integer, format: int64, minimum: 1}
+    SavedFilterInput:
+      type: object
+      required: [name, scope]
+      properties:
+        name: {type: string, maxLength: 80}
+        scope: {type: string, enum: [planning, board, test]}
+        visibility: {type: string, enum: [private, shared], default: private}
+        filters: {type: object, additionalProperties: true}
+        sort: {type: object, additionalProperties: true}
+        columns:
+          type: array
+          maxItems: 20
+          items: {type: string, maxLength: 40}
+        pinned: {type: boolean, default: false}
+        is_default: {type: boolean, default: false}
+        expected_version: {type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter.}
+    SavedFilterList:
+      type: array
+      items:
+        $ref: '#/components/schemas/SavedFilter'

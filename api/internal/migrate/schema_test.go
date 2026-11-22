@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "020_test_case_versions.sql" {
-		t.Fatalf("latest migration = %q, want 020_test_case_versions.sql", names[len(names)-1])
+	if names[len(names)-1] != "021_labels_custom_fields_saved_filters.sql" {
+		t.Fatalf("latest migration = %q, want 021_labels_custom_fields_saved_filters.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -365,6 +365,54 @@ func TestTestCaseVersionsRollbackIsComplete(t *testing.T) {
 	} {
 		if !strings.Contains(forward, fragment) {
 			t.Errorf("020 is missing %q", fragment)
+		}
+	}
+}
+
+func TestLabelsCustomFieldsSavedFiltersRollbackIsComplete(t *testing.T) {
+	forward := readMigration(t, "021_labels_custom_fields_saved_filters.sql")
+	rollback, err := os.ReadFile("rollback/021_labels_custom_fields_saved_filters.sql")
+	if err != nil {
+		t.Fatalf("read labels/custom fields rollback companion: %v", err)
+	}
+	body := string(rollback)
+
+	for _, table := range []string{"project_labels", "custom_fields", "custom_field_values", "saved_filters"} {
+		if !strings.Contains(forward, "CREATE TABLE IF NOT EXISTS "+table) {
+			t.Errorf("021 does not create %s", table)
+		}
+		if !strings.Contains(body, "DROP TABLE IF EXISTS "+table+";") {
+			t.Errorf("rollback does not drop %s", table)
+		}
+	}
+	if !strings.Contains(forward, "CREATE TRIGGER planning_revision BEFORE UPDATE ON saved_filters") {
+		t.Error("021 does not install the planning revision trigger on saved_filters")
+	}
+	if !strings.Contains(body, "DROP TRIGGER IF EXISTS planning_revision ON saved_filters;") {
+		t.Error("rollback does not drop the saved_filters revision trigger")
+	}
+
+	index := regexp.MustCompile(`(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)`)
+	names := index.FindAllStringSubmatch(forward, -1)
+	if len(names) == 0 {
+		t.Fatal("021 creates no indexes")
+	}
+	for _, match := range names {
+		if !strings.Contains(body, "DROP INDEX IF EXISTS "+match[1]+";") {
+			t.Errorf("rollback does not drop index %s", match[1])
+		}
+	}
+
+	for _, fragment := range []string{
+		"UNIQUE (project_id, name)",
+		"WHERE is_default",
+		"UNIQUE (field_id, entity_type, entity_id)",
+		"type IN ('text', 'number', 'select', 'date', 'user')",
+		"scope IN ('planning', 'board', 'test')",
+		"ON CONFLICT (project_id, name) DO NOTHING",
+	} {
+		if !strings.Contains(forward, fragment) {
+			t.Errorf("021 is missing %q", fragment)
 		}
 	}
 }

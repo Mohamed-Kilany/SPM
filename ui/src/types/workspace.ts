@@ -832,6 +832,73 @@ export interface ProjectReport {
   releases: ReleaseReadiness[]
 }
 
+export type LabelColor = 'slate' | 'blue' | 'green' | 'amber' | 'red' | 'purple' | 'pink' | 'teal'
+
+export interface ProjectLabel {
+  id: string
+  project_id: string
+  name: string
+  color: LabelColor | string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CustomFieldType = 'text' | 'number' | 'select' | 'date' | 'user'
+
+export interface CustomFieldOption {
+  value: string
+  label: string
+  color?: string
+}
+
+export interface CustomField {
+  id: string
+  project_id: string
+  key: string
+  name: string
+  type: CustomFieldType | string
+  description: string
+  options: CustomFieldOption[]
+  config: Record<string, unknown>
+  required: boolean
+  position: number
+  archived_at: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CustomFieldValue {
+  id: string
+  project_id: string
+  field_id: string
+  entity_type: string
+  entity_id: string
+  value: string | number | null
+  updated_at: string
+}
+
+export type SavedFilterScope = 'planning' | 'board' | 'test'
+export type SavedFilterVisibility = 'private' | 'shared'
+
+export interface SavedFilter {
+  id: string
+  project_id: string
+  name: string
+  scope: SavedFilterScope | string
+  visibility: SavedFilterVisibility | string
+  owner_id: string
+  filters: Record<string, unknown>
+  sort: Record<string, unknown>
+  columns: string[]
+  pinned: boolean
+  is_default: boolean
+  created_at: string
+  updated_at: string
+  revision: number
+}
+
 export interface Workspace {
   project: WorkspaceProject
   members: Member[]
@@ -839,6 +906,10 @@ export interface Workspace {
   epics: Epic[]
   features: Feature[]
   work_items: WorkItem[]
+  labels: ProjectLabel[]
+  custom_fields: CustomField[]
+  custom_field_values: CustomFieldValue[]
+  saved_filters: SavedFilter[]
   sprints: Sprint[]
   releases: Release[]
   environments: Environment[]

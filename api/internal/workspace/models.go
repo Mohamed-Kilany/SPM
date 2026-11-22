@@ -692,34 +692,103 @@ type Metrics struct {
 	TestTrend           []TestTrendPoint `json:"test_trend"`
 }
 
+// ProjectLabel is a reusable, colored label for a project.
+type ProjectLabel struct {
+	ID        uuid.UUID  `json:"id"`
+	ProjectID uuid.UUID  `json:"project_id"`
+	Name      string     `json:"name"`
+	Color     string     `json:"color"`
+	CreatedBy *uuid.UUID `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// CustomFieldOption is one allowed value of a select field.
+type CustomFieldOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Color string `json:"color,omitempty"`
+}
+
+// CustomField is a typed, project-scoped attribute definition.
+type CustomField struct {
+	ID          uuid.UUID           `json:"id"`
+	ProjectID   uuid.UUID           `json:"project_id"`
+	Key         string              `json:"key"`
+	Name        string              `json:"name"`
+	Type        string              `json:"type"`
+	Description string              `json:"description"`
+	Options     []CustomFieldOption `json:"options"`
+	Config      map[string]any      `json:"config"`
+	Required    bool                `json:"required"`
+	Position    int                 `json:"position"`
+	ArchivedAt  *time.Time          `json:"archived_at"`
+	CreatedBy   *uuid.UUID          `json:"created_by"`
+	CreatedAt   time.Time           `json:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at"`
+}
+
+// CustomFieldValue is one populated value for a work item or test case.
+type CustomFieldValue struct {
+	ID         uuid.UUID `json:"id"`
+	ProjectID  uuid.UUID `json:"project_id"`
+	FieldID    uuid.UUID `json:"field_id"`
+	EntityType string    `json:"entity_type"`
+	EntityID   uuid.UUID `json:"entity_id"`
+	Value      any       `json:"value"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// SavedFilter is a named, URL-backed combination of filters and layout.
+type SavedFilter struct {
+	ID         uuid.UUID      `json:"id"`
+	ProjectID  uuid.UUID      `json:"project_id"`
+	Name       string         `json:"name"`
+	Scope      string         `json:"scope"`
+	Visibility string         `json:"visibility"`
+	OwnerID    uuid.UUID      `json:"owner_id"`
+	Filters    map[string]any `json:"filters"`
+	Sort       map[string]any `json:"sort"`
+	Columns    []string       `json:"columns"`
+	Pinned     bool           `json:"pinned"`
+	IsDefault  bool           `json:"is_default"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Revision   int64          `json:"revision"`
+}
+
 // Workspace is the aggregated read model for the new UI.
 type Workspace struct {
-	Project      Project          `json:"project"`
-	Members      []Member         `json:"members"`
-	PRDs         []PRD            `json:"prds"`
-	Epics        []Epic           `json:"epics"`
-	Features     []Feature        `json:"features"`
-	WorkItems    []WorkItem       `json:"work_items"`
-	Sprints      []Sprint         `json:"sprints"`
-	Releases     []Release        `json:"releases"`
-	Environments []Environment    `json:"environments"`
-	TestCases    []TestCase       `json:"test_cases"`
-	TestPlans    []TestPlan       `json:"test_plans"`
-	TestSuites   []TestSuite      `json:"test_suites"`
-	SuiteCases   []TestSuiteCase  `json:"test_suite_cases"`
-	SharedSteps  []TestSharedStep `json:"test_shared_steps"`
-	TestRuns     []TestRun        `json:"test_runs"`
-	TestResults  []TestResult     `json:"test_results"`
-	StepResults  []TestStepResult `json:"test_step_results"`
-	Repositories []GitRepository  `json:"repositories"`
-	Branches     []GitBranch      `json:"branches"`
-	Commits      []GitCommit      `json:"commits"`
-	PullRequests []PullRequest    `json:"pull_requests"`
-	Builds       []Build          `json:"builds"`
-	Deployments  []Deployment     `json:"deployments"`
-	HealthChecks []HealthCheck    `json:"health_checks"`
-	Links        []ArtifactLink   `json:"links"`
-	Activity     []ActivityEvent  `json:"activity"`
-	Metrics      Metrics          `json:"metrics"`
-	Revision     int64            `json:"revision"`
+	Project      Project            `json:"project"`
+	Members      []Member           `json:"members"`
+	PRDs         []PRD              `json:"prds"`
+	Epics        []Epic             `json:"epics"`
+	Features     []Feature          `json:"features"`
+	WorkItems    []WorkItem         `json:"work_items"`
+	Labels       []ProjectLabel     `json:"labels"`
+	CustomFields []CustomField      `json:"custom_fields"`
+	FieldValues  []CustomFieldValue `json:"custom_field_values"`
+	SavedFilters []SavedFilter      `json:"saved_filters"`
+	Sprints      []Sprint           `json:"sprints"`
+	Releases     []Release          `json:"releases"`
+	Environments []Environment      `json:"environments"`
+	TestCases    []TestCase         `json:"test_cases"`
+	TestPlans    []TestPlan         `json:"test_plans"`
+	TestSuites   []TestSuite        `json:"test_suites"`
+	SuiteCases   []TestSuiteCase    `json:"test_suite_cases"`
+	SharedSteps  []TestSharedStep   `json:"test_shared_steps"`
+	TestRuns     []TestRun          `json:"test_runs"`
+	TestResults  []TestResult       `json:"test_results"`
+	StepResults  []TestStepResult   `json:"test_step_results"`
+	Repositories []GitRepository    `json:"repositories"`
+	Branches     []GitBranch        `json:"branches"`
+	Commits      []GitCommit        `json:"commits"`
+	PullRequests []PullRequest      `json:"pull_requests"`
+	Builds       []Build            `json:"builds"`
+	Deployments  []Deployment       `json:"deployments"`
+	HealthChecks []HealthCheck      `json:"health_checks"`
+	Links        []ArtifactLink     `json:"links"`
+	Activity     []ActivityEvent    `json:"activity"`
+	Metrics      Metrics            `json:"metrics"`
+	Revision     int64              `json:"revision"`
 }
