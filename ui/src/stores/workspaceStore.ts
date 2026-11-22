@@ -26,6 +26,23 @@ import type {
   Workspace,
 } from '../types/workspace'
 
+// A small in-memory snapshot cache lets a returning project paint the last
+// known board immediately while the authoritative snapshot is fetched. It is
+// deliberately module-scoped: resetting the active project must not throw away
+// the cache, and a full page reload clears it.
+const SNAPSHOT_CACHE_LIMIT = 5
+const snapshotCache = new Map<string, Workspace>()
+
+function cacheSnapshot(id: string, snapshot: Workspace): void {
+  snapshotCache.delete(id)
+  snapshotCache.set(id, snapshot)
+  while (snapshotCache.size > SNAPSHOT_CACHE_LIMIT) {
+    const oldest = snapshotCache.keys().next().value
+    if (!oldest) break
+    snapshotCache.delete(oldest)
+  }
+}
+
 export const useWorkspaceStore = defineStore('workspace', () => {
   const workspace = ref<Workspace | null>(null)
   const loading = ref(false)
@@ -68,14 +85,24 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function load(id: string): Promise<void> {
     if (!id) return
     projectId.value = id
-    loading.value = true
     error.value = ''
+    const cached = snapshotCache.get(id)
+    if (cached) {
+      workspace.value = cached
+      loading.value = false
+    } else {
+      loading.value = true
+    }
     try {
-      workspace.value = await api.getWorkspace(id)
+      const next = await api.getWorkspace(id)
+      if (projectId.value !== id) return
+      workspace.value = next
+      cacheSnapshot(id, next)
     } catch (err) {
+      if (projectId.value !== id) return
       error.value = err instanceof Error ? err.message : 'Failed to load workspace'
     } finally {
-      loading.value = false
+      if (projectId.value === id) loading.value = false
     }
   }
 
@@ -92,6 +119,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         const next = await api.getWorkspace(id)
         if (projectId.value === id) {
           workspace.value = next
+          cacheSnapshot(id, next)
           error.value = ''
         }
       } catch (err) {
@@ -113,6 +141,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     loading.value = false
     refreshing.value = false
     refreshPromise = null
+  }
+
+  function clearSnapshotCache(): void {
+    snapshotCache.clear()
   }
 
   function workItemById(id: string): WorkItem | undefined {
@@ -192,6 +224,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     load,
     refresh,
     reset,
+    clearSnapshotCache,
     workItemById,
     featureById,
     epicById,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '../BaseModal.vue'
 import ConfirmDialog from '../ConfirmDialog.vue'
@@ -26,6 +26,8 @@ import {
 } from '../../lib/workspace'
 import { timeAgo } from '../../lib/format'
 import {
+  BOARD_COLUMN_PAGE_SIZE,
+  BOARD_FILTER_DEBOUNCE_MS,
   BOARD_QUICK_FILTERS,
   BOARD_SORT_OPTIONS,
   BOARD_SWIMLANES,
@@ -39,6 +41,8 @@ import {
   boardSortId,
   boardSortToSaved,
   boardViewFromSaved,
+  boardWipCounts,
+  buildBoardLanes,
   canManageSavedFilter,
   colorForLabel,
   compareBoardItems,
@@ -48,13 +52,13 @@ import {
   customValueMap,
   defaultBoardView,
   fieldVisible,
-  groupBySwimlane,
   itemMatchesQuickFilters,
   keyboardMoveTarget,
   labelDot,
   labelTone,
   missingRequiredCustomField,
   moveTargetForColumn,
+  nextVisibleCount,
   normalizeLabelInput,
   quickFiltersFromValue,
   quickFiltersToSaved,
@@ -66,7 +70,7 @@ import {
   workItemMatchesFilters,
 } from '../../lib/planning'
 import type { BoardFilters, BoardMoveResult, BoardQuickFilter, BoardSort } from '../../lib/planning'
-import type { CustomField, SavedFilter, WorkItem } from '../../types/workspace'
+import type { CustomField, GitBranch, PullRequest, SavedFilter, WorkItem } from '../../types/workspace'
 
 interface PendingMove {
   fromStatus: string
@@ -90,7 +94,9 @@ const toast = useToastStore()
 const route = useRoute()
 const router = useRouter()
 
+const searchInput = ref('')
 const search = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 const typeFilter = ref('')
 const sprintFilter = ref('')
 const featureFilter = ref('')
@@ -112,6 +118,10 @@ const bulkTargetColumn = ref('')
 const bulkBusy = ref(false)
 const bulkResult = ref<{ columnKey: string; columnLabel: string; entries: BoardMoveResult[] } | null>(null)
 const bulkResultOpen = ref(false)
+const visibleCounts = reactive<Record<string, number>>({})
+const boardPerf = reactive({ renderMs: 0, lastMoveMs: 0 })
+const mountedAt = performance.now()
+let firstRenderMeasured = false
 
 let dragCandidate: {
   id: string
@@ -347,6 +357,7 @@ async function requestMove(
     }
   }
   failedMove.value = null
+  const moveStartedAt = performance.now()
   pendingMoves[item.id] = {
     fromStatus: item.status,
     toStatus: target.status,
@@ -354,8 +365,10 @@ async function requestMove(
     columnLabel: target.column.label,
     source,
   }
+  revealItem(item.id, target.column.key)
+  await nextTick()
+  boardPerf.lastMoveMs = roundMs(performance.now() - moveStartedAt)
   if (source === 'keyboard') {
-    await nextTick()
     announcePosition(item, target.column.key, target.column.label)
     await focusItem(item.id)
   }
@@ -510,6 +523,11 @@ function currentFilters(): BoardFilters {
 }
 
 function applyFilters(filters: BoardFilters): void {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  searchInput.value = filters.search
   search.value = filters.search
   typeFilter.value = filters.type
   featureFilter.value = filters.feature
@@ -547,6 +565,18 @@ function onFiltersChanged(): void {
   clearSelection()
   syncQuery()
 }
+
+// Typing is debounced so a 2,000-card board does not re-filter on every
+// keystroke. The input stays responsive; the board and URL settle once.
+watch(searchInput, (value) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchTimer = null
+    if (search.value === value) return
+    search.value = value
+    onFiltersChanged()
+  }, BOARD_FILTER_DEBOUNCE_MS)
+})
 
 function onLayoutChanged(): void {
   selectedViewId.value = ''
@@ -623,8 +653,47 @@ const features = computed(() => store.features)
 const sprints = computed(() => store.sprints)
 const activeFilterCount = computed(() => boardFilterCount(currentFilters()) + quickFilters.value.length)
 
+// Lookup maps keep per-card work O(1). Without them a 2,000-card board scans
+// every feature, branch, pull request and custom value for every rendered card.
+const featureTitles = computed(() => new Map(store.features.map((feature) => [feature.id, feature.title])))
+const workItemsById = computed(() => new Map(store.workItems.map((item) => [item.id, item])))
+const customValuesByItem = computed(() => {
+  const map = new Map<string, Record<string, string | number | null>>()
+  for (const value of store.customFieldValues) {
+    if (value.entity_type !== 'work_item') continue
+    let bucket = map.get(value.entity_id)
+    if (!bucket) {
+      bucket = {}
+      map.set(value.entity_id, bucket)
+    }
+    bucket[value.field_id] = value.value
+  }
+  return map
+})
+const branchesByItem = computed(() => {
+  const map = new Map<string, GitBranch[]>()
+  for (const branch of store.branches) {
+    if (!branch.work_item_id) continue
+    const bucket = map.get(branch.work_item_id)
+    if (bucket) bucket.push(branch)
+    else map.set(branch.work_item_id, [branch])
+  }
+  return map
+})
+const prsByItem = computed(() => {
+  const map = new Map<string, PullRequest[]>()
+  for (const pr of store.pullRequests) {
+    if (!pr.work_item_id) continue
+    const bucket = map.get(pr.work_item_id)
+    if (bucket) bucket.push(pr)
+    else map.set(pr.work_item_id, [pr])
+  }
+  return map
+})
+const wipCounts = computed(() => boardWipCounts(effectiveItems.value))
+
 function customValueSet(itemId: string): Record<string, string | number | null> {
-  return customValueMap(store.customValuesFor(itemId), itemId)
+  return customValuesByItem.value.get(itemId) ?? {}
 }
 
 function cardLabels(item: WorkItem): string[] {
@@ -644,8 +713,8 @@ const filteredItems = computed(() => {
   const filters = currentFilters()
   const quickContext = { userId: auth.user?.id ?? '' }
   return effectiveItems.value.filter((item) => {
-    const feature = features.value.find((entry) => entry.id === item.feature_id)
-    if (!workItemMatchesFilters(item, filters, boardFields.value, customValueSet(item.id), feature?.title ?? '')) {
+    const featureTitle = item.feature_id ? featureTitles.value.get(item.feature_id) ?? '' : ''
+    if (!workItemMatchesFilters(item, filters, boardFields.value, customValueSet(item.id), featureTitle)) {
       return false
     }
     return itemMatchesQuickFilters(item, quickFilters.value, quickContext)
@@ -654,25 +723,78 @@ const filteredItems = computed(() => {
 
 function wipFor(columnKey: string) {
   const limit = boardPolicy.value?.wip_limits?.[columnKey] ?? 0
-  const current = effectiveItems.value.filter((item) => boardColumnFor(item.status).key === columnKey).length
-  return wipState(limit, current)
+  return wipState(limit, wipCounts.value[columnKey] ?? 0)
 }
 
 // lanes renders the board once for swimlane "none" and once per bucket
-// otherwise. Columns always come from the shared board definition so a lane
-// cannot drift from the header order.
+// otherwise. buildBoardLanes groups and sorts in one pass; columns always come
+// from the shared board definition so a lane cannot drift from the header order.
 const lanes = computed(() =>
-  groupBySwimlane(filteredItems.value, swimlane.value, memberName).map((lane) => ({
+  buildBoardLanes(filteredItems.value, swimlane.value, memberName, sort.value).map((lane) => ({
     ...lane,
-    columns: boardColumns.map((column) => ({
+    columns: lane.columns.map(({ column, items }) => ({
       ...column,
       wip: wipFor(column.key),
-      items: lane.items
-        .filter((item) => column.statuses.includes(item.status))
-        .sort((a, b) => compareBoardItems(a, b, sort.value)),
+      items,
     })),
   })),
 )
+
+function visibleColumnCount(laneKey: string, columnKey: string, total: number): number {
+  return Math.min(total, visibleCounts[`${laneKey}:${columnKey}`] ?? BOARD_COLUMN_PAGE_SIZE)
+}
+
+function showMore(laneKey: string, columnKey: string, total: number): void {
+  const key = `${laneKey}:${columnKey}`
+  visibleCounts[key] = nextVisibleCount(visibleCounts[key] ?? 0, total)
+}
+
+// A keyboard or drag move can land beyond the first page of the target column.
+// Reveal enough cards to keep the moved card focusable instead of silently
+// dropping focus when the page boundary hides it.
+function revealItem(itemId: string, columnKey: string): void {
+  for (const lane of lanes.value) {
+    const column = lane.columns.find((entry) => entry.key === columnKey)
+    if (!column) continue
+    const position = column.items.findIndex((item) => item.id === itemId)
+    if (position < 0) continue
+    const key = `${lane.key}:${columnKey}`
+    visibleCounts[key] = Math.max(visibleCounts[key] ?? BOARD_COLUMN_PAGE_SIZE, position + 1)
+    return
+  }
+}
+
+const layoutSignature = computed(() =>
+  JSON.stringify({
+    filters: currentFilters(),
+    quick: quickFilters.value,
+    sort: sort.value,
+    swimlane: swimlane.value,
+  }),
+)
+
+watch(layoutSignature, () => {
+  for (const key of Object.keys(visibleCounts)) delete visibleCounts[key]
+})
+
+function roundMs(value: number): number {
+  return Math.round(value * 10) / 10
+}
+
+watch(
+  () => store.workItems.length,
+  async (count) => {
+    if (firstRenderMeasured || count === 0) return
+    firstRenderMeasured = true
+    await nextTick()
+    boardPerf.renderMs = roundMs(performance.now() - mountedAt)
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 
 function dueLabel(item: WorkItem): string {
   if (!item.due_date) return ''
@@ -690,21 +812,26 @@ function dueTone(item: WorkItem): string {
   return date.getTime() < today.getTime() ? 'bg-red-50 text-red-700 ring-red-200' : 'bg-slate-100 text-slate-600 ring-slate-200'
 }
 
-const stats = computed(() => ({
-  total: effectiveItems.value.length,
-  active: effectiveItems.value.filter((item) => ['in_progress', 'in_review', 'in_qa'].includes(item.status)).length,
-  bugs: effectiveItems.value.filter((item) => item.type === 'bug' && !['closed', 'verified', 'cancelled'].includes(item.status)).length,
-  blocked: effectiveItems.value.filter((item) => item.status === 'blocked').length,
-}))
+const stats = computed(() => {
+  let active = 0
+  let bugs = 0
+  let blocked = 0
+  for (const item of effectiveItems.value) {
+    if (['in_progress', 'in_review', 'in_qa'].includes(item.status)) active += 1
+    if (item.type === 'bug' && !['closed', 'verified', 'cancelled'].includes(item.status)) bugs += 1
+    if (item.status === 'blocked') blocked += 1
+  }
+  return { total: effectiveItems.value.length, active, bugs, blocked }
+})
 
 function featureName(featureId: string | null): string {
   if (!featureId) return 'No feature'
-  return features.value.find((feature) => feature.id === featureId)?.title ?? 'Unknown feature'
+  return featureTitles.value.get(featureId) ?? 'Unknown feature'
 }
 
 function parentItem(parentId: string | null): WorkItem | undefined {
   if (!parentId) return undefined
-  return store.workItemById(parentId)
+  return workItemsById.value.get(parentId)
 }
 
 function openParent(parentId: string | null): void {
@@ -772,15 +899,20 @@ function typeTone(type: string): string {
   }
 }
 
-function branchesFor(itemId: string) {
-  return store.branches.filter((branch) => branch.work_item_id === itemId)
+function branchesFor(itemId: string): GitBranch[] {
+  return branchesByItem.value.get(itemId) ?? []
 }
 
-function prsFor(itemId: string) {
-  return store.pullRequests.filter((pr) => pr.work_item_id === itemId)
+function prsFor(itemId: string): PullRequest[] {
+  return prsByItem.value.get(itemId) ?? []
 }
 
 function clearFilters(): void {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
+  searchInput.value = ''
   search.value = ''
   typeFilter.value = ''
   sprintFilter.value = ''
@@ -1419,11 +1551,11 @@ function openDelivery(): void {
       <div class="relative min-w-[190px] flex-1">
         <AppIcon name="search" :size="15" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
         <input
-          v-model="search"
+          v-model="searchInput"
           class="field-input pl-9"
           placeholder="Search key, title or feature…"
           aria-label="Search work items"
-          @input="onFiltersChanged"
+          data-testid="board-search"
         />
       </div>
       <select v-model="typeFilter" class="field-input w-auto min-w-[130px]" aria-label="Filter by work item type" @change="onFiltersChanged">
@@ -1559,6 +1691,14 @@ function openDelivery(): void {
       </span>
     </div>
 
+    <span
+      class="sr-only"
+      data-testid="board-perf"
+      :data-render-ms="boardPerf.renderMs"
+      :data-move-ms="boardPerf.lastMoveMs"
+      aria-hidden="true"
+    ></span>
+
     <EmptyState
       v-if="!store.workItems.length"
       icon="board"
@@ -1567,7 +1707,7 @@ function openDelivery(): void {
       @action="openCreateItem(canManageWorkItems ? 'task' : 'bug')"
     />
 
-    <div v-else class="space-y-4 overflow-x-auto pb-2">
+    <div v-else class="space-y-4 overflow-x-auto pb-2" data-testid="board-scroll">
       <div v-for="lane in lanes" :key="lane.key" class="space-y-2">
         <div v-if="lane.label" class="flex items-center gap-2 pl-1">
           <h3 class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{{ lane.label }}</h3>
@@ -1607,7 +1747,7 @@ function openDelivery(): void {
 
             <div class="flex-1 space-y-2 px-2 pb-2">
               <article
-                v-for="item in column.items"
+                v-for="item in column.items.slice(0, visibleColumnCount(lane.key, column.key, column.items.length))"
                 :key="item.id"
                 :data-board-card="item.id"
                 class="group cursor-pointer touch-pan-y rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition hover:border-indigo-200 hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
@@ -1722,6 +1862,18 @@ function openDelivery(): void {
                   </template>
                 </div>
               </article>
+
+              <button
+                v-if="column.items.length > visibleColumnCount(lane.key, column.key, column.items.length)"
+                type="button"
+                class="flex w-full items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white py-2 text-[10px] font-semibold text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
+                :data-testid="`board-show-more-${lane.key}-${column.key}`"
+                @click="showMore(lane.key, column.key, column.items.length)"
+              >
+                Show next
+                {{ Math.min(BOARD_COLUMN_PAGE_SIZE, column.items.length - visibleColumnCount(lane.key, column.key, column.items.length)) }}
+                of {{ column.items.length - visibleColumnCount(lane.key, column.key, column.items.length) }} hidden
+              </button>
 
               <button
                 v-if="!column.items.length && canManageWorkItems"

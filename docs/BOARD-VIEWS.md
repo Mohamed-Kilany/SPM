@@ -7,8 +7,10 @@ fields and presentation flags. The board itself is stateless; the URL and the
 saved view are the two sources of state.
 
 This guide covers BRD-01 and BRD-02. Label and custom-field administration is
-described in [`PLANNING-CUSTOMIZATION.md`](PLANNING-CUSTOMIZATION.md); the HTTP
-contract is generated into [`openapi.yaml`](openapi.yaml).
+described in [`PLANNING-CUSTOMIZATION.md`](PLANNING-CUSTOMIZATION.md); the
+scale and interaction budgets introduced by BRD-03 are in
+[`BOARD-PERFORMANCE.md`](BOARD-PERFORMANCE.md); the HTTP contract is generated
+into [`openapi.yaml`](openapi.yaml).
 
 ## 1. View model
 

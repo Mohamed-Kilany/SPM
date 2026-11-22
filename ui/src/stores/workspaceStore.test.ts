@@ -14,6 +14,7 @@ describe('workspace refresh', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     getWorkspace.mockReset()
+    useWorkspaceStore().clearSnapshotCache()
   })
 
   it('coalesces concurrent refreshes and resolves both callers after the snapshot lands', async () => {
@@ -37,5 +38,61 @@ describe('workspace refresh', () => {
     expect(store.workspace).toStrictEqual(snapshot)
     expect(store.refreshing).toBe(false)
     expect(store.error).toBe('')
+  })
+})
+
+describe('workspace snapshot cache', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    getWorkspace.mockReset()
+    useWorkspaceStore().clearSnapshotCache()
+  })
+
+  it('paints the cached snapshot while a fresh one loads', async () => {
+    const first = { work_items: [{ id: 'first' }] } as unknown as Workspace
+    const second = { work_items: [{ id: 'second' }] } as unknown as Workspace
+    getWorkspace.mockResolvedValueOnce(first)
+    const store = useWorkspaceStore()
+    await store.load('project-1')
+    expect(store.workspace).toStrictEqual(first)
+
+    let resolve!: (value: Workspace) => void
+    getWorkspace.mockReturnValueOnce(
+      new Promise<Workspace>((done) => {
+        resolve = done
+      }),
+    )
+    store.reset()
+    const loading = store.load('project-1')
+    expect(store.workspace).toStrictEqual(first)
+    expect(store.loading).toBe(false)
+
+    resolve(second)
+    await loading
+    expect(store.workspace).toStrictEqual(second)
+    expect(store.loading).toBe(false)
+  })
+
+  it('evicts the oldest snapshot after five projects', async () => {
+    const store = useWorkspaceStore()
+    for (let index = 1; index <= 6; index += 1) {
+      getWorkspace.mockResolvedValueOnce({ work_items: [{ id: `item-${index}` }] } as unknown as Workspace)
+      store.reset()
+      await store.load(`project-${index}`)
+    }
+
+    let resolve!: (value: Workspace) => void
+    getWorkspace.mockReturnValueOnce(
+      new Promise<Workspace>((done) => {
+        resolve = done
+      }),
+    )
+    store.reset()
+    const loading = store.load('project-1')
+    expect(store.workspace).toBeNull()
+    expect(store.loading).toBe(true)
+
+    resolve({ work_items: [] } as unknown as Workspace)
+    await loading
   })
 })
