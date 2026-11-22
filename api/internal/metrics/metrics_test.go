@@ -237,6 +237,26 @@ func TestPlanningConflictCounter(t *testing.T) {
 	}
 }
 
+func TestBoardMoveFailureCounter(t *testing.T) {
+	registry := newTestRegistry()
+	registry.ObserveBoardMoveFailure("conflict")
+	registry.ObserveBoardMoveFailure("conflict")
+	registry.ObserveBoardMoveFailure("wip")
+	registry.ObserveBoardMoveFailure("user-supplied-value")
+
+	failures := family(t, registry, "spm_board_move_failures_total")
+	if len(failures.GetMetric()) != 3 {
+		t.Fatalf("move failure series = %d, want conflict, wip and error", len(failures.GetMetric()))
+	}
+	values := map[string]float64{}
+	for _, metric := range failures.GetMetric() {
+		values[labelValue(metric, "reason")] = metric.GetCounter().GetValue()
+	}
+	if values["conflict"] != 2 || values["wip"] != 1 || values["error"] != 1 {
+		t.Fatalf("move failure values = %v, want conflict=2 wip=1 error=1", values)
+	}
+}
+
 func TestTestRunCompletionCounter(t *testing.T) {
 	registry := newTestRegistry()
 	registry.ObserveTestRunCompleted("passed")

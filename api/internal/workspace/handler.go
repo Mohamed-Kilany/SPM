@@ -21,6 +21,7 @@ import (
 	"spm-platform/api/internal/auth"
 	"spm-platform/api/internal/events"
 	"spm-platform/api/internal/gitengine"
+	"spm-platform/api/internal/metrics"
 	"spm-platform/api/internal/models"
 )
 
@@ -746,7 +747,7 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid status for this work item type")
 		return
 	}
-	if !h.enforceWIPLimit(c, projectID, "", req.Status) {
+	if h.enforceWIPLimit(c, projectID, "", req.Status) != "" {
 		return
 	}
 	if req.Priority == "" {
@@ -844,7 +845,7 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load work item")
 		return
 	}
-	if !h.enforceWIPLimit(c, projectID, currentStatus, req.Status) {
+	if h.enforceWIPLimit(c, projectID, currentStatus, req.Status) != "" {
 		return
 	}
 	due, _ := parseTimePtr(req.DueDate)
@@ -907,32 +908,39 @@ func (h *Handler) ChangeWorkItemStatus(c *gin.Context) {
 	}
 	var req statusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		metrics.Default().ObserveBoardMoveFailure("invalid_request")
 		apiError(c, http.StatusBadRequest, "INVALID_REQUEST", "Request body is not valid JSON")
 		return
 	}
 	var itemType, currentStatus string
 	err := h.store.DB().QueryRow(c.Request.Context(), `SELECT type, status FROM work_items WHERE id=$1 AND project_id=$2`, itemID, projectID).Scan(&itemType, &currentStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
+		metrics.Default().ObserveBoardMoveFailure("not_found")
 		apiError(c, http.StatusNotFound, "NOT_FOUND", "Work item not found")
 		return
 	}
 	if err != nil {
+		metrics.Default().ObserveBoardMoveFailure("error")
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load work item")
 		return
 	}
 	if !validWorkItemStatus(itemType, req.Status) {
+		metrics.Default().ObserveBoardMoveFailure("invalid_request")
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid status for this work item type")
 		return
 	}
 	if !validStatusTransition(itemType, currentStatus, req.Status) {
+		metrics.Default().ObserveBoardMoveFailure("invalid_transition")
 		apiError(c, http.StatusUnprocessableEntity, "INVALID_TRANSITION", "Cannot move from "+currentStatus+" to "+req.Status)
 		return
 	}
-	if !h.enforceWIPLimit(c, projectID, currentStatus, req.Status) {
+	if reason := h.enforceWIPLimit(c, projectID, currentStatus, req.Status); reason != "" {
+		metrics.Default().ObserveBoardMoveFailure(reason)
 		return
 	}
 	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
 	if !ok {
+		metrics.Default().ObserveBoardMoveFailure("invalid_request")
 		return
 	}
 	var revision int64
@@ -942,15 +950,23 @@ func (h *Handler) ChangeWorkItemStatus(c *gin.Context) {
 		updated_at=NOW() WHERE id=$1 AND project_id=$2`+revisionClause(4)+`
 		RETURNING revision`, itemID, projectID, req.Status, revisionValue(expected)).Scan(&revision)
 	if errors.Is(err, pgx.ErrNoRows) {
+		metrics.Default().ObserveBoardMoveFailure("conflict")
 		h.revisionFailure(c, "work item", "work_items", itemID, projectID)
 		return
 	}
 	if err != nil {
+		metrics.Default().ObserveBoardMoveFailure("error")
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update status")
 		return
 	}
 	h.recordActivity(c.Request.Context(), projectID, actorID(c), "work_item", &itemID, "status_changed",
 		"Moved work item from "+currentStatus+" to "+req.Status, map[string]interface{}{"from": currentStatus, "to": req.Status})
+	h.recordAudit(c, projectID, audit.Entry{
+		Action: "work_item.move", TargetType: "work_item", TargetID: itemID.String(),
+		Result: "success",
+		Before: map[string]interface{}{"status": currentStatus},
+		After:  map[string]interface{}{"status": req.Status},
+	})
 	setRevisionHeader(c, revision)
 	c.JSON(http.StatusOK, gin.H{"id": itemID, "status": req.Status, "revision": revision})
 }

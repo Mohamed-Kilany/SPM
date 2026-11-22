@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '../BaseModal.vue'
 import ConfirmDialog from '../ConfirmDialog.vue'
@@ -34,6 +34,7 @@ import {
   boardFiltersFromQuery,
   boardFiltersToQuery,
   boardFiltersToSaved,
+  boardMoveAnnouncement,
   boardSortFromId,
   boardSortId,
   boardSortToSaved,
@@ -49,20 +50,39 @@ import {
   fieldVisible,
   groupBySwimlane,
   itemMatchesQuickFilters,
+  keyboardMoveTarget,
   labelDot,
   labelTone,
   missingRequiredCustomField,
+  moveTargetForColumn,
   normalizeLabelInput,
   quickFiltersFromValue,
   quickFiltersToSaved,
+  summarizeBoardMoves,
   toggleQuickFilter,
   visibleFieldsFromValue,
   visibleFieldsToSaved,
   wipState,
   workItemMatchesFilters,
 } from '../../lib/planning'
-import type { BoardFilters, BoardQuickFilter, BoardSort } from '../../lib/planning'
+import type { BoardFilters, BoardMoveResult, BoardQuickFilter, BoardSort } from '../../lib/planning'
 import type { CustomField, SavedFilter, WorkItem } from '../../types/workspace'
+
+interface PendingMove {
+  fromStatus: string
+  toStatus: string
+  columnKey: string
+  columnLabel: string
+  source: 'drag' | 'keyboard' | 'bulk'
+}
+
+interface FailedMove {
+  itemId: string
+  itemKey: string
+  columnKey: string
+  columnLabel: string
+  message: string
+}
 
 const store = useWorkspaceStore()
 const auth = useAuthStore()
@@ -83,7 +103,24 @@ const visibleFields = ref<string[]>(BOARD_VISIBLE_FIELDS.map((field) => field.va
 const quickFilters = ref<BoardQuickFilter[]>([])
 const draggingId = ref<string | null>(null)
 const dropTarget = ref<string | null>(null)
-const movingId = ref<string | null>(null)
+const dragPoint = reactive({ x: 0, y: 0 })
+const pendingMoves = reactive<Record<string, PendingMove>>({})
+const failedMove = ref<FailedMove | null>(null)
+const announcement = ref('')
+const selectedIds = ref<string[]>([])
+const bulkTargetColumn = ref('')
+const bulkBusy = ref(false)
+const bulkResult = ref<{ columnKey: string; columnLabel: string; entries: BoardMoveResult[] } | null>(null)
+const bulkResultOpen = ref(false)
+
+let dragCandidate: {
+  id: string
+  pointerId: number
+  startX: number
+  startY: number
+  moved: boolean
+} | null = null
+let suppressClickUntil = 0
 
 const boardScope = 'board'
 const boardFields = computed(() => store.customFields)
@@ -96,6 +133,370 @@ const boardViews = computed(() =>
   }),
 )
 const boardPolicy = computed(() => store.project?.settings?.board)
+
+// pendingMoves is the optimistic overlay. The store is only replaced after the
+// API confirms a move, so a failed request can restore the exact previous card
+// without touching the cached snapshot.
+const effectiveItems = computed<WorkItem[]>(() =>
+  store.workItems.map((item) => {
+    const pending = pendingMoves[item.id]
+    return pending ? { ...item, status: pending.toStatus } : item
+  }),
+)
+const selectedItems = computed(() =>
+  effectiveItems.value.filter((item) => selectedIds.value.includes(item.id)),
+)
+const dragItem = computed(() => (draggingId.value ? store.workItemById(draggingId.value) : undefined))
+const bulkSummary = computed(() =>
+  bulkResult.value
+    ? summarizeBoardMoves(bulkResult.value.entries)
+    : { moved: 0, failed: 0, skipped: 0 },
+)
+
+function isPending(id: string): boolean {
+  return Boolean(pendingMoves[id])
+}
+
+function isSelected(id: string): boolean {
+  return selectedIds.value.includes(id)
+}
+
+function toggleSelected(id: string): void {
+  selectedIds.value = isSelected(id)
+    ? selectedIds.value.filter((entry) => entry !== id)
+    : [...selectedIds.value, id]
+}
+
+function clearSelection(): void {
+  selectedIds.value = []
+}
+
+function boardColumnLabel(key: string): string {
+  return boardColumns.find((column) => column.key === key)?.label ?? key
+}
+
+function announce(message: string): void {
+  announcement.value = message
+}
+
+function announcePosition(item: WorkItem, columnKey: string, columnLabel: string): void {
+  const column = boardColumns.find((entry) => entry.key === columnKey)
+  if (!column) {
+    announce(boardMoveAnnouncement(item.key, columnLabel, 0, 0))
+    return
+  }
+  const items = effectiveItems.value
+    .filter((entry) => column.statuses.includes(entry.status))
+    .sort((a, b) => compareBoardItems(a, b, sort.value))
+  const position = items.findIndex((entry) => entry.id === item.id) + 1
+  announce(boardMoveAnnouncement(item.key, columnLabel, position, items.length))
+}
+
+async function focusItem(id: string): Promise<void> {
+  await nextTick()
+  document.querySelector<HTMLElement>(`[data-board-card="${id}"]`)?.focus()
+}
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    Boolean(target.closest('button, input, select, textarea, a, [data-no-drag]'))
+  )
+}
+
+function boardTargetAt(x: number, y: number): { key: string; columnKey: string } | null {
+  const element = document.elementFromPoint(x, y)
+  const section = element instanceof Element ? element.closest<HTMLElement>('[data-board-column]') : null
+  const key = section?.dataset.boardColumn
+  const columnKey = section?.dataset.columnKey
+  return key && columnKey ? { key, columnKey } : null
+}
+
+function finishDrag(): void {
+  draggingId.value = null
+  dropTarget.value = null
+  document.body.classList.remove('select-none')
+}
+
+function onCardPointerDown(item: WorkItem, event: PointerEvent): void {
+  if (!canWriteWorkItems.value || isPending(item.id)) return
+  if (event.button !== 0 || event.isPrimary === false) return
+  if (isInteractiveTarget(event.target)) return
+  dragCandidate = {
+    id: item.id,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    moved: false,
+  }
+}
+
+function onCardPointerMove(item: WorkItem, event: PointerEvent): void {
+  if (
+    !dragCandidate ||
+    dragCandidate.id !== item.id ||
+    dragCandidate.pointerId !== event.pointerId
+  ) {
+    return
+  }
+  if (!dragCandidate.moved) {
+    const distance = Math.hypot(
+      event.clientX - dragCandidate.startX,
+      event.clientY - dragCandidate.startY,
+    )
+    if (distance < 6) return
+    dragCandidate.moved = true
+    draggingId.value = item.id
+    ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+    document.body.classList.add('select-none')
+  }
+  if (event.cancelable) event.preventDefault()
+  dragPoint.x = event.clientX
+  dragPoint.y = event.clientY
+  dropTarget.value = boardTargetAt(event.clientX, event.clientY)?.key ?? null
+}
+
+function onCardPointerUp(item: WorkItem, event: PointerEvent): void {
+  if (
+    !dragCandidate ||
+    dragCandidate.id !== item.id ||
+    dragCandidate.pointerId !== event.pointerId
+  ) {
+    return
+  }
+  const candidate = dragCandidate
+  dragCandidate = null
+  if (!candidate.moved) return
+  // A drag finishes with a click event on the card. Suppress that one click so
+  // dragging never opens the drawer or selects the card twice. The timestamp
+  // also covers touch click delays and expires on its own if no click arrives.
+  suppressClickUntil = Date.now() + 500
+  const target = boardTargetAt(event.clientX, event.clientY)
+  finishDrag()
+  if (target) void requestMove(item, target.columnKey, 'drag')
+}
+
+function onCardPointerCancel(): void {
+  dragCandidate = null
+  finishDrag()
+}
+
+function onCardClick(item: WorkItem, event: MouseEvent): void {
+  if (Date.now() < suppressClickUntil) {
+    suppressClickUntil = 0
+    return
+  }
+  if (isInteractiveTarget(event.target)) return
+  if (event.metaKey || event.ctrlKey) {
+    toggleSelected(item.id)
+    return
+  }
+  openItemDrawer(item)
+}
+
+function onCardActivate(item: WorkItem, event: KeyboardEvent): void {
+  if (isInteractiveTarget(event.target)) return
+  event.preventDefault()
+  openItemDrawer(item)
+}
+
+function onCardKeydown(item: WorkItem, event: KeyboardEvent): void {
+  if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (!canWriteWorkItems.value) {
+    announce('You do not have permission to move work items.')
+    return
+  }
+  if (isPending(item.id)) return
+  const direction = event.key === 'ArrowRight' ? 1 : -1
+  const target = keyboardMoveTarget(item, direction)
+  if (!target) {
+    const label = direction === 1 ? 'right' : 'left'
+    announce(`${item.key} cannot move ${label}. No legal column in that direction.`)
+    toast.warning(`${item.key} has no legal column ${label}.`, 'Workflow guard')
+    return
+  }
+  void requestMove(item, target.column.key, 'keyboard')
+}
+
+async function requestMove(
+  item: WorkItem,
+  columnKey: string,
+  source: PendingMove['source'],
+): Promise<boolean> {
+  if (!canWriteWorkItems.value || isPending(item.id)) return false
+  const target = moveTargetForColumn(item, columnKey)
+  if (!target || target.column.key === boardColumnFor(item.status).key) {
+    if (!target) {
+      const message = `${statusLabel(item.status)} cannot move to ${boardColumnLabel(columnKey)}. Open the item to choose a valid next step.`
+      toast.warning(message, 'Workflow guard')
+      if (source === 'keyboard') announce(`Move failed. ${item.key}. ${message}`)
+    }
+    return false
+  }
+  if (boardPolicy.value?.wip_hard_block) {
+    const wip = wipFor(columnKey)
+    if (wip?.reached) {
+      const message = `${target.column.label} is at its WIP limit of ${wip.limit}. Clear work before pulling more in.`
+      toast.warning(message, 'WIP limit')
+      if (source === 'keyboard') {
+        announce(`Move failed. ${item.key} stays in ${boardColumnFor(item.status).label}. ${message}`)
+      }
+      return false
+    }
+  }
+  failedMove.value = null
+  pendingMoves[item.id] = {
+    fromStatus: item.status,
+    toStatus: target.status,
+    columnKey: target.column.key,
+    columnLabel: target.column.label,
+    source,
+  }
+  if (source === 'keyboard') {
+    await nextTick()
+    announcePosition(item, target.column.key, target.column.label)
+    await focusItem(item.id)
+  }
+  try {
+    await api.changeWorkItemStatus(store.projectId, item.id, target.status, item.revision)
+    await store.refresh()
+    delete pendingMoves[item.id]
+    if (source !== 'bulk') {
+      toast.success(`${item.key} moved to ${target.column.label}.`, 'Board updated')
+    }
+    return true
+  } catch (error) {
+    delete pendingMoves[item.id]
+    await store.refresh()
+    const message = isRevisionConflict(error)
+      ? revisionConflictMessage('work item')
+      : error instanceof Error
+        ? error.message
+        : 'Could not move work item'
+    if (source === 'keyboard') {
+      announce(
+        `Move failed. ${item.key} returned to ${boardColumnFor(item.status).label}. ${message}`,
+      )
+    }
+    if (source === 'bulk') throw error
+    failedMove.value = {
+      itemId: item.id,
+      itemKey: item.key,
+      columnKey,
+      columnLabel: target.column.label,
+      message,
+    }
+    toast.error(message, 'Board')
+    return false
+  }
+}
+
+async function retryFailedMove(): Promise<void> {
+  const failed = failedMove.value
+  if (!failed) return
+  const item = store.workItemById(failed.itemId)
+  failedMove.value = null
+  if (!item) {
+    toast.warning('That work item no longer exists. Refresh the board.', 'Board')
+    return
+  }
+  await requestMove(item, failed.columnKey, 'drag')
+}
+
+async function bulkMove(): Promise<void> {
+  const columnKey = bulkTargetColumn.value
+  if (!columnKey || bulkBusy.value) return
+  const columnLabel = boardColumnLabel(columnKey)
+  const items = selectedItems.value.filter((item) => !isPending(item.id))
+  if (!items.length) return
+  bulkBusy.value = true
+  failedMove.value = null
+  const entries: BoardMoveResult[] = []
+  try {
+    for (const item of items) {
+      const target = moveTargetForColumn(item, columnKey)
+      if (!target || target.column.key === boardColumnFor(item.status).key) {
+        entries.push({
+          itemId: item.id,
+          key: item.key,
+          title: item.title,
+          outcome: 'skipped',
+          message: target ? 'Already in this column.' : `No legal transition from ${statusLabel(item.status)}.`,
+        })
+        continue
+      }
+      pendingMoves[item.id] = {
+        fromStatus: item.status,
+        toStatus: target.status,
+        columnKey: target.column.key,
+        columnLabel: target.column.label,
+        source: 'bulk',
+      }
+      try {
+        await api.changeWorkItemStatus(store.projectId, item.id, target.status, item.revision)
+        entries.push({
+          itemId: item.id,
+          key: item.key,
+          title: item.title,
+          outcome: 'moved',
+          message: `Moved to ${target.column.label}.`,
+        })
+      } catch (error) {
+        delete pendingMoves[item.id]
+        entries.push({
+          itemId: item.id,
+          key: item.key,
+          title: item.title,
+          outcome: 'failed',
+          message: isRevisionConflict(error)
+            ? revisionConflictMessage('work item')
+            : error instanceof Error
+              ? error.message
+              : 'Could not move work item',
+        })
+      }
+    }
+    await store.refresh()
+    for (const entry of entries) delete pendingMoves[entry.itemId]
+    const summary = summarizeBoardMoves(entries)
+    bulkResult.value = { columnKey, columnLabel, entries }
+    bulkResultOpen.value = true
+    selectedIds.value = entries
+      .filter((entry) => entry.outcome === 'failed')
+      .map((entry) => entry.itemId)
+    if (summary.failed) {
+      toast.warning(
+        `${summary.moved} moved, ${summary.failed} failed, ${summary.skipped} skipped.`,
+        'Bulk move',
+      )
+    } else {
+      toast.success(
+        `${summary.moved} work item${summary.moved === 1 ? '' : 's'} moved to ${columnLabel}.`,
+        'Bulk move',
+      )
+    }
+    announce(
+      `Bulk move finished. ${summary.moved} moved, ${summary.failed} failed, ${summary.skipped} skipped.`,
+    )
+  } finally {
+    bulkBusy.value = false
+  }
+}
+
+function retryFailedBulk(): void {
+  const result = bulkResult.value
+  if (!result) return
+  const failedIds = result.entries
+    .filter((entry) => entry.outcome === 'failed')
+    .map((entry) => entry.itemId)
+  if (!failedIds.length) return
+  selectedIds.value = failedIds
+  bulkTargetColumn.value = result.columnKey
+  bulkResultOpen.value = false
+  void bulkMove()
+}
 
 function currentFilters(): BoardFilters {
   return {
@@ -143,11 +544,13 @@ function syncQuery(): void {
 
 function onFiltersChanged(): void {
   selectedViewId.value = ''
+  clearSelection()
   syncQuery()
 }
 
 function onLayoutChanged(): void {
   selectedViewId.value = ''
+  clearSelection()
   syncQuery()
 }
 
@@ -169,6 +572,7 @@ function applyView(filter: SavedFilter): void {
 
 function applySavedView(id: string): void {
   selectedViewId.value = id
+  clearSelection()
   if (!id) {
     clearFilters()
     return
@@ -239,7 +643,7 @@ function cardCustomValues(item: WorkItem): Array<{ field: CustomField; label: st
 const filteredItems = computed(() => {
   const filters = currentFilters()
   const quickContext = { userId: auth.user?.id ?? '' }
-  return store.workItems.filter((item) => {
+  return effectiveItems.value.filter((item) => {
     const feature = features.value.find((entry) => entry.id === item.feature_id)
     if (!workItemMatchesFilters(item, filters, boardFields.value, customValueSet(item.id), feature?.title ?? '')) {
       return false
@@ -250,7 +654,7 @@ const filteredItems = computed(() => {
 
 function wipFor(columnKey: string) {
   const limit = boardPolicy.value?.wip_limits?.[columnKey] ?? 0
-  const current = store.workItems.filter((item) => boardColumnFor(item.status).key === columnKey).length
+  const current = effectiveItems.value.filter((item) => boardColumnFor(item.status).key === columnKey).length
   return wipState(limit, current)
 }
 
@@ -287,10 +691,10 @@ function dueTone(item: WorkItem): string {
 }
 
 const stats = computed(() => ({
-  total: store.workItems.length,
-  active: store.workItems.filter((item) => ['in_progress', 'in_review', 'in_qa'].includes(item.status)).length,
-  bugs: store.workItems.filter((item) => item.type === 'bug' && !['closed', 'verified', 'cancelled'].includes(item.status)).length,
-  blocked: store.workItems.filter((item) => item.status === 'blocked').length,
+  total: effectiveItems.value.length,
+  active: effectiveItems.value.filter((item) => ['in_progress', 'in_review', 'in_qa'].includes(item.status)).length,
+  bugs: effectiveItems.value.filter((item) => item.type === 'bug' && !['closed', 'verified', 'cancelled'].includes(item.status)).length,
+  blocked: effectiveItems.value.filter((item) => item.status === 'blocked').length,
 }))
 
 function featureName(featureId: string | null): string {
@@ -384,6 +788,7 @@ function clearFilters(): void {
   labelFilter.value = ''
   selectedViewId.value = ''
   quickFilters.value = []
+  clearSelection()
   for (const key of Object.keys(customFilters)) delete customFilters[key]
   syncQuery()
 }
@@ -508,58 +913,6 @@ async function deleteView(): Promise<void> {
     toast.error(error instanceof Error ? error.message : 'Failed to delete view', 'Board views')
   } finally {
     deletingView.value = false
-  }
-}
-
-function onDragStart(item: WorkItem, event: DragEvent): void {
-  if (!canWriteWorkItems.value) return
-  draggingId.value = item.id
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', item.id)
-  }
-}
-
-async function onDrop(columnKey: string): Promise<void> {
-  const id = draggingId.value
-  draggingId.value = null
-  dropTarget.value = null
-  if (!id || movingId.value) return
-  const item = store.workItemById(id)
-  if (!item) return
-  const target = targetStatusForColumn(item.type, columnKey)
-  if (target === item.status) return
-  if (boardPolicy.value?.wip_hard_block && boardColumnFor(item.status).key !== columnKey) {
-    const wip = wipFor(columnKey)
-    if (wip?.reached) {
-      toast.warning(
-        `${columnKey.replace(/_/g, ' ')} is at its WIP limit of ${wip.limit}. Clear work before pulling more in.`,
-        'WIP limit',
-      )
-      return
-    }
-  }
-  if (!allowedTransitions(item.type, item.status).includes(target)) {
-    toast.warning(
-      `${statusLabel(item.status)} cannot move directly to ${statusLabel(target)}. Open the item to choose a valid next step.`,
-      'Workflow guard',
-    )
-    return
-  }
-  movingId.value = id
-  try {
-    await api.changeWorkItemStatus(store.projectId, id, target, item.revision)
-    await store.refresh()
-    toast.success(`${item.key} moved to ${statusLabel(target)}.`, 'Board updated')
-  } catch (error) {
-    if (isRevisionConflict(error)) {
-      await store.refresh()
-      toast.warning(revisionConflictMessage('work item'), 'Board')
-      return
-    }
-    toast.error(error instanceof Error ? error.message : 'Could not move work item', 'Board')
-  } finally {
-    movingId.value = null
   }
 }
 
@@ -789,6 +1142,15 @@ watch(
       drawerItemId.value = id
       drawerOpen.value = true
     }
+  },
+)
+
+watch(
+  () => store.workItems.map((item) => item.id).join(','),
+  () => {
+    const live = new Set(store.workItems.map((item) => item.id))
+    const next = selectedIds.value.filter((id) => live.has(id))
+    if (next.length !== selectedIds.value.length) selectedIds.value = next
   },
 )
 
@@ -1141,6 +1503,62 @@ function openDelivery(): void {
       </div>
     </div>
 
+    <p class="sr-only" role="status" aria-live="polite" data-testid="board-announcer">{{ announcement }}</p>
+
+    <div
+      v-if="failedMove"
+      class="card flex flex-wrap items-center gap-3 border-red-200 bg-red-50 p-3"
+      role="alert"
+      data-testid="board-move-failure"
+    >
+      <span class="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-red-100 text-red-700">
+        <AppIcon name="alert" :size="15" />
+      </span>
+      <div class="min-w-0 flex-1">
+        <p class="text-xs font-semibold text-red-800">
+          Could not move {{ failedMove.itemKey }} to {{ failedMove.columnLabel }}
+        </p>
+        <p class="mt-0.5 text-[11px] text-red-700">{{ failedMove.message }}</p>
+      </div>
+      <button type="button" class="btn-secondary" @click="retryFailedMove">
+        <AppIcon name="refresh" :size="14" /> Retry
+      </button>
+      <button type="button" class="btn-ghost" @click="failedMove = null">Dismiss</button>
+    </div>
+
+    <div
+      v-if="canWriteWorkItems && selectedIds.length"
+      class="card flex flex-wrap items-center gap-2 border-indigo-200 bg-indigo-50/60 p-3"
+      role="region"
+      aria-label="Bulk move selected work items"
+      data-testid="board-bulk-bar"
+    >
+      <span class="text-xs font-semibold text-indigo-900">{{ selectedIds.length }} selected</span>
+      <select
+        v-model="bulkTargetColumn"
+        class="field-input w-auto min-w-[170px]"
+        aria-label="Bulk move target column"
+      >
+        <option value="">Move to…</option>
+        <option v-for="column in boardColumns" :key="column.key" :value="column.key">
+          {{ column.label }}
+        </option>
+      </select>
+      <button
+        type="button"
+        class="btn-primary"
+        :disabled="!bulkTargetColumn || bulkBusy"
+        @click="bulkMove"
+      >
+        <AppIcon name="arrowRight" :size="14" />
+        {{ bulkBusy ? 'Moving…' : 'Move selected' }}
+      </button>
+      <button type="button" class="btn-ghost" @click="clearSelection">Clear</button>
+      <span class="ml-auto text-[10px] text-indigo-700">
+        Each item is checked by the server; results are reported per item.
+      </span>
+    </div>
+
     <EmptyState
       v-if="!store.workItems.length"
       icon="board"
@@ -1161,11 +1579,13 @@ function openDelivery(): void {
           <section
             v-for="column in lane.columns"
             :key="`${lane.key}:${column.key}`"
-            class="flex w-[230px] flex-none flex-col rounded-xl border border-slate-200 bg-slate-100/70"
-            :class="dropTarget === `${lane.key}:${column.key}` ? 'ring-2 ring-indigo-300' : ''"
-            @dragover.prevent="dropTarget = `${lane.key}:${column.key}`"
-            @dragleave="dropTarget = dropTarget === `${lane.key}:${column.key}` ? null : dropTarget"
-            @drop.prevent="onDrop(column.key)"
+            class="flex w-[230px] flex-none flex-col rounded-xl border border-slate-200 bg-slate-100/70 transition"
+            :class="dropTarget === `${lane.key}:${column.key}`
+              ? 'border-indigo-300 bg-indigo-50/60 ring-2 ring-indigo-300'
+              : ''"
+            :data-board-column="`${lane.key}:${column.key}`"
+            :data-column-key="column.key"
+            :aria-label="`${column.label} column`"
           >
             <div class="flex items-center gap-2 px-3 pb-2 pt-3">
               <span class="h-2 w-2 rounded-full" :class="column.accent" />
@@ -1189,15 +1609,39 @@ function openDelivery(): void {
               <article
                 v-for="item in column.items"
                 :key="item.id"
-                class="group cursor-pointer rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:border-indigo-200 hover:shadow"
-                :class="draggingId === item.id || movingId === item.id ? 'opacity-50' : ''"
-                :draggable="canWriteWorkItems"
-                @dragstart="onDragStart(item, $event)"
-                @dragend="draggingId = null; dropTarget = null"
-                @click="openItemDrawer(item)"
+                :data-board-card="item.id"
+                class="group cursor-pointer touch-pan-y rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition hover:border-indigo-200 hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                :class="[
+                  isSelected(item.id) ? 'ring-2 ring-indigo-400' : '',
+                  draggingId === item.id ? 'opacity-40' : '',
+                  isPending(item.id) ? 'opacity-60' : '',
+                ]"
+                tabindex="0"
+                role="group"
+                :aria-label="`${item.key}: ${item.title}. Status ${statusLabel(item.status)}. Drag, or press Alt+Left or Alt+Right to move.`"
+                :title="canWriteWorkItems ? 'Drag to move, or press Alt+Left / Alt+Right' : item.title"
+                @pointerdown="onCardPointerDown(item, $event)"
+                @pointermove="onCardPointerMove(item, $event)"
+                @pointerup="onCardPointerUp(item, $event)"
+                @pointercancel="onCardPointerCancel"
+                @click="onCardClick(item, $event)"
+                @keydown="onCardKeydown(item, $event)"
+                @keydown.enter="onCardActivate(item, $event)"
+                @keydown.space="onCardActivate(item, $event)"
               >
                 <div class="flex items-center justify-between gap-2">
                   <div class="flex items-center gap-1.5">
+                    <input
+                      v-if="canWriteWorkItems"
+                      type="checkbox"
+                      class="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      :checked="isSelected(item.id)"
+                      :aria-label="`Select ${item.key}`"
+                      data-no-drag
+                      @click.stop
+                      @pointerdown.stop
+                      @change="toggleSelected(item.id)"
+                    />
                     <span class="flex h-5 w-5 items-center justify-center rounded" :class="typeTone(item.type)">
                       <AppIcon :name="typeIcon(item.type)" :size="12" />
                     </span>
@@ -1292,6 +1736,87 @@ function openDelivery(): void {
         </div>
       </div>
     </div>
+
+    <div
+      v-if="dragItem"
+      class="pointer-events-none fixed z-50 w-[210px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-indigo-300 bg-white p-2 shadow-xl"
+      :style="{ left: `${dragPoint.x}px`, top: `${dragPoint.y}px` }"
+      aria-hidden="true"
+      data-testid="board-drag-preview"
+    >
+      <div class="flex items-center gap-1.5">
+        <span class="font-mono text-[10px] font-semibold text-slate-600">{{ dragItem.key }}</span>
+        <PriorityPill :priority="dragItem.priority" />
+      </div>
+      <p class="mt-1 line-clamp-2 text-[12px] font-medium leading-snug text-slate-800">
+        {{ dragItem.title }}
+      </p>
+    </div>
+
+    <BaseModal
+      v-model="bulkResultOpen"
+      title="Bulk move results"
+      :description="bulkResult
+        ? `${bulkResult.columnLabel} · ${bulkSummary.moved} moved, ${bulkSummary.failed} failed, ${bulkSummary.skipped} skipped`
+        : ''"
+      max-width="md"
+    >
+      <div v-if="bulkResult" class="space-y-3">
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div class="rounded-lg bg-emerald-50 p-2 ring-1 ring-emerald-200">
+            <p class="text-lg font-semibold leading-none text-emerald-700">{{ bulkSummary.moved }}</p>
+            <p class="mt-1 text-[10px] font-medium text-emerald-800">Moved</p>
+          </div>
+          <div class="rounded-lg bg-red-50 p-2 ring-1 ring-red-200">
+            <p class="text-lg font-semibold leading-none text-red-700">{{ bulkSummary.failed }}</p>
+            <p class="mt-1 text-[10px] font-medium text-red-800">Failed</p>
+          </div>
+          <div class="rounded-lg bg-slate-100 p-2 ring-1 ring-slate-200">
+            <p class="text-lg font-semibold leading-none text-slate-700">{{ bulkSummary.skipped }}</p>
+            <p class="mt-1 text-[10px] font-medium text-slate-700">Skipped</p>
+          </div>
+        </div>
+        <ul class="max-h-72 space-y-1.5 overflow-y-auto" data-testid="bulk-move-results">
+          <li
+            v-for="entry in bulkResult.entries"
+            :key="entry.itemId"
+            class="flex items-start gap-2 rounded-lg border border-slate-200 p-2"
+          >
+            <span class="mt-0.5 font-mono text-[10px] font-semibold text-slate-600">{{ entry.key }}</span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-[11px] font-medium text-slate-800">{{ entry.title }}</p>
+              <p
+                class="mt-0.5 text-[10px]"
+                :class="entry.outcome === 'failed' ? 'text-red-700' : entry.outcome === 'moved' ? 'text-emerald-700' : 'text-slate-600'"
+              >
+                {{ entry.message }}
+              </p>
+            </div>
+            <span
+              class="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase ring-1"
+              :class="entry.outcome === 'failed'
+                ? 'bg-red-50 text-red-700 ring-red-200'
+                : entry.outcome === 'moved'
+                  ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                  : 'bg-slate-100 text-slate-600 ring-slate-200'"
+            >
+              {{ entry.outcome }}
+            </span>
+          </li>
+        </ul>
+      </div>
+      <template #footer>
+        <button
+          v-if="bulkSummary.failed"
+          type="button"
+          class="btn-secondary"
+          @click="retryFailedBulk"
+        >
+          <AppIcon name="refresh" :size="14" /> Retry failed
+        </button>
+        <button type="button" class="btn-primary" @click="bulkResultOpen = false">Close</button>
+      </template>
+    </BaseModal>
 
     <!-- Work item modal -->
     <BaseModal

@@ -32,6 +32,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const refreshing = ref(false)
   const error = ref('')
   const projectId = ref('')
+  let refreshPromise: Promise<void> | null = null
 
   const project = computed(() => workspace.value?.project ?? null)
   const metrics = computed(() => workspace.value?.metrics ?? null)
@@ -79,16 +80,30 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function refresh(): Promise<void> {
-    if (!projectId.value || refreshing.value) return
+    if (!projectId.value) return
+    // Concurrent callers share one request. Optimistic board moves rely on this:
+    // awaiting refresh must mean the latest snapshot is installed, not that a
+    // second caller returned immediately while the first request was in flight.
+    if (refreshPromise) return refreshPromise
+    const id = projectId.value
     refreshing.value = true
-    try {
-      workspace.value = await api.getWorkspace(projectId.value)
-      error.value = ''
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to refresh workspace'
-    } finally {
-      refreshing.value = false
-    }
+    refreshPromise = (async () => {
+      try {
+        const next = await api.getWorkspace(id)
+        if (projectId.value === id) {
+          workspace.value = next
+          error.value = ''
+        }
+      } catch (err) {
+        if (projectId.value === id) {
+          error.value = err instanceof Error ? err.message : 'Failed to refresh workspace'
+        }
+      } finally {
+        refreshing.value = false
+        refreshPromise = null
+      }
+    })()
+    return refreshPromise
   }
 
   function reset(): void {
@@ -97,6 +112,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     error.value = ''
     loading.value = false
     refreshing.value = false
+    refreshPromise = null
   }
 
   function workItemById(id: string): WorkItem | undefined {

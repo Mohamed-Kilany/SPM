@@ -6,9 +6,9 @@ board: facet filters, quick filters, sort, swimlane grouping, visible card
 fields and presentation flags. The board itself is stateless; the URL and the
 saved view are the two sources of state.
 
-This guide covers BRD-01. Label and custom-field administration is described in
-[`PLANNING-CUSTOMIZATION.md`](PLANNING-CUSTOMIZATION.md); the HTTP contract is
-generated into [`openapi.yaml`](openapi.yaml).
+This guide covers BRD-01 and BRD-02. Label and custom-field administration is
+described in [`PLANNING-CUSTOMIZATION.md`](PLANNING-CUSTOMIZATION.md); the HTTP
+contract is generated into [`openapi.yaml`](openapi.yaml).
 
 ## 1. View model
 
@@ -240,7 +240,80 @@ board explain the rejection without re-reading project settings. A limit is
 reached when `current >= limit`; the mutation is rejected rather than allowing
 a temporary overfill.
 
-## 8. Permissions
+## 8. Moving work items
+
+The board moves work through the same revisioned
+`PATCH /projects/{id}/work-items/{itemId}/status` endpoint used by the drawer.
+There is no separate board-move or bulk endpoint: each card is one request, so
+the server can enforce the workflow, WIP and permission rules per item.
+
+### Pointer drag
+
+Cards use pointer events rather than HTML5 drag and drop, so the same gesture
+works with a mouse, a pen and touch. A drag starts after a 6 px movement
+threshold. The source card is dimmed, a preview follows the pointer and the
+column under the pointer is highlighted as the drop target. Releasing over a
+column performs exactly one mutation; releasing anywhere else cancels without a
+request. The click that follows a drag is suppressed so the detail drawer does
+not open. Cards use `touch-action: pan-y`, leaving vertical scrolling available
+on touch devices while horizontal movement can start a drag.
+
+A drop on the card's current column is a no-op. A drop on a column with no legal
+transition shows a workflow warning and sends nothing. When hard WIP blocking
+is enabled, the board pre-checks the target column and refuses the drop before
+the request; the API repeats the check as the authority.
+
+### Keyboard moves
+
+Every card is focusable. With focus on a card, `Alt+Left` and `Alt+Right` move
+it to the nearest column in that direction that has a legal transition. Columns
+without a legal status are skipped: for example, `Done` cannot go straight to
+`Review`, so `Alt+Left` reopens it into `In progress`. The move is announced in
+a polite live region with the new column and position, for example
+`SPM-42 moved to Ready, position 2 of 5.` Focus returns to the moved card after
+the optimistic re-render. `Alt` is required so plain arrow keys keep scrolling
+the board.
+
+### Optimistic updates, rollback and retry
+
+A move paints immediately through a pending-status overlay while the request is
+in flight. The overlay is keyed by work item id and is also used by WIP counts,
+quick filters and swimlane lanes, so the card never appears in two columns.
+When the request succeeds the workspace snapshot is refreshed before the
+overlay is removed. When it fails the overlay is removed, the card returns to
+its previous column and a retry banner names the item and the target column.
+Retry re-reads the current revision from the refreshed snapshot, so a stale
+`If-Match` does not trap the user in a retry loop. Revision conflicts also
+refresh the workspace and use the standard conflict message.
+
+Concurrent refreshes are coalesced: awaiting `refresh()` means the latest
+snapshot has been installed, not that a second caller returned while the first
+request was still running. That guarantee is what lets the overlay be removed
+safely after a move.
+
+### Multi-select and bulk move
+
+The checkbox on each card builds a selection; `Ctrl`/`Cmd`-clicking a card
+toggles selection without opening it. The bulk bar offers a target column and a
+`Move selected` action. Bulk moves are **per-item**, not transactional: every
+selected card gets its own revisioned request, so a WIP or transition rejection
+on one card does not roll back the others. The result dialog reports `moved`,
+`failed` and `skipped` counts and a line per item. Failed items stay selected
+and can be retried with `Retry failed`; cards already in the target column are
+reported as skipped without a request.
+
+### Audit and telemetry
+
+Every successful status change writes the `work_item.move` audit event with
+`before.status` and `after.status`, in addition to the existing
+`work_item.status_changed` activity entry. Rejected or failed moves increment
+`spm_board_move_failures_total` with a bounded `reason` (`conflict`, `wip`,
+`invalid_transition`, `invalid_request`, `not_found` or `error`). The metric
+catalogue and alert guidance are in
+[`docs/OBSERVABILITY.md`](OBSERVABILITY.md#planning); the audit event catalogue
+is in [`docs/AUDIT.md`](AUDIT.md#6-event-catalog).
+
+## 9. Permissions
 
 | Action | Rule |
 |---|---|
@@ -255,21 +328,28 @@ a temporary overfill.
 Every check is repeated by the API. The UI hides actions the caller cannot
 perform, but it is never the authority.
 
-## 9. Verification
+## 10. Verification
 
 - `api/internal/workspace/board_wip_test.go` covers the column map, settings
   normalization, default policy and settings decoding.
 - `api/internal/workspace/handler_planning_fields_test.go` covers swimlane
   normalization and rejection of unknown values, plus view validation.
+- `api/internal/workspace/revision_test.go` covers the `If-Match` conflict
+  contract and the planning-conflict counter.
+- `api/internal/metrics/metrics_test.go` covers the bounded
+  `spm_board_move_failures_total` reasons.
 - `api/internal/migrate/schema_test.go` pins migration `022` as the latest
   migration and verifies the rollback removes the column and its constraint.
 - `ui/src/lib/planning.test.ts` covers layout capture, sort ordering,
   swimlane grouping, quick-filter composition, visible fields, default-view
-  selection and WIP state (22 tests in the planning suite).
+  selection, WIP state, keyboard target selection, announcements and bulk
+  summaries (27 tests in the planning suite).
+- `ui/e2e/linked-sdlc.spec.ts` covers a failed drag with rollback and retry,
+  a successful retry, keyboard moves with a live-region assertion and a
+  multi-item bulk move.
 - `go build ./...`, `go vet ./...`, `go test ./...`, `go run ./cmd/openapi
   -check`, the Redocly lint, and the UI typecheck, unit tests and production
   build are the merge gate.
 
-The full-stack Playwright suite that drives a saved view end to end requires
-the Docker stack and is tracked as part of the UI/E2E work; it is not claimed
-by the unit gate.
+The full-stack Playwright suite requires the Docker stack and is not claimed by
+the unit gate; the spec is run by CI where the stack is available.

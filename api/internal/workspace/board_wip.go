@@ -67,28 +67,29 @@ type wipDetails struct {
 	HardBlock bool   `json:"hard_block"`
 }
 
-// enforceWIPLimit applies the project's optional hard WIP block. It returns
-// true when the move is allowed (including every project that has not opted in).
-// A move inside the same column is always allowed because it does not change the
+// enforceWIPLimit applies the project's optional hard WIP block. It returns an
+// empty string when the move is allowed (including every project that has not
+// opted in), or a bounded failure reason after writing the response. A move
+// inside the same column is always allowed because it does not change the
 // column count.
-func (h *Handler) enforceWIPLimit(c *gin.Context, projectID uuid.UUID, currentStatus, targetStatus string) bool {
+func (h *Handler) enforceWIPLimit(c *gin.Context, projectID uuid.UUID, currentStatus, targetStatus string) string {
 	if currentStatus != "" && boardColumnForStatus(currentStatus) == boardColumnForStatus(targetStatus) {
-		return true
+		return ""
 	}
 	var raw []byte
 	if err := h.store.DB().QueryRow(c.Request.Context(),
 		`SELECT settings FROM projects WHERE id=$1`, projectID).Scan(&raw); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load board policy")
-		return false
+		return "error"
 	}
 	board := decodeSettings(raw).Board
 	if !board.WIPHardBlock {
-		return true
+		return ""
 	}
 	column := boardColumnForStatus(targetStatus)
 	limit := board.WIPLimits[column]
 	if limit <= 0 {
-		return true
+		return ""
 	}
 	var current int
 	if err := h.store.DB().QueryRow(c.Request.Context(), `
@@ -96,7 +97,7 @@ func (h *Handler) enforceWIPLimit(c *gin.Context, projectID uuid.UUID, currentSt
 		WHERE project_id=$1 AND status = ANY($2)`,
 		projectID, boardColumnStatuses[column]).Scan(&current); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check WIP limit")
-		return false
+		return "error"
 	}
 	if current >= limit {
 		c.JSON(http.StatusConflict, gin.H{
@@ -108,7 +109,7 @@ func (h *Handler) enforceWIPLimit(c *gin.Context, projectID uuid.UUID, currentSt
 				Column: column, Status: targetStatus, Current: current, Limit: limit, HardBlock: true,
 			},
 		})
-		return false
+		return "wip"
 	}
-	return true
+	return ""
 }

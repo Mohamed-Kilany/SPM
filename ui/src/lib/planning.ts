@@ -1,3 +1,5 @@
+import { allowedTransitions, boardColumns, targetStatusForColumn } from './workspace'
+import type { BoardColumn } from './workspace'
 import type {
   CustomField,
   CustomFieldOption,
@@ -675,4 +677,72 @@ export interface WipState {
 export function wipState(limit: number | undefined, current: number): WipState | null {
   if (!limit || limit <= 0) return null
   return { current, limit, reached: current >= limit, exceeded: current > limit }
+}
+
+export interface BoardMoveTarget {
+  column: BoardColumn
+  status: string
+}
+
+// moveTargetForColumn resolves a board column to the workflow status a card of
+// this type can actually enter. The canonical status is preferred; when the
+// column accepts several statuses, the first allowed one is used instead. That
+// keeps a drag honest: a move either finds a legal transition or returns null,
+// and the UI never sends a status the API will reject.
+export function moveTargetForColumn(item: WorkItem, columnKey: string): BoardMoveTarget | null {
+  const column = boardColumns.find((entry) => entry.key === columnKey)
+  if (!column) return null
+  if (column.statuses.includes(item.status)) return { column, status: item.status }
+  const allowed = allowedTransitions(item.type, item.status)
+  const preferred = targetStatusForColumn(item.type, columnKey)
+  if (column.statuses.includes(preferred) && allowed.includes(preferred)) {
+    return { column, status: preferred }
+  }
+  const fallback = column.statuses.find((status) => allowed.includes(status))
+  return fallback ? { column, status: fallback } : null
+}
+
+// keyboardMoveTarget walks outward from the current column until it finds the
+// nearest column with a legal transition. Skipping columns is intentional:
+// "Done" cannot go straight to "Review", but it can reopen into "In progress".
+export function keyboardMoveTarget(item: WorkItem, direction: -1 | 1): BoardMoveTarget | null {
+  const current = boardColumns.findIndex((column) => column.statuses.includes(item.status))
+  if (current === -1) return null
+  for (let index = current + direction; index >= 0 && index < boardColumns.length; index += direction) {
+    const target = moveTargetForColumn(item, boardColumns[index]!.key)
+    if (target && target.status !== item.status) return target
+  }
+  return null
+}
+
+export function boardMoveAnnouncement(
+  itemKey: string,
+  columnLabel: string,
+  position: number,
+  total: number,
+): string {
+  if (position > 0 && total > 0) {
+    return `${itemKey} moved to ${columnLabel}, position ${position} of ${total}.`
+  }
+  return `${itemKey} moved to ${columnLabel}.`
+}
+
+export type BoardMoveOutcome = 'moved' | 'failed' | 'skipped'
+
+export interface BoardMoveResult {
+  itemId: string
+  key: string
+  title: string
+  outcome: BoardMoveOutcome
+  message: string
+}
+
+export function summarizeBoardMoves(results: BoardMoveResult[]): {
+  moved: number
+  failed: number
+  skipped: number
+} {
+  const summary = { moved: 0, failed: 0, skipped: 0 }
+  for (const result of results) summary[result.outcome] += 1
+  return summary
 }
