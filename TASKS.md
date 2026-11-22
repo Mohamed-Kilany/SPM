@@ -1,7 +1,7 @@
 # SPM Platform — Enterprise Delivery Task Plan
 
 > **Status:** Active · **Baseline:** clean `master` bootstrap · **Owner:** Mohamed Kilany
-> **Last updated:** 2026-11-18 · **Review cadence:** weekly, and at every milestone exit
+> **Last updated:** 2026-11-22 · **Review cadence:** weekly, and at every milestone exit
 >
 > This document is the delivery source of truth for sequencing, branch rules, acceptance
 > criteria and UI direction. `docs/ENTERPRISE_SPEC.md` defines product intent,
@@ -3135,19 +3135,26 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** Import format reference.
 
 #### PLN-05 · Labels, custom fields and saved filters
-- **Status:** TODO · **Priority:** P2 · **Estimate:** L · **Branch:** `feature/planning-custom-fields`
+- **Status:** DONE · **Priority:** P2 · **Estimate:** L · **Branch:** `feature/planning-custom-fields`
 - **Depends on:** PLN-01
 - **Scope:** Add project-scoped labels and a small typed custom-field system (text, number,
   select, date, user) with validation, filtering and display in tables/boards. Add saved
   filters shared across planning/board/test.
 - **Acceptance criteria:**
-  - [ ] Labels are reusable, colored by token, and filterable.
-  - [ ] Custom fields are typed, validated and permission-controlled.
-  - [ ] Deleting a field preserves data or requires an explicit migration.
-  - [ ] Saved filters are shareable, permission-aware and URL-backed.
-  - [ ] No schema change is required to add a field value.
-- **Tests/evidence:** Field validation tests, filter tests, performance test.
-- **Docs/telemetry:** Custom-field administration guide.
+  - [x] Labels are reusable, colored by token, and filterable.
+  - [x] Custom fields are typed, validated and permission-controlled.
+  - [x] Deleting a field preserves data or requires an explicit migration.
+  - [x] Saved filters are shareable, permission-aware and URL-backed.
+  - [x] No schema change is required to add a field value.
+- **Tests/evidence:** `handler_planning_fields_test.go` covers label normalization,
+  field keys/options/config, typed values, required fields, saved-filter validation and
+  visibility; `planning.test.ts` covers the UI filter/URL/option helpers with 11 tests.
+  `BenchmarkFilterVisibleSavedFilters` filters 1,000 views in ~29 µs with one allocation.
+  A 30-check PGlite rehearsal applied 001–021, re-applied 021, verified label backfill,
+  constraints, cascade/restrict behavior, the revision trigger, full rollback and re-expand.
+  Merged as PR #40 (`34295af`) after all required checks passed.
+- **Docs/telemetry:** [`docs/PLANNING-CUSTOMIZATION.md`](docs/PLANNING-CUSTOMIZATION.md) is the
+  custom-field administration guide; `API.md`, `DATA-MODEL.md` and `openapi.yaml` are updated.
 
 #### BRD-01 · Saved views, WIP limits and swimlanes
 - **Status:** TODO · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/board-saved-views`
@@ -5253,13 +5260,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 7 | 0 | 6 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 8 | 0 | 5 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **19** | **0** | **109** |
+| **Total** | - | **128** | **20** | **0** | **108** |
 
 ### C.2 Card index by phase
 
@@ -5317,6 +5324,7 @@ labels must exist in the repository.
 | 2026-11-21 | Closed TST-02: added immutable `test_case_versions`/`test_case_version_steps`, shared step templates with copy-on-use semantics, and step-result snapshots tied to the executed case revision. Case create/edit/import now snapshot in the same transaction; `GET /test-cases/{caseId}/versions` exposes newest-first history with steps, and `spm.test-cases.v1` export/import is all-or-nothing with `feature_title` resolution. Added shared-step revisioned CRUD, the history modal, step reordering (`Alt+↑`/`Alt+↓`), template manager and import/export controls, 6 routes (118 operations), `020_test_case_versions` and its contract companion, and updated `docs/TEST-MANAGEMENT.md`/`DATA-MODEL.md`/`API.md`. Verified with Go/UI tests, OpenAPI drift and a 66-check PGlite forward/reapply/rollback rehearsal. Merged as PR #34 (`188c385`) after all required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-03: added the idempotent run finish endpoint with forced incomplete confirmation (`409 RUN_INCOMPLETE`), deterministic `passed`/`failed`/`incomplete` outcomes capped by `not_run`, and `spm_test_runs_completed_total{outcome}` with exactly one increment per completion. Step evidence reuses the scanned attachment pipeline and links through `test_step_results.evidence_url`. Added the focused runner (P/F/B/S, arrows, G bug handoff, E evidence, 700 ms autosave, localStorage resume, progress and summary), 2 routes (120 operations), OpenAPI schemas and runner/evidence/finish documentation. Verified with Go tests, 42 UI tests including mounted shortcut/autosave/finish/resume cases, `go vet`, OpenAPI drift and Redocly lint; the linked-SDLC Playwright path was extended but not run locally because the Docker stack is unavailable. Merged as PR #36 (`bf86651`) after all required checks passed | Maintainer |
 | 2026-11-21 | Closed TST-04: added traceable defect creation from an executed result with snapshot-derived title/reproduction/expected/actual values, appended run/case/step/environment/release/sprint/build/deployment context, bidirectional result/step pointers and `found_bug` artifact links from the result, run, case and optional build/deployment. Added normalized-title and existing-link duplicate detection (`409 DUPLICATE_BUG` with `duplicates[]`, forced override) and a bulk endpoint with per-item `created`/`duplicate`/`skipped`/`failed` outcomes and `400 INVALID_RESULT_IDS`. Both paths record audit actions and `workspace.changed` activity. Added the context/duplicate/bulk UI, 1 route (121 operations), 11 Go and 10 UI helper tests, OpenAPI schemas and `docs/TEST-MANAGEMENT.md` coverage. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint and UI typecheck/test (52 passed)/build; the Playwright flow was extended but not run locally because the Docker stack is unavailable. Merged as PR #38 (`b14d5e7`) after all required checks passed | Maintainer |
+| 2026-11-22 | Closed PLN-05: added reusable `project_labels` with color tokens, rename/delete rewrites and automatic registration on work item writes; typed `custom_fields` definitions (`text`, `number`, `select`, `date`, `user`) with option/range/required validation and values stored in `custom_field_values`, plus archive/restore and a permission-gated purge; and `saved_filters` across planning/board/test with private/shared visibility, per-owner default uniqueness and `If-Match` revisions. Added 14 routes (135 operations), `021_labels_custom_fields_saved_filters` with a contract companion, label/custom-field administration, URL-backed board views and `docs/PLANNING-CUSTOMIZATION.md`. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (63 passed)/build and a 30-check PGlite forward/re-apply/rollback rehearsal; the `BenchmarkFilterVisibleSavedFilters` benchmark filters 1,000 views in ~29 µs. Merged as PR #40 (`34295af`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
