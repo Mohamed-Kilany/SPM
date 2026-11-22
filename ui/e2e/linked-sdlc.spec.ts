@@ -619,10 +619,10 @@ test('linked SDLC/STLC flow from story to Argo CD health', async ({ page, reques
 
   // Bulk entry stays available but disables results that already have a bug.
   await detail.getByTestId('open-bulk-bugs').click()
-  const bulkDialog = page.getByRole('dialog', { name: 'Create defects from failures' })
-  await expect(bulkDialog.getByTestId('bulk-bug-candidates')).toContainText('Bug already linked')
-  await bulkDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(bulkDialog).toBeHidden()
+  const bulkBugDialog = page.getByRole('dialog', { name: 'Create defects from failures' })
+  await expect(bulkBugDialog.getByTestId('bulk-bug-candidates')).toContainText('Bug already linked')
+  await bulkBugDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(bulkBugDialog).toBeHidden()
 
   await detail.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(detail).toBeHidden()
