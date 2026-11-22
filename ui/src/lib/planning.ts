@@ -1,4 +1,4 @@
-import { allowedTransitions, boardColumns, targetStatusForColumn } from './workspace'
+import { allowedTransitions, boardColumnFor, boardColumns, targetStatusForColumn } from './workspace'
 import type { BoardColumn } from './workspace'
 import type {
   CustomField,
@@ -665,6 +665,76 @@ export function groupBySwimlane(
     label: key === 'unassigned' ? 'Unassigned' : laneTitle(key),
     items: groups.get(key) ?? [],
   }))
+}
+
+// The board renders one page of cards per column and reveals more on demand.
+// Keeping the page size here lets the component, tests and the stress spec
+// agree on what "initial render" means.
+export const BOARD_COLUMN_PAGE_SIZE = 40
+export const BOARD_FILTER_DEBOUNCE_MS = 180
+
+export interface BoardLaneColumn {
+  column: BoardColumn
+  items: WorkItem[]
+}
+
+export interface BoardLane {
+  key: string
+  label: string
+  items: WorkItem[]
+  columns: BoardLaneColumn[]
+}
+
+// buildBoardLanes groups and sorts once per lane instead of filtering the full
+// item list for every column. On a 2,000-card board that turns the old
+// O(lanes x columns x items) pass into O(items + items log items).
+export function buildBoardLanes(
+  items: WorkItem[],
+  swimlane: string,
+  memberLabel: (userId: string) => string,
+  sort: BoardSort,
+  columns: BoardColumn[] = boardColumns,
+): BoardLane[] {
+  const statusColumn = new Map<string, string>()
+  for (const column of columns) {
+    for (const status of column.statuses) statusColumn.set(status, column.key)
+  }
+  return groupBySwimlane(items, swimlane, memberLabel).map((lane) => {
+    const buckets = new Map<string, WorkItem[]>()
+    for (const column of columns) buckets.set(column.key, [])
+    for (const item of lane.items) {
+      const key = statusColumn.get(item.status)
+      if (key) buckets.get(key)?.push(item)
+    }
+    return {
+      key: lane.key,
+      label: lane.label,
+      items: lane.items,
+      columns: columns.map((column) => ({
+        column,
+        items: (buckets.get(column.key) ?? []).sort((a, b) => compareBoardItems(a, b, sort)),
+      })),
+    }
+  })
+}
+
+// boardWipCounts counts every effective item once. WIP limits are based on the
+// unfiltered column population, matching the server-side policy.
+export function boardWipCounts(
+  items: WorkItem[],
+  columns: BoardColumn[] = boardColumns,
+): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const column of columns) counts[column.key] = 0
+  for (const item of items) {
+    const column = boardColumnFor(item.status)
+    counts[column.key] = (counts[column.key] ?? 0) + 1
+  }
+  return counts
+}
+
+export function nextVisibleCount(current: number, total: number, pageSize = BOARD_COLUMN_PAGE_SIZE): number {
+  return Math.min(total, current > 0 ? current + pageSize : pageSize)
 }
 
 export interface WipState {

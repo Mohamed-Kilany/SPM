@@ -65,7 +65,7 @@ The required pull-request gate (`.github/workflows/pr-gate.yml`) runs:
 |---|---|
 | Go | `go mod verify`, `gofmt`, `go vet`, `govulncheck`, `go test ./... -race`, static build |
 | API contract | route inventory matches `docs/openapi.yaml`; Redocly lint |
-| UI | `npm audit --audit-level=high`, `vue-tsc --noEmit`, Vitest, Vite production build |
+| UI | `npm audit --audit-level=high`, `vue-tsc --noEmit`, Vitest, Vite production build, gzip bundle budget |
 | AI | `pip-audit`, `pytest` for the FastAPI service |
 | Compose | `docker compose config` for the production and test stacks |
 | Images | Docker build, Syft SPDX SBOM and Trivy HIGH/CRITICAL scan of the API, UI and AI images |

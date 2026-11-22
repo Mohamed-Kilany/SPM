@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BOARD_COLUMN_PAGE_SIZE,
   boardFilterCount,
   boardFiltersFromQuery,
   boardFiltersToQuery,
   boardFiltersToSaved,
   boardMoveAnnouncement,
   boardSortFromId,
+  boardWipCounts,
+  buildBoardLanes,
+  nextVisibleCount,
   boardSortFromSaved,
   boardSortId,
   boardSortToSaved,
@@ -456,5 +460,74 @@ describe('board moves', () => {
       { itemId: 'd', key: 'SPM-4', title: 'D', outcome: 'skipped' as const, message: 'Already here' },
     ]
     expect(summarizeBoardMoves(results)).toEqual({ moved: 2, failed: 1, skipped: 1 })
+  })
+})
+
+describe('board scale', () => {
+  it('groups each lane into columns in one ordered pass', () => {
+    const items = [
+      item({ id: 'a', key: 'SPM-1', item_number: 1, status: 'ready', priority: 'low' }),
+      item({ id: 'b', key: 'SPM-2', item_number: 2, status: 'in_progress', priority: 'critical' }),
+      item({ id: 'c', key: 'SPM-3', item_number: 3, status: 'triaged', priority: 'high' }),
+      item({ id: 'd', key: 'SPM-4', item_number: 4, status: 'blocked', priority: 'medium' }),
+    ]
+    const lanes = buildBoardLanes(items, 'none', (id) => id, { field: 'priority', direction: 'asc' })
+    expect(lanes).toHaveLength(1)
+    expect(lanes[0]!.columns.map((column) => column.items.map((entry) => entry.id))).toEqual([
+      [],
+      ['c', 'a'],
+      ['b'],
+      [],
+      [],
+      [],
+      ['d'],
+    ])
+  })
+
+  it('places 2,000 cards without losing or duplicating any', () => {
+    const statuses = ['backlog', 'ready', 'in_progress', 'in_review', 'in_qa', 'done', 'blocked']
+    const priorities = ['critical', 'high', 'medium', 'low']
+    const types = ['story', 'task', 'bug', 'spike', 'chore', 'subtask']
+    const items = Array.from({ length: 2000 }, (_, index) =>
+      item({
+        id: `item-${index}`,
+        key: `SPM-${index + 1}`,
+        item_number: index + 1,
+        status: statuses[index % statuses.length]!,
+        priority: priorities[index % priorities.length]!,
+        type: types[index % types.length]!,
+      }),
+    )
+    const started = performance.now()
+    const lanes = buildBoardLanes(items, 'type', (id) => id, { field: 'priority', direction: 'asc' })
+    const elapsed = performance.now() - started
+    const rendered = lanes.flatMap((lane) => lane.columns.flatMap((column) => column.items))
+    expect(rendered).toHaveLength(2000)
+    expect(new Set(rendered.map((entry) => entry.id)).size).toBe(2000)
+    // Generous headroom for shared CI runners; the local pass is well under 50 ms.
+    expect(elapsed).toBeLessThan(250)
+  })
+
+  it('counts WIP once per effective item, including shared statuses', () => {
+    const items = [
+      item({ id: 'a', status: 'backlog' }),
+      item({ id: 'b', status: 'new' }),
+      item({ id: 'c', status: 'cancelled' }),
+      item({ id: 'd', status: 'in_progress' }),
+      item({ id: 'e', status: 'done' }),
+      item({ id: 'f', status: 'closed' }),
+    ]
+    expect(boardWipCounts(items)).toMatchObject({
+      backlog: 3,
+      in_progress: 1,
+      done: 2,
+    })
+  })
+
+  it('pages columns and clamps the final page', () => {
+    expect(nextVisibleCount(0, 285)).toBe(BOARD_COLUMN_PAGE_SIZE)
+    expect(nextVisibleCount(BOARD_COLUMN_PAGE_SIZE, 285)).toBe(BOARD_COLUMN_PAGE_SIZE * 2)
+    expect(nextVisibleCount(280, 285)).toBe(285)
+    expect(nextVisibleCount(0, 7)).toBe(7)
   })
 })
