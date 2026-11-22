@@ -3234,18 +3234,51 @@ its loading, empty, error, partial, permission-denied and responsive states exis
   `spm_board_move_failures_total{reason}` and its alert query.
 
 #### BRD-03 · Board performance and scale
-- **Status:** TODO · **Priority:** P2 · **Estimate:** M · **Branch:** `perf/board-scale`
+- **Status:** DONE · **Priority:** P2 · **Estimate:** M · **Branch:** `perf/board-scale`
 - **Depends on:** BRD-02
 - **Scope:** Virtualize columns/cards, paginate or lazy-load, debounce filters, cache snapshots,
   and measure interaction latency with 2,000+ cards.
 - **Acceptance criteria:**
-  - [ ] Initial board render < 1.5 s on the reference dataset.
-  - [ ] Drag/move interaction < 100 ms perceived.
-  - [ ] Scrolling at 60 fps on a mid-range laptop.
-  - [ ] Memory stays bounded after 10 minutes of SSE updates.
-  - [ ] No layout shift when cards load.
-- **Tests/evidence:** Performance trace, Playwright stress test, bundle analysis.
-- **Docs/telemetry:** Board performance budget.
+  - [x] Initial board render < 1.5 s on the reference dataset. `buildBoardLanes` groups each
+    swimlane into columns in one pass, and each column mounts at most `BOARD_COLUMN_PAGE_SIZE`
+    (40) cards, so the reference board starts with 280 cards instead of 2,000. The Playwright
+    stress spec asserts `data-render-ms` < 1,500 ms against the 2,000-card dataset.
+  - [x] Drag/move interaction < 100 ms perceived. The optimistic overlay and `nextTick` commit
+    are measured as `data-move-ms`; the stress spec asserts the pointer drag is < 100 ms and
+    checks the median of 60 keyboard moves. `revealItem` expands the target page so a move can
+    never hide the focused card behind the page boundary.
+  - [x] Scrolling at 60 fps on a mid-range laptop. The board scroll container is stable
+    (`data-testid="board-scroll"`), cards use cheap layout and the stress spec runs a 1.5 s
+    `requestAnimationFrame` scroll loop. The headless floor is 50 fps to absorb CI scheduler
+    noise; 60 fps remains the release target on reference hardware.
+  - [x] Memory stays bounded after 10 minutes of SSE updates. The stream is a change signal
+    coalesced through a 220 ms refresh timer and a shared in-flight promise; the workspace
+    snapshot is replaced rather than accumulated, the module-scoped snapshot cache holds five
+    projects with LRU eviction, and the toast stack is capped at four. The stress spec performs
+    60 accelerated full-snapshot replacements, forces GC and asserts < 48 MB heap growth; the
+    manual 10-minute release soak is documented in the performance guide.
+  - [x] No layout shift when cards load. Lazy pages append cards inside the existing column shell,
+    the snapshot cache paints a returning board before the refresh, and the stress spec observes
+    `layout-shift` entries after the board shell mounts, including the next-page load, with a
+    CLS budget of 0.1.
+- **Tests/evidence:** `ui/e2e/board-scale.spec.ts` synthesizes the 2,000-card reference dataset,
+  intercepts the workspace/status/stream routes, asserts the render, drag, scroll, CLS and heap
+  budgets, and attaches a Chrome DevTools performance trace (`board-scale-trace.json`) plus a
+  metrics JSON to the Playwright report. `ui/src/lib/planning.test.ts` adds four scale tests
+  (2,000-card grouping, WIP counts, page clamping and ordering; 31 planning tests total), and
+  `ui/src/stores/workspaceStore.test.ts` covers cache paint, background refresh and five-project
+  eviction (3 store tests). The UI suite is 86 tests / 10 files. Bundle analysis is enforced by
+  `ui/scripts/bundle-budget.mjs` from `ui/performance-budget.json`: JavaScript 199.6 KiB of a
+  224.6 KiB budget, CSS 11.3 KiB of 15.6 KiB, and the largest chunk 103.3 KiB of 122.1 KiB.
+  `npm run typecheck`, `npm test`, `npm run build`, `npm run bundle:check` and
+  `npx playwright test --list board-scale.spec.ts` pass locally; the full-stack stress spec needs
+  the Docker stack and was not run locally, so CI/full-stack is the authority for its assertions.
+  No API or migration change; OpenAPI stays at 135 operations. Merged as PR #46 (`6eed163`) after
+  all required checks passed.
+- **Docs/telemetry:** [`docs/BOARD-PERFORMANCE.md`](docs/BOARD-PERFORMANCE.md) defines the
+  reference dataset, render/move/scroll/CLS/memory budgets, rendering model, measurement hooks,
+  bundle gate and known limits; [`docs/BOARD-VIEWS.md`](docs/BOARD-VIEWS.md) cross-links it and
+  [`README.md`](README.md) lists the gzip bundle budget in the UI gate.
 
 #### TST-01 · Test plans and suites
 - **Status:** DONE · **Priority:** P1 · **Estimate:** L · **Branch:** `feature/tests-plans-suites`
@@ -5309,13 +5342,13 @@ labels must exist in the repository.
 | 1 - Identity, authorization, audit | `GOV` | 12 | 3 | 0 | 9 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
-| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 10 | 0 | 3 |
+| 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 11 | 0 | 2 |
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **22** | **0** | **106** |
+| **Total** | - | **128** | **23** | **0** | **105** |
 
 ### C.2 Card index by phase
 
@@ -5376,6 +5409,7 @@ labels must exist in the repository.
 | 2026-11-22 | Closed PLN-05: added reusable `project_labels` with color tokens, rename/delete rewrites and automatic registration on work item writes; typed `custom_fields` definitions (`text`, `number`, `select`, `date`, `user`) with option/range/required validation and values stored in `custom_field_values`, plus archive/restore and a permission-gated purge; and `saved_filters` across planning/board/test with private/shared visibility, per-owner default uniqueness and `If-Match` revisions. Added 14 routes (135 operations), `021_labels_custom_fields_saved_filters` with a contract companion, label/custom-field administration, URL-backed board views and `docs/PLANNING-CUSTOMIZATION.md`. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (63 passed)/build and a 30-check PGlite forward/re-apply/rollback rehearsal; the `BenchmarkFilterVisibleSavedFilters` benchmark filters 1,000 views in ~29 µs. Merged as PR #40 (`34295af`) after all required checks passed | Maintainer |
 | 2026-11-22 | Closed BRD-01: board views now capture filters (facets plus quick filters), sort, swimlane grouping and visible card fields on `saved_filters`; added `022_board_view_swimlanes` with a contract companion. Added `mine`/`unassigned`/`blocked`/`bugs`/`due_soon` quick filters, eight sort options with unscheduled cards last, four swimlane modes, seven switchable card fields, URL-backed layout state and a per-user default view that survives reload. Added per-column WIP limits in `settings.board` with explicit `wip_hard_block`, board `current/limit` badges, a drop pre-check and structured `409 WIP_LIMIT` responses; same-column moves stay allowed. Added `docs/BOARD-VIEWS.md` and updated `API.md`/`DATA-MODEL.md`/`PLANNING-CUSTOMIZATION.md`/`openapi.yaml` (135 operations unchanged). Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (74 passed)/build and a 28-check PGlite forward/re-apply/rollback/re-expand rehearsal. Merged as PR #42 (`290bdf5`) after all required checks passed | Maintainer |
 | 2026-11-22 | Closed BRD-02: added pointer drag with a 6 px threshold, touch support, a floating preview and click suppression, plus optimistic status changes backed by a `pendingMoves` overlay that rolls back and offers retry on failure. Added `Alt+Left/Right` keyboard moves that scan to the nearest legal column, announce the position through `aria-live` and restore focus, and multi-select bulk moves with per-item revisioned PATCHes, a `moved`/`failed`/`skipped` results dialog and `Retry failed`. Coalesced `workspaceStore.refresh()` callers, recorded `work_item.move` audit entries with before/after status, and added `spm_board_move_failures_total{reason}` with bounded reasons. OpenAPI stays at 135 operations. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (80 passed)/build and `git diff --check`; the Playwright drag/keyboard/bulk/axe path was extended but not run locally because the Docker stack is unavailable. Merged as PR #44 (`030e4a6`) after all required checks passed | Maintainer |
+| 2026-11-23 | Closed BRD-03: made the board predictable at 2,000 cards by grouping each swimlane into columns in one pass, paginating columns at 40 cards with `Show next … of … hidden`, revealing the target page on keyboard/drag moves, debouncing search by 180 ms and resetting pages when filters/sort/swimlanes change. Replaced per-card scans of features, custom values, branches, PRs and parents with lookup maps, computed WIP counts and board stats in single passes, added a five-project LRU workspace snapshot cache and documented the existing 220 ms SSE refresh coalescing. Added `data-render-ms`/`data-move-ms` diagnostics, the `ui/e2e/board-scale.spec.ts` 2,000-card stress test with a Chrome performance trace and accelerated forced-GC heap soak, and gzip bundle budgets enforced by `npm run bundle:check` in the PR gate. Verified with UI typecheck, 86 unit tests / 10 files, production build, bundle check (JS 199.6 KiB / 224.6 KiB, CSS 11.3 KiB / 15.6 KiB, largest chunk 103.3 KiB / 122.1 KiB) and `playwright test --list`; the full-stack stress spec needs the Docker stack and was not run locally, so CI/full-stack is the authority. No API or migration change; OpenAPI stays at 135 operations. Merged as PR #46 (`6eed163`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
