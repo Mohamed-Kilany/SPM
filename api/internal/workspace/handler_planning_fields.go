@@ -1004,6 +1004,7 @@ type savedFilterRequest struct {
 	Filters         map[string]any `json:"filters"`
 	Sort            map[string]any `json:"sort"`
 	Columns         []string       `json:"columns"`
+	Swimlane        string         `json:"swimlane"`
 	Pinned          bool           `json:"pinned"`
 	IsDefault       bool           `json:"is_default"`
 	ExpectedVersion *int64         `json:"expected_version"`
@@ -1012,6 +1013,16 @@ type savedFilterRequest struct {
 func validFilterScope(scope string) bool {
 	switch scope {
 	case "planning", "board", "test":
+		return true
+	}
+	return false
+}
+
+// validSwimlane is the closed set of board swimlane groupings. "none" is the
+// ungrouped default; every other value groups cards by one visible facet.
+func validSwimlane(swimlane string) bool {
+	switch swimlane {
+	case "none", "assignee", "priority", "type":
 		return true
 	}
 	return false
@@ -1048,7 +1059,16 @@ func validateSavedFilter(req *savedFilterRequest) error {
 		}
 		req.Columns[index] = column
 	}
-	raw, err := json.Marshal(map[string]any{"filters": req.Filters, "sort": req.Sort, "columns": req.Columns})
+	req.Swimlane = strings.ToLower(strings.TrimSpace(req.Swimlane))
+	if req.Swimlane == "" {
+		req.Swimlane = "none"
+	}
+	if !validSwimlane(req.Swimlane) {
+		return errors.New("Swimlane must be none, assignee, priority or type")
+	}
+	raw, err := json.Marshal(map[string]any{
+		"filters": req.Filters, "sort": req.Sort, "columns": req.Columns, "swimlane": req.Swimlane,
+	})
 	if err != nil {
 		return errors.New("Saved filter is not valid JSON")
 	}
@@ -1178,15 +1198,15 @@ func (h *Handler) CreateSavedFilter(c *gin.Context) {
 	}
 	var filter SavedFilter
 	err = tx.QueryRow(c.Request.Context(), `
-		INSERT INTO saved_filters (project_id, name, scope, visibility, owner_id, filters, sort, columns, pinned, is_default)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		RETURNING id, project_id, name, scope, visibility, owner_id, filters, sort, columns,
+		INSERT INTO saved_filters (project_id, name, scope, visibility, owner_id, filters, sort, columns, swimlane, pinned, is_default)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		RETURNING id, project_id, name, scope, visibility, owner_id, filters, sort, columns, swimlane,
 		          pinned, is_default, created_at, updated_at, revision`,
 		projectID, req.Name, req.Scope, req.Visibility, *actor, rawFilters, rawSort, rawColumns,
-		req.Pinned, req.IsDefault).Scan(
+		req.Swimlane, req.Pinned, req.IsDefault).Scan(
 		&filter.ID, &filter.ProjectID, &filter.Name, &filter.Scope, &filter.Visibility,
-		&filter.OwnerID, &rawFilters, &rawSort, &rawColumns, &filter.Pinned, &filter.IsDefault,
-		&filter.CreatedAt, &filter.UpdatedAt, &filter.Revision)
+		&filter.OwnerID, &rawFilters, &rawSort, &rawColumns, &filter.Swimlane, &filter.Pinned,
+		&filter.IsDefault, &filter.CreatedAt, &filter.UpdatedAt, &filter.Revision)
 	if err != nil {
 		if isUniqueViolation(err) {
 			apiError(c, http.StatusConflict, "FILTER_EXISTS", "A saved filter with that name already exists for this scope")
@@ -1272,15 +1292,15 @@ func (h *Handler) UpdateSavedFilter(c *gin.Context) {
 	var filter SavedFilter
 	err = tx.QueryRow(c.Request.Context(), `
 		UPDATE saved_filters SET name=$3, scope=$4, visibility=$5, filters=$6, sort=$7, columns=$8,
-		pinned=$9, is_default=$10, updated_at=NOW()
-		WHERE id=$1 AND project_id=$2`+revisionClause(11)+`
-		RETURNING id, project_id, name, scope, visibility, owner_id, filters, sort, columns,
+		swimlane=$9, pinned=$10, is_default=$11, updated_at=NOW()
+		WHERE id=$1 AND project_id=$2`+revisionClause(12)+`
+		RETURNING id, project_id, name, scope, visibility, owner_id, filters, sort, columns, swimlane,
 		          pinned, is_default, created_at, updated_at, revision`,
 		filterID, projectID, req.Name, req.Scope, req.Visibility, rawFilters, rawSort, rawColumns,
-		req.Pinned, req.IsDefault, revisionValue(expected)).Scan(
+		req.Swimlane, req.Pinned, req.IsDefault, revisionValue(expected)).Scan(
 		&filter.ID, &filter.ProjectID, &filter.Name, &filter.Scope, &filter.Visibility,
-		&filter.OwnerID, &rawFilters, &rawSort, &rawColumns, &filter.Pinned, &filter.IsDefault,
-		&filter.CreatedAt, &filter.UpdatedAt, &filter.Revision)
+		&filter.OwnerID, &rawFilters, &rawSort, &rawColumns, &filter.Swimlane, &filter.Pinned,
+		&filter.IsDefault, &filter.CreatedAt, &filter.UpdatedAt, &filter.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		h.revisionFailure(c, "saved filter", "saved_filters", filterID, projectID)
 		return
@@ -1351,12 +1371,12 @@ func (h *Handler) savedFilter(ctx context.Context, projectID, filterID uuid.UUID
 	var filter SavedFilter
 	var rawFilters, rawSort, rawColumns []byte
 	err := h.store.DB().QueryRow(ctx, `
-		SELECT id, project_id, name, scope, visibility, owner_id, filters, sort, columns,
+		SELECT id, project_id, name, scope, visibility, owner_id, filters, sort, columns, swimlane,
 		       pinned, is_default, created_at, updated_at, revision
 		FROM saved_filters WHERE id=$1 AND project_id=$2`, filterID, projectID).Scan(
 		&filter.ID, &filter.ProjectID, &filter.Name, &filter.Scope, &filter.Visibility,
-		&filter.OwnerID, &rawFilters, &rawSort, &rawColumns, &filter.Pinned, &filter.IsDefault,
-		&filter.CreatedAt, &filter.UpdatedAt, &filter.Revision)
+		&filter.OwnerID, &rawFilters, &rawSort, &rawColumns, &filter.Swimlane, &filter.Pinned,
+		&filter.IsDefault, &filter.CreatedAt, &filter.UpdatedAt, &filter.Revision)
 	if err != nil {
 		return SavedFilter{}, err
 	}

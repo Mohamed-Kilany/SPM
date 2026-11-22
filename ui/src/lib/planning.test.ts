@@ -4,19 +4,37 @@ import {
   boardFiltersFromQuery,
   boardFiltersToQuery,
   boardFiltersToSaved,
+  boardSortFromId,
+  boardSortFromSaved,
+  boardSortId,
+  boardSortToSaved,
+  boardSwimlaneFromSaved,
+  boardViewFromSaved,
   canManageSavedFilter,
   colorForLabel,
+  compareBoardItems,
   customFieldDisplay,
   customFieldDraft,
   customFieldPayload,
   customValueMap,
+  defaultBoardView,
+  groupBySwimlane,
+  itemMatchesQuickFilters,
   labelDot,
   labelTone,
   missingRequiredCustomField,
   normalizeLabelInput,
   optionLines,
   parseOptionLines,
+  quickFiltersFromSaved,
+  quickFiltersFromValue,
+  quickFiltersToSaved,
   savedFilterToBoard,
+  toggleQuickFilter,
+  visibleFieldsFromSaved,
+  visibleFieldsFromValue,
+  visibleFieldsToSaved,
+  wipState,
   workItemMatchesFilters,
 } from './planning'
 import type {
@@ -52,7 +70,8 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
 function saved(overrides: Partial<SavedFilter> = {}): SavedFilter {
   return {
     id: 'view-1', project_id: 'project-1', name: 'QA', scope: 'board', visibility: 'shared',
-    owner_id: 'user-1', filters: {}, sort: {}, columns: [], pinned: false, is_default: false,
+    owner_id: 'user-1', filters: {}, sort: {}, columns: [], swimlane: 'none',
+    pinned: false, is_default: false,
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', revision: 1,
     ...overrides,
   }
@@ -227,5 +246,169 @@ describe('saved view permissions', () => {
     expect(canManageSavedFilter(saved(), 'user-2', 'maintainer', false)).toBe(true)
     expect(canManageSavedFilter(saved(), 'user-2', 'developer', true)).toBe(true)
     expect(canManageSavedFilter(undefined, 'user-1', 'owner', true)).toBe(false)
+  })
+})
+
+describe('board views', () => {
+  it('captures filters, swimlane, sort, visible fields and quick filters', () => {
+    const view = saved({
+      filters: { search: 'checkout', quick: ['mine', 'bugs'] },
+      sort: { field: 'due_soon', direction: 'asc' },
+      columns: ['priority', 'labels'],
+      swimlane: 'assignee',
+    })
+    expect(boardSwimlaneFromSaved(view)).toBe('assignee')
+    expect(boardSortFromSaved(view)).toEqual({ field: 'due_soon', direction: 'asc' })
+    expect(visibleFieldsFromSaved(view)).toEqual(['priority', 'labels'])
+    expect(quickFiltersFromSaved(view)).toEqual(['mine', 'bugs'])
+
+    const state = boardViewFromSaved(view, [])
+    expect(state.filters.search).toBe('checkout')
+    expect(state.swimlane).toBe('assignee')
+    expect(state.fields).toEqual(['priority', 'labels'])
+    expect(state.quick).toEqual(['mine', 'bugs'])
+  })
+
+  it('falls back safely for unknown layout values', () => {
+    expect(boardSwimlaneFromSaved(saved({ swimlane: 'epic' }))).toBe('none')
+    expect(boardSwimlaneFromSaved(undefined)).toBe('none')
+    expect(boardSortFromSaved(saved({ sort: { field: 'chaos' } }))).toEqual({
+      field: 'priority',
+      direction: 'asc',
+    })
+    expect(visibleFieldsFromSaved(saved())).toContain('assignee')
+    expect(visibleFieldsFromValue('labels,unknown,due_date')).toEqual([
+      'labels',
+      'due_date',
+    ])
+    expect(visibleFieldsToSaved(['labels', 'priority', 'nope'])).toEqual(['priority', 'labels'])
+  })
+
+  it('round-trips sort ids and quick filter values', () => {
+    for (const option of [
+      { field: 'priority', direction: 'asc' },
+      { field: 'newest', direction: 'desc' },
+      { field: 'key', direction: 'desc' },
+    ] as const) {
+      expect(boardSortFromId(boardSortId(option))).toEqual(option)
+    }
+    expect(boardSortToSaved({ field: 'oldest', direction: 'asc' })).toEqual({
+      field: 'oldest',
+      direction: 'asc',
+    })
+    expect(quickFiltersFromValue('mine, blocked,nope,mine')).toEqual(['mine', 'blocked'])
+    expect(quickFiltersToSaved(['bugs', 'bugs', 'mine'])).toEqual(['bugs', 'mine'])
+    expect(toggleQuickFilter(['bugs'], 'mine')).toEqual(['bugs', 'mine'])
+    expect(toggleQuickFilter(['bugs', 'mine'], 'bugs')).toEqual(['mine'])
+  })
+
+  it('chooses the current user default before any shared default', () => {
+    const shared = saved({ id: 'shared', owner_id: 'user-2', is_default: true })
+    const mine = saved({ id: 'mine', owner_id: 'user-1', is_default: true })
+    expect(defaultBoardView([shared, mine], 'user-1')?.id).toBe('mine')
+    expect(defaultBoardView([shared], 'user-1')?.id).toBe('shared')
+    expect(defaultBoardView([saved()], 'user-1')).toBeUndefined()
+  })
+})
+
+describe('board ordering', () => {
+  it('orders by priority, due date and key with stable tie-breaks', () => {
+    const critical = item({ id: 'a', item_number: 3, priority: 'critical', due_date: '2026-12-01T00:00:00Z' })
+    const low = item({ id: 'b', item_number: 2, priority: 'low', due_date: null })
+    const high = item({ id: 'c', item_number: 1, priority: 'high', due_date: '2026-11-25T00:00:00Z' })
+
+    const priority = [low, critical, high].sort((a, b) =>
+      compareBoardItems(a, b, { field: 'priority', direction: 'asc' }),
+    )
+    expect(priority.map((entry) => entry.id)).toEqual(['a', 'c', 'b'])
+    const reversed = [low, critical, high].sort((a, b) =>
+      compareBoardItems(a, b, { field: 'priority', direction: 'desc' }),
+    )
+    expect(reversed.map((entry) => entry.id)).toEqual(['b', 'c', 'a'])
+
+    const due = [low, critical, high].sort((a, b) =>
+      compareBoardItems(a, b, { field: 'due_soon', direction: 'asc' }),
+    )
+    expect(due.map((entry) => entry.id)).toEqual(['c', 'a', 'b'])
+    const dueLatest = [low, critical, high].sort((a, b) =>
+      compareBoardItems(a, b, { field: 'due_later', direction: 'desc' }),
+    )
+    expect(dueLatest.map((entry) => entry.id)).toEqual(['a', 'c', 'b'])
+
+    const keyed = [critical, low, high].sort((a, b) =>
+      compareBoardItems(a, b, { field: 'key', direction: 'asc' }),
+    )
+    expect(keyed.map((entry) => entry.id)).toEqual(['c', 'b', 'a'])
+  })
+
+  it('keeps unscheduled cards last regardless of direction', () => {
+    const scheduled = item({ id: 'a', due_date: '2026-12-01T00:00:00Z' })
+    const unscheduled = item({ id: 'b', due_date: null })
+    const ordered = [unscheduled, scheduled].sort((a, b) =>
+      compareBoardItems(a, b, { field: 'due_later', direction: 'desc' }),
+    )
+    expect(ordered.map((entry) => entry.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('swimlanes and quick filters', () => {
+  it('groups by assignee, priority and type in a stable order', () => {
+    const items = [
+      item({ id: 'a', assignee_id: 'user-2', priority: 'low', type: 'task' }),
+      item({ id: 'b', assignee_id: null, priority: 'critical', type: 'bug' }),
+      item({ id: 'c', assignee_id: 'user-1', priority: 'high', type: 'story' }),
+    ]
+    const byAssignee = groupBySwimlane(items, 'assignee', (id) => id)
+    expect(byAssignee.map((lane) => lane.key)).toEqual(['user-1', 'user-2', 'unassigned'])
+    expect(byAssignee[2]?.label).toBe('Unassigned')
+
+    const byPriority = groupBySwimlane(items, 'priority')
+    expect(byPriority.map((lane) => lane.key)).toEqual(['critical', 'high', 'low'])
+    expect(byPriority[0]?.label).toBe('Critical')
+
+    const byType = groupBySwimlane(items, 'type')
+    expect(byType.map((lane) => lane.key)).toEqual(['story', 'task', 'bug'])
+
+    const none = groupBySwimlane(items, 'none')
+    expect(none).toHaveLength(1)
+    expect(none[0]?.items).toHaveLength(3)
+  })
+
+  it('combines quick filters without weakening the facets', () => {
+    const now = new Date('2026-11-22T12:00:00Z')
+    const mine = item({ assignee_id: 'user-1' })
+    const other = item({ id: 'item-2', assignee_id: 'user-2' })
+    const bug = item({ id: 'item-3', type: 'bug', assignee_id: 'user-1' })
+    expect(itemMatchesQuickFilters(mine, ['mine'], { userId: 'user-1', now })).toBe(true)
+    expect(itemMatchesQuickFilters(other, ['mine'], { userId: 'user-1', now })).toBe(false)
+    expect(itemMatchesQuickFilters(mine, ['mine', 'bugs'], { userId: 'user-1', now })).toBe(false)
+    expect(itemMatchesQuickFilters(bug, ['mine', 'bugs'], { userId: 'user-1', now })).toBe(true)
+    expect(itemMatchesQuickFilters(mine, ['unassigned'], { userId: 'user-1', now })).toBe(false)
+    expect(itemMatchesQuickFilters(item({ assignee_id: null }), ['unassigned'], { userId: 'user-1', now })).toBe(true)
+    expect(itemMatchesQuickFilters(item({ status: 'blocked' }), ['blocked'], { userId: 'user-1', now })).toBe(true)
+  })
+
+  it('treats due_soon as a seven-day horizon and ignores unscheduled cards', () => {
+    const now = new Date('2026-11-22T12:00:00Z')
+    expect(
+      itemMatchesQuickFilters(item({ due_date: '2026-11-25T00:00:00Z' }), ['due_soon'], { userId: 'user-1', now }),
+    ).toBe(true)
+    expect(
+      itemMatchesQuickFilters(item({ due_date: '2026-12-10T00:00:00Z' }), ['due_soon'], { userId: 'user-1', now }),
+    ).toBe(false)
+    expect(itemMatchesQuickFilters(item({ due_date: null }), ['due_soon'], { userId: 'user-1', now })).toBe(false)
+  })
+})
+
+describe('WIP policy', () => {
+  it('reports no policy for a zero or missing limit', () => {
+    expect(wipState(0, 5)).toBeNull()
+    expect(wipState(undefined, 5)).toBeNull()
+  })
+
+  it('marks reach and exceed separately so a lowered limit is visible', () => {
+    expect(wipState(5, 4)).toEqual({ current: 4, limit: 5, reached: false, exceeded: false })
+    expect(wipState(5, 5)).toEqual({ current: 5, limit: 5, reached: true, exceeded: false })
+    expect(wipState(5, 6)).toEqual({ current: 6, limit: 5, reached: true, exceeded: true })
   })
 })

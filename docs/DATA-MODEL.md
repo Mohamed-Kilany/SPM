@@ -236,9 +236,40 @@ migration.
 - `saved_filters_default_idx` is a partial unique index on
   `(project_id, owner_id, scope) WHERE is_default`, so each owner has at most
   one default view per surface.
+- `saved_filters.swimlane` is constrained to `none`, `assignee`, `priority` or
+  `type` (migration `022`); `columns` remains a JSON array of visible card
+  fields for board views.
 - `schema_migrations.version` is unique; a migration can never be applied twice.
 
-## 7. Changing the model
+## 7. Project settings documents
+
+`projects.settings` is a JSON document rather than a set of columns because its
+shape is policy, not identity. Two rules keep it safe:
+
+- the API decodes it through `decodeSettings`, which merges a partial document
+  onto `DefaultProjectSettings`, so a missing key never means "zero".
+- `UpdateSettings` replaces the whole document. Clients must send every
+  section they want to keep; the UI re-sends `merge_policy`, `board` and the
+  delivery fields together.
+
+The board policy is stored at `settings.board`:
+
+```json
+{
+  "board": {
+    "wip_limits": { "in_progress": 4, "review": 3 },
+    "wip_hard_block": false
+  }
+}
+```
+
+`wip_limits` is keyed by board column (`backlog`, `ready`, `in_progress`,
+`review`, `qa`, `done`, `blocked`), validated to the range 0–999 and normalized
+so zero limits are removed. `wip_hard_block` is opt-in. Migration `022` adds the
+view-side counterpart, `saved_filters.swimlane`; no column is added to
+`projects` for the policy itself. See [`BOARD-VIEWS.md`](BOARD-VIEWS.md).
+
+## 8. Changing the model
 
 See [`MIGRATION-GUIDE.md`](MIGRATION-GUIDE.md). In short: copy
 `migration_template.sql`, keep the forward migration additive and idempotent, add

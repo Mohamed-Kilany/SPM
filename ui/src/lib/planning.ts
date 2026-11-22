@@ -321,3 +321,358 @@ export function canManageSavedFilter(
   if (canSettingsWrite) return true
   return projectRole === 'owner' || projectRole === 'maintainer'
 }
+
+// ---------------------------------------------------------------------------
+// Board views: swimlanes, sort, quick filters, visible fields and WIP policy
+// ---------------------------------------------------------------------------
+
+export const BOARD_COLUMNS = [
+  'backlog',
+  'ready',
+  'in_progress',
+  'review',
+  'qa',
+  'done',
+  'blocked',
+] as const
+
+export type BoardColumnKey = (typeof BOARD_COLUMNS)[number]
+
+export const BOARD_SWIMLANES: Array<{ value: string; label: string }> = [
+  { value: 'none', label: 'No swimlanes' },
+  { value: 'assignee', label: 'Assignee' },
+  { value: 'priority', label: 'Priority' },
+  { value: 'type', label: 'Work item type' },
+]
+
+export function boardSwimlaneFromSaved(filter: SavedFilter | undefined): string {
+  const value = filter?.swimlane
+  return BOARD_SWIMLANES.some((entry) => entry.value === value) ? String(value) : 'none'
+}
+
+export interface BoardVisibleField {
+  value: string
+  label: string
+}
+
+export const BOARD_VISIBLE_FIELDS: BoardVisibleField[] = [
+  { value: 'priority', label: 'Priority' },
+  { value: 'feature', label: 'Feature' },
+  { value: 'labels', label: 'Labels' },
+  { value: 'assignee', label: 'Assignee' },
+  { value: 'due_date', label: 'Due date' },
+  { value: 'delivery', label: 'Delivery links' },
+  { value: 'custom', label: 'Custom fields' },
+]
+
+export const DEFAULT_BOARD_FIELDS = BOARD_VISIBLE_FIELDS.map((field) => field.value)
+
+export function visibleFieldsFromSaved(filter: SavedFilter | undefined): string[] {
+  const known = new Set(DEFAULT_BOARD_FIELDS)
+  const saved = (filter?.columns ?? []).filter((column) => known.has(column))
+  if (!saved.length) return [...DEFAULT_BOARD_FIELDS]
+  return DEFAULT_BOARD_FIELDS.filter((field) => saved.includes(field))
+}
+
+export function visibleFieldsToSaved(fields: string[]): string[] {
+  return DEFAULT_BOARD_FIELDS.filter((field) => fields.includes(field))
+}
+
+export function fieldVisible(fields: string[], field: string): boolean {
+  return fields.includes(field)
+}
+
+export type BoardSortField = 'priority' | 'newest' | 'oldest' | 'due_soon' | 'due_later' | 'key'
+export type BoardSortDirection = 'asc' | 'desc'
+
+export interface BoardSort {
+  field: BoardSortField
+  direction: BoardSortDirection
+}
+
+export const BOARD_SORT_OPTIONS: Array<{ id: string; label: string; sort: BoardSort }> = [
+  { id: 'priority:asc', label: 'Priority: highest first', sort: { field: 'priority', direction: 'asc' } },
+  { id: 'priority:desc', label: 'Priority: lowest first', sort: { field: 'priority', direction: 'desc' } },
+  { id: 'newest:desc', label: 'Newest first', sort: { field: 'newest', direction: 'desc' } },
+  { id: 'oldest:asc', label: 'Oldest first', sort: { field: 'oldest', direction: 'asc' } },
+  { id: 'due_soon:asc', label: 'Due soonest first', sort: { field: 'due_soon', direction: 'asc' } },
+  { id: 'due_later:desc', label: 'Due latest first', sort: { field: 'due_later', direction: 'desc' } },
+  { id: 'key:asc', label: 'Key: ascending', sort: { field: 'key', direction: 'asc' } },
+  { id: 'key:desc', label: 'Key: descending', sort: { field: 'key', direction: 'desc' } },
+]
+
+export function emptyBoardSort(): BoardSort {
+  return { field: 'priority', direction: 'asc' }
+}
+
+export function boardSortId(sort: BoardSort): string {
+  return `${sort.field}:${sort.direction}`
+}
+
+export function boardSortFromId(id: string): BoardSort {
+  const option = BOARD_SORT_OPTIONS.find((entry) => entry.id === id)
+  return option ? { ...option.sort } : emptyBoardSort()
+}
+
+export function boardSortFromSaved(filter: SavedFilter | undefined): BoardSort {
+  const raw = filter?.sort ?? {}
+  const field = stringValue(raw.field)
+  const direction = raw.direction === 'desc' ? 'desc' : 'asc'
+  const option = BOARD_SORT_OPTIONS.find((entry) => entry.sort.field === field)
+  if (!option) return emptyBoardSort()
+  return { field: option.sort.field, direction: direction as BoardSortDirection }
+}
+
+export function boardSortToSaved(sort: BoardSort): Record<string, unknown> {
+  return { field: sort.field, direction: sort.direction }
+}
+
+function dueTime(item: WorkItem): number | null {
+  if (!item.due_date) return null
+  const time = Date.parse(item.due_date)
+  return Number.isNaN(time) ? null : time
+}
+
+function createdTime(item: WorkItem): number {
+  const time = Date.parse(item.created_at)
+  return Number.isNaN(time) ? 0 : time
+}
+
+function priorityValue(priority: string): number {
+  switch (priority) {
+    case 'critical':
+      return 0
+    case 'high':
+      return 1
+    case 'medium':
+      return 2
+    case 'low':
+      return 3
+    default:
+      return 4
+  }
+}
+
+// compareBoardItems is the single ordering used by the board. Unscheduled cards
+// always sort last for date fields so a missing due date never looks urgent.
+export function compareBoardItems(a: WorkItem, b: WorkItem, sort: BoardSort): number {
+  let result = 0
+  switch (sort.field) {
+    case 'priority':
+      result = priorityValue(a.priority) - priorityValue(b.priority)
+      break
+    case 'newest':
+      result = createdTime(b) - createdTime(a)
+      break
+    case 'oldest':
+      result = createdTime(a) - createdTime(b)
+      break
+    case 'due_soon':
+    case 'due_later': {
+      const left = dueTime(a)
+      const right = dueTime(b)
+      if (left === null && right === null) result = 0
+      else if (left === null) return 1
+      else if (right === null) return -1
+      else result = sort.field === 'due_soon' ? left - right : right - left
+      break
+    }
+    case 'key':
+      result = a.item_number - b.item_number
+      break
+  }
+  if (sort.field !== 'due_soon' && sort.field !== 'due_later' && sort.field !== 'newest' && sort.field !== 'oldest') {
+    if (sort.direction === 'desc') result = -result
+  }
+  if (result !== 0) return result
+  return b.item_number - a.item_number
+}
+
+export type BoardQuickFilter = 'mine' | 'unassigned' | 'blocked' | 'bugs' | 'due_soon'
+
+export const BOARD_QUICK_FILTERS: Array<{ value: BoardQuickFilter; label: string }> = [
+  { value: 'mine', label: 'Assigned to me' },
+  { value: 'unassigned', label: 'Unassigned' },
+  { value: 'blocked', label: 'Blocked' },
+  { value: 'bugs', label: 'Defects' },
+  { value: 'due_soon', label: 'Due in 7 days' },
+]
+
+const QUICK_FILTER_VALUES = new Set<string>(BOARD_QUICK_FILTERS.map((entry) => entry.value))
+
+export function quickFiltersFromSaved(filter: SavedFilter | undefined): BoardQuickFilter[] {
+  const raw = filter?.filters?.quick
+  if (!Array.isArray(raw)) return []
+  return raw.filter((entry): entry is BoardQuickFilter => typeof entry === 'string' && QUICK_FILTER_VALUES.has(entry))
+}
+
+export function quickFiltersFromValue(value: unknown): BoardQuickFilter[] {
+  if (typeof value !== 'string') return []
+  const seen = new Set<string>()
+  const parsed: BoardQuickFilter[] = []
+  for (const entry of value.split(',')) {
+    const trimmed = entry.trim()
+    if (!QUICK_FILTER_VALUES.has(trimmed) || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    parsed.push(trimmed as BoardQuickFilter)
+  }
+  return parsed
+}
+
+export function visibleFieldsFromValue(value: unknown): string[] {
+  if (typeof value !== 'string' || !value.trim()) return [...DEFAULT_BOARD_FIELDS]
+  const known = new Set(DEFAULT_BOARD_FIELDS)
+  const parsed = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => known.has(entry))
+  return parsed.length ? DEFAULT_BOARD_FIELDS.filter((field) => parsed.includes(field)) : [...DEFAULT_BOARD_FIELDS]
+}
+
+export function quickFiltersToSaved(quick: BoardQuickFilter[]): string[] {
+  return [...new Set(quick)]
+}
+
+export function toggleQuickFilter(
+  quick: BoardQuickFilter[],
+  value: BoardQuickFilter,
+): BoardQuickFilter[] {
+  return quick.includes(value) ? quick.filter((entry) => entry !== value) : [...quick, value]
+}
+
+const DUE_SOON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+export function itemMatchesQuickFilters(
+  item: WorkItem,
+  quick: BoardQuickFilter[],
+  context: { userId: string; now?: Date },
+): boolean {
+  const now = context.now ?? new Date()
+  for (const filter of quick) {
+    switch (filter) {
+      case 'mine':
+        if (!context.userId || item.assignee_id !== context.userId) return false
+        break
+      case 'unassigned':
+        if (item.assignee_id) return false
+        break
+      case 'blocked':
+        if (item.status !== 'blocked') return false
+        break
+      case 'bugs':
+        if (item.type !== 'bug') return false
+        break
+      case 'due_soon': {
+        const due = dueTime(item)
+        if (due === null) return false
+        if (due > now.getTime() + DUE_SOON_WINDOW_MS) return false
+        break
+      }
+    }
+  }
+  return true
+}
+
+export interface BoardViewState {
+  filters: BoardFilters
+  sort: BoardSort
+  swimlane: string
+  fields: string[]
+  quick: BoardQuickFilter[]
+}
+
+export function boardViewFromSaved(
+  filter: SavedFilter,
+  customFields: CustomField[],
+): BoardViewState {
+  return {
+    filters: savedFilterToBoard(filter, customFields),
+    sort: boardSortFromSaved(filter),
+    swimlane: boardSwimlaneFromSaved(filter),
+    fields: visibleFieldsFromSaved(filter),
+    quick: quickFiltersFromSaved(filter),
+  }
+}
+
+export function defaultBoardView(
+  views: SavedFilter[],
+  userId: string,
+): SavedFilter | undefined {
+  return (
+    views.find((view) => view.is_default && view.owner_id === userId) ??
+    views.find((view) => view.is_default)
+  )
+}
+
+export interface SwimlaneGroup {
+  key: string
+  label: string
+  items: WorkItem[]
+}
+
+const PRIORITY_LANE_ORDER = ['critical', 'high', 'medium', 'low', 'none']
+const TYPE_LANE_ORDER = ['story', 'task', 'bug', 'spike', 'chore', 'subtask']
+
+function laneTitle(value: string): string {
+  if (!value) return 'None'
+  return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, ' ')
+}
+
+// groupBySwimlane preserves the board 1000-item order inside each lane. Two
+// callers use it: the visible board and the tests, so lane ordering is explicit
+// rather than incidental DOM order.
+export function groupBySwimlane(
+  items: WorkItem[],
+  swimlane: string,
+  memberLabel: (userId: string) => string = (userId) => userId,
+): SwimlaneGroup[] {
+  if (swimlane === 'none') return [{ key: 'all', label: '', items: [...items] }]
+  const groups = new Map<string, WorkItem[]>()
+  for (const item of items) {
+    let key = ''
+    if (swimlane === 'assignee') key = item.assignee_id || 'unassigned'
+    else if (swimlane === 'priority') key = item.priority || 'none'
+    else if (swimlane === 'type') key = item.type || 'none'
+    else key = 'all'
+    const bucket = groups.get(key)
+    if (bucket) bucket.push(item)
+    else groups.set(key, [item])
+  }
+  let keys = [...groups.keys()]
+  if (swimlane === 'assignee') {
+    keys.sort((a, b) => {
+      if (a === 'unassigned') return 1
+      if (b === 'unassigned') return -1
+      return memberLabel(a).localeCompare(memberLabel(b))
+    })
+  } else if (swimlane === 'priority') {
+    keys.sort((a, b) => {
+      const left = PRIORITY_LANE_ORDER.indexOf(a)
+      const right = PRIORITY_LANE_ORDER.indexOf(b)
+      return (left === -1 ? 99 : left) - (right === -1 ? 99 : right)
+    })
+  } else if (swimlane === 'type') {
+    keys.sort((a, b) => {
+      const left = TYPE_LANE_ORDER.indexOf(a)
+      const right = TYPE_LANE_ORDER.indexOf(b)
+      return (left === -1 ? 99 : left) - (right === -1 ? 99 : right)
+    })
+  }
+  return keys.map((key) => ({
+    key,
+    label: key === 'unassigned' ? 'Unassigned' : laneTitle(key),
+    items: groups.get(key) ?? [],
+  }))
+}
+
+export interface WipState {
+  current: number
+  limit: number
+  reached: boolean
+  exceeded: boolean
+}
+
+export function wipState(limit: number | undefined, current: number): WipState | null {
+  if (!limit || limit <= 0) return null
+  return { current, limit, reached: current >= limit, exceeded: current > limit }
+}

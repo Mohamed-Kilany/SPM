@@ -111,7 +111,9 @@ export/import endpoints.
 Project labels, typed custom fields and saved filters are described in
 [`PLANNING-CUSTOMIZATION.md`](PLANNING-CUSTOMIZATION.md). That document lists the
 fourteen endpoints, the value and option validation rules, and the visibility
-rules for private and shared views.
+rules for private and shared views. Saved board views, swimlanes, quick filters
+and the WIP policy (including the `409 WIP_LIMIT` contract) are described in
+[`BOARD-VIEWS.md`](BOARD-VIEWS.md).
 
 The UI sends `If-Match` from the freshest workspace snapshot. On `409` it
 refreshes the project, keeps the edit dialog open and asks the user to review

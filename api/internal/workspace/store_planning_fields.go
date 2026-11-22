@@ -99,7 +99,7 @@ func (s *Store) loadPlanningMetadata(ctx context.Context, projectID uuid.UUID, w
 	}
 
 	filterRows, err := s.db.Query(ctx, `
-		SELECT id, project_id, name, scope, visibility, owner_id, filters, sort, columns,
+		SELECT id, project_id, name, scope, visibility, owner_id, filters, sort, columns, swimlane,
 		       pinned, is_default, created_at, updated_at, revision
 		FROM saved_filters WHERE project_id = $1 ORDER BY pinned DESC, name`, projectID)
 	if err != nil {
@@ -112,8 +112,8 @@ func (s *Store) loadPlanningMetadata(ctx context.Context, projectID uuid.UUID, w
 		var rawFilters, rawSort, rawColumns []byte
 		if err := filterRows.Scan(&filter.ID, &filter.ProjectID, &filter.Name, &filter.Scope,
 			&filter.Visibility, &filter.OwnerID, &rawFilters, &rawSort, &rawColumns,
-			&filter.Pinned, &filter.IsDefault, &filter.CreatedAt, &filter.UpdatedAt,
-			&filter.Revision); err != nil {
+			&filter.Swimlane, &filter.Pinned, &filter.IsDefault, &filter.CreatedAt,
+			&filter.UpdatedAt, &filter.Revision); err != nil {
 			return err
 		}
 		filter.Filters = decodeFilter(rawFilters)

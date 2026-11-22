@@ -130,16 +130,19 @@ loss is never a side effect of removing a field from the board.
 
 ## 3. Saved filters
 
-A saved filter stores the JSON filter payload, optional sort/columns metadata,
-pinning and a per-owner default flag.
+A saved filter stores the JSON filter payload, optional layout metadata, pinning
+and a per-owner default flag. Board views additionally capture swimlane, sort
+and visible card fields; the full layout guide is
+[`BOARD-VIEWS.md`](BOARD-VIEWS.md).
 
 | Field | Values |
 |---|---|
 | `scope` | `planning`, `board`, `test` |
 | `visibility` | `private` (default) or `shared` |
-| `filters` | Free-form JSON; the board stores `search`, `type`, `feature`, `sprint`, `label` and `custom` keyed by field key. |
-| `sort` | Free-form JSON. |
-| `columns` | Up to 20 names, each 1–40 characters. |
+| `filters` | Free-form JSON; the board stores `search`, `type`, `feature`, `sprint`, `label`, `custom` keyed by field key and a `quick` array. |
+| `sort` | `{"field": ..., "direction": "asc"\|"desc"}` for board views. |
+| `columns` | Up to 20 names, each 1–40 characters. For board views these are the visible card fields. |
+| `swimlane` | `none` (default), `assignee`, `priority` or `type`; migration `022`. |
 | `pinned` | Shared/private ordering hint. |
 | `is_default` | At most one default per owner and scope. |
 
@@ -178,10 +181,13 @@ Endpoints:
 column and the same `planning_revision` trigger as the other planning tables.
 
 The board is URL-backed. A selected view adds `view=<id>` and the individual
-filters to the query string (`search`, `type`, `feature`, `sprint`, `label` and
-`cf_<field-key>`), so refreshing or sharing the URL reproduces the board.
-Private views are returned only to their owner; a shared URL still requires
-project access.
+layout values to the query string — `swimlane`, `sort`, `fields`, `quick`,
+`search`, `type`, `feature`, `sprint`, `label` and `cf_<field-key>` — so
+refreshing or sharing the URL reproduces the board. A default view is applied
+on load even without `view=<id>`. Private views are returned only to their
+owner; a shared URL still requires project access. See
+[`BOARD-VIEWS.md`](BOARD-VIEWS.md) for the complete state model and the WIP
+policy.
 
 ## 4. Schema and migration
 
@@ -202,6 +208,11 @@ display value that survives label deletion. The migration is covered by
 `TestLabelsCustomFieldsSavedFiltersRollbackIsComplete` and by the schema-wide
 foreign-key/index audit.
 
+Migration `022_board_view_swimlanes.sql` is expand-only and adds
+`saved_filters.swimlane` with a `none` default and a check constraint on the
+four supported groupings. Its rollback companion drops the column. The pair is
+covered by `TestBoardViewSwimlaneRollbackIsComplete`.
+
 ## 5. UI
 
 - **Settings → Labels:** create, edit, recolor and delete labels with usage
@@ -210,7 +221,11 @@ foreign-key/index audit.
   range, required flag, archive/restore and explicit purge.
 - **Board:** label and custom-field filters, colored chips on cards, select
   value chips, saved-view selector, create/update/delete views, pinned and
-  default flags, and URL-backed filters.
+  default flags, URL-backed filters, swimlane grouping, quick-filter chips,
+  sort and visible-field editors.
+- **Settings → Board policy:** per-column WIP limits with an explicit hard-block
+  toggle; the board shows `current/limit` badges and pre-checks a drop when the
+  hard block is enabled.
 - **Work item dialog:** label suggestions, typed custom-field editors, required
   validation and member/date/number inputs.
 

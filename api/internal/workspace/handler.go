@@ -746,6 +746,9 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid status for this work item type")
 		return
 	}
+	if !h.enforceWIPLimit(c, projectID, "", req.Status) {
+		return
+	}
 	if req.Priority == "" {
 		req.Priority = PriorityMedium
 	}
@@ -831,6 +834,19 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusUnprocessableEntity, "HIERARCHY_ERROR", err.Error())
 		return
 	}
+	var currentStatus string
+	if err := h.store.DB().QueryRow(c.Request.Context(),
+		`SELECT status FROM work_items WHERE id=$1 AND project_id=$2`,
+		itemID, projectID).Scan(&currentStatus); errors.Is(err, pgx.ErrNoRows) {
+		apiError(c, http.StatusNotFound, "NOT_FOUND", "Work item not found")
+		return
+	} else if err != nil {
+		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load work item")
+		return
+	}
+	if !h.enforceWIPLimit(c, projectID, currentStatus, req.Status) {
+		return
+	}
 	due, _ := parseTimePtr(req.DueDate)
 	expected, ok := revisionFromRequest(c, req.ExpectedVersion)
 	if !ok {
@@ -910,6 +926,9 @@ func (h *Handler) ChangeWorkItemStatus(c *gin.Context) {
 	}
 	if !validStatusTransition(itemType, currentStatus, req.Status) {
 		apiError(c, http.StatusUnprocessableEntity, "INVALID_TRANSITION", "Cannot move from "+currentStatus+" to "+req.Status)
+		return
+	}
+	if !h.enforceWIPLimit(c, projectID, currentStatus, req.Status) {
 		return
 	}
 	expected, ok := revisionFromRequest(c, req.ExpectedVersion)

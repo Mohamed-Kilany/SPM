@@ -362,6 +362,26 @@ properties:
 	"ProjectLabelList": `type: array
 items:
   $ref: '#/components/schemas/ProjectLabel'`,
+	"BoardSettings": `type: object
+properties:
+  wip_limits:
+    type: object
+    additionalProperties: { type: integer, minimum: 0, maximum: 999 }
+    description: 'Limit per board column (backlog, ready, in_progress, review, qa, done, blocked). Zero or absent means no limit.'
+  wip_hard_block: { type: boolean, default: false, description: Reject moves that exceed a limit; when false the board only warns. }`,
+	"ProjectSettings": `type: object
+properties:
+  merge_policy:
+    type: object
+    properties:
+      require_linked_work_item: { type: boolean }
+      require_approved_review: { type: boolean }
+      require_passing_checks: { type: boolean }
+  board: { $ref: '#/components/schemas/BoardSettings' }
+  auto_rollback: { type: boolean }
+  auto_deploy_on_build: { type: boolean }
+  auto_deploy_environment: { type: string }
+  require_health_check: { type: boolean }`,
 	"CustomFieldInput": `type: object
 required: [name, type]
 properties:
@@ -447,11 +467,12 @@ properties:
     type: array
     maxItems: 20
     items: { type: string, maxLength: 40 }
+  swimlane: { type: string, enum: [none, assignee, priority, type], default: none }
   pinned: { type: boolean, default: false }
   is_default: { type: boolean, default: false }
   expected_version: { type: [integer, "null"], format: int64, minimum: 1, description: Current revision; alternative to If-Match and the query parameter. }`,
 	"SavedFilter": `type: object
-required: [id, project_id, name, scope, visibility, owner_id, filters, sort, columns, pinned, is_default, created_at, updated_at, revision]
+required: [id, project_id, name, scope, visibility, owner_id, filters, sort, columns, swimlane, pinned, is_default, created_at, updated_at, revision]
 properties:
   id: { type: string, format: uuid }
   project_id: { type: string, format: uuid }
@@ -464,6 +485,7 @@ properties:
   columns:
     type: array
     items: { type: string }
+  swimlane: { type: string, enum: [none, assignee, priority, type] }
   pinned: { type: boolean }
   is_default: { type: boolean }
   created_at: { type: string, format: date-time }

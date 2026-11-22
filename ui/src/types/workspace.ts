@@ -24,8 +24,17 @@ export interface MergePolicy {
   require_passing_checks: boolean
 }
 
+// WIP limits are keyed by board column: backlog, ready, in_progress, review,
+// qa, done and blocked. A missing or zero entry means no limit. The hard block
+// is explicit: when false the board warns but the API accepts the move.
+export interface BoardSettings {
+  wip_limits: Record<string, number>
+  wip_hard_block: boolean
+}
+
 export interface ProjectSettings {
   merge_policy: MergePolicy
+  board: BoardSettings
   auto_rollback: boolean
   auto_deploy_on_build: boolean
   auto_deploy_environment: string
@@ -881,6 +890,7 @@ export interface CustomFieldValue {
 
 export type SavedFilterScope = 'planning' | 'board' | 'test'
 export type SavedFilterVisibility = 'private' | 'shared'
+export type Swimlane = 'none' | 'assignee' | 'priority' | 'type'
 
 export interface SavedFilter {
   id: string
@@ -892,6 +902,7 @@ export interface SavedFilter {
   filters: Record<string, unknown>
   sort: Record<string, unknown>
   columns: string[]
+  swimlane: Swimlane | string
   pinned: boolean
   is_default: boolean
   created_at: string
