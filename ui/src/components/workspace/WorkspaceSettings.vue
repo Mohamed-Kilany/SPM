@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
 import ConfirmDialog from '../ConfirmDialog.vue'
 import EmptyState from './EmptyState.vue'
+import LabelManager from './LabelManager.vue'
+import CustomFieldManager from './CustomFieldManager.vue'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/authStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
@@ -333,6 +335,9 @@ function initials(member: ProjectMember): string {
         <EmptyState title="No members" />
       </div>
     </section>
+
+    <LabelManager />
+    <CustomFieldManager />
 
     <ConfirmDialog
       :open="Boolean(removeTarget)"

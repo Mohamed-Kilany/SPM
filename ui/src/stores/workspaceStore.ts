@@ -4,14 +4,18 @@ import { api } from '../api/client'
 import type {
   ActivityEvent,
   Build,
+  CustomField,
+  CustomFieldValue,
   Deployment,
   Epic,
   Feature,
   GitCommit,
   Member,
   PRD,
+  ProjectLabel,
   PullRequest,
   Release,
+  SavedFilter,
   Sprint,
   TestCase,
   TestPlan,
@@ -35,6 +39,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const epics = computed<Epic[]>(() => workspace.value?.epics ?? [])
   const features = computed<Feature[]>(() => workspace.value?.features ?? [])
   const workItems = computed<WorkItem[]>(() => workspace.value?.work_items ?? [])
+  const labels = computed<ProjectLabel[]>(() => workspace.value?.labels ?? [])
+  const allCustomFields = computed<CustomField[]>(() => workspace.value?.custom_fields ?? [])
+  const customFields = computed<CustomField[]>(() =>
+    allCustomFields.value.filter((field) => !field.archived_at),
+  )
+  const customFieldValues = computed<CustomFieldValue[]>(
+    () => workspace.value?.custom_field_values ?? [],
+  )
+  const savedFilters = computed<SavedFilter[]>(() => workspace.value?.saved_filters ?? [])
   const sprints = computed<Sprint[]>(() => workspace.value?.sprints ?? [])
   const releases = computed<Release[]>(() => workspace.value?.releases ?? [])
   const testCases = computed<TestCase[]>(() => workspace.value?.test_cases ?? [])
@@ -106,6 +119,28 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return workspace.value?.environments.find((environment) => environment.id === id)
   }
 
+  function labelByName(name: string): ProjectLabel | undefined {
+    return labels.value.find((label) => label.name === name)
+  }
+
+  function customFieldById(id: string): CustomField | undefined {
+    return allCustomFields.value.find((field) => field.id === id)
+  }
+
+  function customFieldByKey(key: string): CustomField | undefined {
+    return allCustomFields.value.find((field) => field.key === key)
+  }
+
+  function customValuesFor(entityId: string, entityType = 'work_item'): CustomFieldValue[] {
+    return customFieldValues.value.filter(
+      (value) => value.entity_id === entityId && value.entity_type === entityType,
+    )
+  }
+
+  function savedFiltersFor(scope: string): SavedFilter[] {
+    return savedFilters.value.filter((filter) => filter.scope === scope)
+  }
+
   return {
     workspace,
     loading,
@@ -118,6 +153,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     epics,
     features,
     workItems,
+    labels,
+    allCustomFields,
+    customFields,
+    customFieldValues,
+    savedFilters,
     sprints,
     releases,
     testCases,
@@ -141,5 +181,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     epicById,
     prdById,
     environmentById,
+    labelByName,
+    customFieldById,
+    customFieldByKey,
+    customValuesFor,
+    savedFiltersFor,
   }
 })

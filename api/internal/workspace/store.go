@@ -38,6 +38,9 @@ func (s *Store) Load(ctx context.Context, projectID uuid.UUID) (Workspace, error
 	if err := s.loadWorkItems(ctx, projectID, &w); err != nil {
 		return Workspace{}, err
 	}
+	if err := s.loadPlanningMetadata(ctx, projectID, &w); err != nil {
+		return Workspace{}, err
+	}
 	if err := s.loadTests(ctx, projectID, &w); err != nil {
 		return Workspace{}, err
 	}

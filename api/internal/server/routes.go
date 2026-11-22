@@ -174,6 +174,22 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodDelete, "/attachments/:attachmentId", auth.CapWorkItemWrite, h.Workspace.DeleteAttachment)
 		project(http.MethodPost, "/work-items/:itemId/links", auth.CapWorkItemWrite, h.Workspace.CreateWorkItemLink)
 		project(http.MethodDelete, "/work-items/:itemId/links/:linkId", auth.CapWorkItemWrite, h.Workspace.DeleteWorkItemLink)
+		project(http.MethodGet, "/work-items/:itemId/custom-fields", auth.CapProjectRead, h.Workspace.GetWorkItemCustomFields)
+		project(http.MethodPut, "/work-items/:itemId/custom-fields", auth.CapWorkItemWrite, h.Workspace.PutWorkItemCustomFields)
+
+		// Reusable labels, typed custom fields and saved views.
+		project(http.MethodGet, "/labels", auth.CapProjectRead, h.Workspace.ListLabels)
+		project(http.MethodPost, "/labels", auth.CapPlanningWrite, h.Workspace.CreateLabel)
+		project(http.MethodPut, "/labels/:labelId", auth.CapPlanningWrite, h.Workspace.UpdateLabel)
+		project(http.MethodDelete, "/labels/:labelId", auth.CapPlanningWrite, h.Workspace.DeleteLabel)
+		project(http.MethodGet, "/custom-fields", auth.CapProjectRead, h.Workspace.ListCustomFields)
+		project(http.MethodPost, "/custom-fields", auth.CapPlanningWrite, h.Workspace.CreateCustomField)
+		project(http.MethodPut, "/custom-fields/:fieldId", auth.CapPlanningWrite, h.Workspace.UpdateCustomField)
+		project(http.MethodDelete, "/custom-fields/:fieldId", auth.CapPlanningWrite, h.Workspace.DeleteCustomField)
+		project(http.MethodGet, "/saved-filters", auth.CapProjectRead, h.Workspace.ListSavedFilters)
+		project(http.MethodPost, "/saved-filters", auth.CapProjectRead, h.Workspace.CreateSavedFilter)
+		project(http.MethodPut, "/saved-filters/:filterId", auth.CapProjectRead, h.Workspace.UpdateSavedFilter)
+		project(http.MethodDelete, "/saved-filters/:filterId", auth.CapProjectRead, h.Workspace.DeleteSavedFilter)
 
 		// Planning.
 		project(http.MethodPost, "/prds", auth.CapPlanningWrite, h.Workspace.CreatePRD)

@@ -165,6 +165,7 @@ func (h *Handler) GetWorkspace(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load workspace")
 		return
 	}
+	w.SavedFilters = h.visibleSavedFilters(c, w.SavedFilters)
 	c.JSON(http.StatusOK, w)
 }
 
@@ -757,6 +758,7 @@ func (h *Handler) CreateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
+	h.ensureProjectLabels(c.Request.Context(), projectID, labels, actorID(c))
 	due, err := parseTimePtr(req.DueDate)
 	if err != nil {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
@@ -824,6 +826,7 @@ func (h *Handler) UpdateWorkItem(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
+	h.ensureProjectLabels(c.Request.Context(), projectID, labels, actorID(c))
 	if err := h.validateWorkItem(c.Request.Context(), projectID, itemID, &req); err != nil {
 		apiError(c, http.StatusUnprocessableEntity, "HIERARCHY_ERROR", err.Error())
 		return

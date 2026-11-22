@@ -24,7 +24,26 @@ import {
   workItemTypeLabels,
 } from '../../lib/workspace'
 import { priorityRank, timeAgo } from '../../lib/format'
-import type { WorkItem } from '../../types/workspace'
+import {
+  boardFilterCount,
+  boardFiltersFromQuery,
+  boardFiltersToQuery,
+  boardFiltersToSaved,
+  canManageSavedFilter,
+  colorForLabel,
+  customFieldDisplay,
+  customFieldDraft,
+  customFieldPayload,
+  customValueMap,
+  labelDot,
+  labelTone,
+  missingRequiredCustomField,
+  normalizeLabelInput,
+  savedFilterToBoard,
+  workItemMatchesFilters,
+} from '../../lib/planning'
+import type { BoardFilters } from '../../lib/planning'
+import type { CustomField, SavedFilter, WorkItem } from '../../types/workspace'
 
 const store = useWorkspaceStore()
 const auth = useAuthStore()
@@ -35,10 +54,79 @@ const router = useRouter()
 const search = ref('')
 const typeFilter = ref('')
 const sprintFilter = ref('')
-const featureFilter = ref(typeof route.query.feature === 'string' ? route.query.feature : '')
+const featureFilter = ref('')
+const labelFilter = ref('')
+const customFilters = reactive<Record<string, string>>({})
+const selectedViewId = ref('')
 const draggingId = ref<string | null>(null)
 const dropColumn = ref<string | null>(null)
 const movingId = ref<string | null>(null)
+
+const boardScope = 'board'
+const boardFields = computed(() => store.customFields)
+const boardLabels = computed(() => store.labels)
+const boardViews = computed(() =>
+  store.savedFiltersFor(boardScope).slice().sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    if (a.is_default !== b.is_default) return a.is_default ? -1 : 1
+    return a.name.localeCompare(b.name)
+  }),
+)
+
+function currentFilters(): BoardFilters {
+  return {
+    search: search.value,
+    type: typeFilter.value,
+    feature: featureFilter.value,
+    sprint: sprintFilter.value,
+    label: labelFilter.value,
+    custom: { ...customFilters },
+  }
+}
+
+function applyFilters(filters: BoardFilters): void {
+  search.value = filters.search
+  typeFilter.value = filters.type
+  featureFilter.value = filters.feature
+  sprintFilter.value = filters.sprint
+  labelFilter.value = filters.label
+  for (const key of Object.keys(customFilters)) delete customFilters[key]
+  Object.assign(customFilters, filters.custom)
+}
+
+function syncQuery(): void {
+  const query: Record<string, string> = { tab: 'board' }
+  if (typeof route.query.item === 'string') query.item = route.query.item
+  if (selectedViewId.value) query.view = selectedViewId.value
+  Object.assign(query, boardFiltersToQuery(currentFilters(), boardFields.value))
+  void router.replace({ name: 'workspace', params: { id: store.projectId }, query })
+}
+
+function onFiltersChanged(): void {
+  selectedViewId.value = ''
+  syncQuery()
+}
+
+function applySavedView(id: string): void {
+  selectedViewId.value = id
+  if (!id) {
+    clearFilters()
+    return
+  }
+  const filter = store.savedFilters.find((entry) => entry.id === id)
+  if (!filter) return
+  applyFilters(savedFilterToBoard(filter, boardFields.value))
+  syncQuery()
+}
+
+const initialFilters = boardFiltersFromQuery(route.query, boardFields.value)
+applyFilters(initialFilters)
+const initialView = typeof route.query.view === 'string' ? route.query.view : ''
+if (initialView && store.savedFilters.some((filter) => filter.id === initialView && filter.scope === boardScope)) {
+  selectedViewId.value = initialView
+  const saved = store.savedFilters.find((filter) => filter.id === initialView)
+  if (saved) applyFilters(savedFilterToBoard(saved, boardFields.value))
+}
 
 watch(
   () => route.query.feature,
@@ -50,20 +138,30 @@ watch(
 const members = computed(() => store.workspace?.members ?? [])
 const features = computed(() => store.features)
 const sprints = computed(() => store.sprints)
+const activeFilterCount = computed(() => boardFilterCount(currentFilters()))
+
+function customValueSet(itemId: string): Record<string, string | number | null> {
+  return customValueMap(store.customValuesFor(itemId), itemId)
+}
+
+function cardLabels(item: WorkItem): string[] {
+  return (item.labels ?? []).slice(0, 3)
+}
+
+function cardCustomValues(item: WorkItem): Array<{ field: CustomField; label: string }> {
+  const values = customValueSet(item.id)
+  return store.customFields
+    .filter((field) => field.type === 'select')
+    .map((field) => ({ field, label: customFieldDisplay(field, values[field.id]) }))
+    .filter((entry) => entry.label)
+    .slice(0, 2)
+}
 
 const filteredItems = computed(() => {
-  const query = search.value.trim().toLowerCase()
+  const filters = currentFilters()
   return store.workItems.filter((item) => {
-    if (typeFilter.value && item.type !== typeFilter.value) return false
-    if (featureFilter.value && item.feature_id !== featureFilter.value) return false
-    if (sprintFilter.value === 'none' && item.sprint_id) return false
-    if (sprintFilter.value && sprintFilter.value !== 'none' && item.sprint_id !== sprintFilter.value) return false
-    if (query) {
-      const feature = features.value.find((entry) => entry.id === item.feature_id)
-      const haystack = `${item.key} ${item.title} ${item.description} ${feature?.title ?? ''}`.toLowerCase()
-      if (!haystack.includes(query)) return false
-    }
-    return true
+    const feature = features.value.find((entry) => entry.id === item.feature_id)
+    return workItemMatchesFilters(item, filters, boardFields.value, customValueSet(item.id), feature?.title ?? '')
   })
 })
 
@@ -104,7 +202,13 @@ function openParent(parentId: string | null): void {
 function filterByFeature(featureId: string | null): void {
   if (!featureId) return
   featureFilter.value = featureId
+  selectedViewId.value = ''
   itemModal.value = false
+  syncQuery()
+}
+
+function labelColor(name: string): string {
+  return colorForLabel(name, boardLabels.value)
 }
 
 function memberName(userId: string | null): string {
@@ -169,7 +273,121 @@ function clearFilters(): void {
   typeFilter.value = ''
   sprintFilter.value = ''
   featureFilter.value = ''
+  labelFilter.value = ''
+  selectedViewId.value = ''
+  for (const key of Object.keys(customFilters)) delete customFilters[key]
   void router.replace({ name: 'workspace', params: { id: store.projectId }, query: { tab: 'board' } })
+}
+
+// ---------------------------------------------------------------------------
+// Saved views
+// ---------------------------------------------------------------------------
+
+const viewModal = ref(false)
+const viewName = ref('')
+const viewVisibility = ref<'private' | 'shared'>('private')
+const viewPinned = ref(false)
+const viewDefault = ref(false)
+const viewBusy = ref(false)
+const viewError = ref('')
+const editingViewId = ref('')
+const deleteViewId = ref('')
+const deletingView = ref(false)
+
+const selectedView = computed(() =>
+  boardViews.value.find((filter) => filter.id === selectedViewId.value),
+)
+const editingView = computed(() =>
+  boardViews.value.find((filter) => filter.id === editingViewId.value),
+)
+const canEditSelectedView = computed(() =>
+  canManageSavedFilter(
+    selectedView.value,
+    auth.user?.id ?? '',
+    auth.projectRole(store.projectId),
+    auth.can(store.projectId, 'settings.write'),
+  ),
+)
+const canShareView = computed(() => auth.can(store.projectId, 'planning.write'))
+
+function openSaveView(asNew = false): void {
+  const current = asNew ? undefined : selectedView.value
+  editingViewId.value = current?.id ?? ''
+  viewName.value = current?.name ?? ''
+  viewVisibility.value = current?.visibility === 'shared' ? 'shared' : 'private'
+  viewPinned.value = current?.pinned ?? false
+  viewDefault.value = current?.is_default ?? false
+  viewError.value = ''
+  viewModal.value = true
+}
+
+async function saveView(): Promise<void> {
+  if (viewBusy.value) return
+  if (!viewName.value.trim()) {
+    viewError.value = 'A view name is required.'
+    return
+  }
+  if (viewVisibility.value === 'shared' && !canShareView.value) {
+    viewError.value = 'Shared views need planning write access.'
+    return
+  }
+  viewBusy.value = true
+  viewError.value = ''
+  try {
+    const payload = {
+      name: viewName.value.trim(),
+      scope: boardScope,
+      visibility: viewVisibility.value,
+      filters: boardFiltersToSaved(currentFilters(), boardFields.value),
+      sort: {},
+      columns: [],
+      pinned: viewPinned.value,
+      is_default: viewDefault.value,
+    }
+    let saved: SavedFilter
+    if (editingView.value) {
+      saved = await api.updateSavedFilter(
+        store.projectId,
+        editingView.value.id,
+        payload,
+        editingView.value.revision,
+      )
+      toast.success('Saved view updated.', 'Board views')
+    } else {
+      saved = await api.createSavedFilter(store.projectId, payload)
+      toast.success('Saved view created.', 'Board views')
+    }
+    await store.refresh()
+    selectedViewId.value = saved.id
+    viewModal.value = false
+    syncQuery()
+  } catch (error) {
+    if (isRevisionConflict(error)) {
+      await store.refresh()
+      viewError.value = revisionConflictMessage('saved view')
+      return
+    }
+    viewError.value = error instanceof Error ? error.message : 'Failed to save view'
+  } finally {
+    viewBusy.value = false
+  }
+}
+
+async function deleteView(): Promise<void> {
+  if (!deleteViewId.value || deletingView.value) return
+  deletingView.value = true
+  try {
+    await api.deleteSavedFilter(store.projectId, deleteViewId.value)
+    await store.refresh()
+    if (selectedViewId.value === deleteViewId.value) selectedViewId.value = ''
+    deleteViewId.value = ''
+    toast.success('Saved view deleted.', 'Board views')
+    syncQuery()
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Failed to delete view', 'Board views')
+  } finally {
+    deletingView.value = false
+  }
 }
 
 function onDragStart(item: WorkItem, event: DragEvent): void {
@@ -249,6 +467,20 @@ const itemForm = reactive({
   labels: '',
 })
 
+const customDraft = reactive<Record<string, string>>({})
+
+function clearCustomDraft(): void {
+  for (const key of Object.keys(customDraft)) delete customDraft[key]
+}
+
+function loadCustomDraft(itemId: string): void {
+  clearCustomDraft()
+  const values = customValueMap(store.customValuesFor(itemId), itemId)
+  Object.assign(customDraft, customFieldDraft(store.customFields, values))
+}
+
+const selectedLabelNames = computed(() => normalizeLabelInput(itemForm.labels))
+
 const selectedItem = computed(() =>
   itemEditingId.value ? store.workItemById(itemEditingId.value) : undefined,
 )
@@ -315,6 +547,7 @@ function resetItemForm(): void {
     actual_result: '',
     labels: '',
   })
+  clearCustomDraft()
 }
 
 function openCreateItem(type = 'task'): void {
@@ -350,6 +583,7 @@ function openEditItem(item: WorkItem): void {
     actual_result: item.actual_result,
     labels: (item.labels ?? []).join(', '),
   })
+  loadCustomDraft(item.id)
   itemError.value = ''
   branchRepoId.value = store.repositories[0]?.id ?? ''
   branchName.value = branchNameFor(item)
@@ -458,6 +692,11 @@ async function saveItem(): Promise<void> {
     itemError.value = 'A subtask must have a parent task or story.'
     return
   }
+  const missingField = missingRequiredCustomField(store.customFields, customDraft)
+  if (missingField) {
+    itemError.value = `${missingField} is required.`
+    return
+  }
 
   itemBusy.value = true
   itemError.value = ''
@@ -483,11 +722,9 @@ async function saveItem(): Promise<void> {
       reproduction_steps: itemForm.reproduction_steps,
       expected_result: itemForm.expected_result,
       actual_result: itemForm.actual_result,
-      labels: itemForm.labels
-        .split(',')
-        .map((label) => label.trim())
-        .filter(Boolean),
+      labels: normalizeLabelInput(itemForm.labels),
     }
+    let savedId = itemEditingId.value
     if (itemEditingId.value) {
       const current = store.workItemById(itemEditingId.value)
       if (!current) {
@@ -498,8 +735,16 @@ async function saveItem(): Promise<void> {
       toast.success('Work item updated.', 'Board')
     } else {
       const result = await api.createWorkItem(store.projectId, payload)
+      savedId = result.id
       toast.success(`${result.key ?? 'Work item'} created and linked.`, 'Board')
       itemEditingId.value = result.id
+    }
+    if (savedId && store.customFields.length) {
+      await api.putWorkItemCustomFields(
+        store.projectId,
+        savedId,
+        customFieldPayload(store.customFields, customDraft),
+      )
     }
     await store.refresh()
     itemModal.value = false
@@ -630,30 +875,103 @@ function openDelivery(): void {
     </div>
 
     <div class="card flex flex-wrap items-center gap-2 p-3">
+      <select
+        :value="selectedViewId"
+        class="field-input w-auto min-w-[170px]"
+        aria-label="Saved board view"
+        @change="applySavedView(($event.target as HTMLSelectElement).value)"
+      >
+        <option value="">All work items</option>
+        <option v-for="view in boardViews" :key="view.id" :value="view.id">
+          {{ view.pinned ? '★ ' : '' }}{{ view.name }}{{ view.visibility === 'shared' ? ' · shared' : '' }}
+        </option>
+      </select>
+      <button type="button" class="btn-secondary" @click="openSaveView()">
+        <AppIcon name="filter" :size="14" /> {{ selectedView ? 'Save view' : 'Save current view' }}
+      </button>
+      <button
+        v-if="selectedView"
+        type="button"
+        class="btn-ghost"
+        title="Save the current filters as a new view"
+        @click="openSaveView(true)"
+      >
+        <AppIcon name="plus" :size="14" />
+      </button>
+      <button
+        v-if="selectedView && canEditSelectedView"
+        type="button"
+        class="btn-ghost text-red-600 hover:bg-red-50"
+        aria-label="Delete saved view"
+        @click="deleteViewId = selectedView.id"
+      >
+        <AppIcon name="trash" :size="14" />
+      </button>
       <div class="relative min-w-[190px] flex-1">
         <AppIcon name="search" :size="15" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-        <input v-model="search" class="field-input pl-9" placeholder="Search key, title or feature…" aria-label="Search work items" />
+        <input
+          v-model="search"
+          class="field-input pl-9"
+          placeholder="Search key, title or feature…"
+          aria-label="Search work items"
+          @input="onFiltersChanged"
+        />
       </div>
-      <select v-model="typeFilter" class="field-input w-auto min-w-[130px]" aria-label="Filter by work item type">
+      <select v-model="typeFilter" class="field-input w-auto min-w-[130px]" aria-label="Filter by work item type" @change="onFiltersChanged">
         <option value="">All types</option>
         <option v-for="(label, type) in workItemTypeLabels" :key="type" :value="type">{{ label }}</option>
       </select>
-      <select v-model="featureFilter" class="field-input w-auto min-w-[170px]" aria-label="Filter by feature">
+      <select v-model="featureFilter" class="field-input w-auto min-w-[170px]" aria-label="Filter by feature" @change="onFiltersChanged">
         <option value="">All features</option>
         <option v-for="feature in features" :key="feature.id" :value="feature.id">{{ feature.title }}</option>
       </select>
-      <select v-model="sprintFilter" class="field-input w-auto min-w-[140px]" aria-label="Filter by sprint">
+      <select v-model="sprintFilter" class="field-input w-auto min-w-[140px]" aria-label="Filter by sprint" @change="onFiltersChanged">
         <option value="">All sprints</option>
         <option value="none">No sprint</option>
         <option v-for="sprint in sprints" :key="sprint.id" :value="sprint.id">{{ sprint.name }}</option>
       </select>
+      <select v-model="labelFilter" class="field-input w-auto min-w-[130px]" aria-label="Filter by label" @change="onFiltersChanged">
+        <option value="">All labels</option>
+        <option v-for="label in boardLabels" :key="label.id" :value="label.name">{{ label.name }}</option>
+      </select>
+      <template v-for="field in boardFields" :key="field.id">
+        <select
+          v-if="field.type === 'select'"
+          v-model="customFilters[field.id]"
+          class="field-input w-auto min-w-[150px]"
+          :aria-label="`Filter by ${field.name}`"
+          @change="onFiltersChanged"
+        >
+          <option value="">Any {{ field.name }}</option>
+          <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+        <select
+          v-else-if="field.type === 'user'"
+          v-model="customFilters[field.id]"
+          class="field-input w-auto min-w-[150px]"
+          :aria-label="`Filter by ${field.name}`"
+          @change="onFiltersChanged"
+        >
+          <option value="">Any {{ field.name }}</option>
+          <option v-for="member in members" :key="member.user_id" :value="member.user_id">{{ member.username || member.email }}</option>
+        </select>
+        <input
+          v-else
+          v-model="customFilters[field.id]"
+          :type="field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'"
+          class="field-input w-auto min-w-[140px]"
+          :aria-label="`Filter by ${field.name}`"
+          :placeholder="field.name"
+          @change="onFiltersChanged"
+        />
+      </template>
       <button
-        v-if="search || typeFilter || featureFilter || sprintFilter"
+        v-if="activeFilterCount"
         type="button"
         class="btn-ghost"
         @click="clearFilters"
       >
-        <AppIcon name="close" :size="14" /> Clear
+        <AppIcon name="close" :size="14" /> Clear ({{ activeFilterCount }})
       </button>
     </div>
 
@@ -715,6 +1033,25 @@ function openDelivery(): void {
                 <span class="truncate">{{ parentItem(item.parent_id)?.title }}</span>
               </button>
               <p v-else class="mt-1.5 truncate text-[10px] text-slate-600">{{ featureName(item.feature_id) }}</p>
+              <div v-if="cardLabels(item).length || cardCustomValues(item).length" class="mt-1.5 flex flex-wrap gap-1">
+                <span
+                  v-for="label in cardLabels(item)"
+                  :key="label"
+                  class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ring-1"
+                  :class="labelTone(labelColor(label))"
+                >
+                  <span class="h-1 w-1 rounded-full" :class="labelDot(labelColor(label))" />
+                  {{ label }}
+                </span>
+                <span
+                  v-for="entry in cardCustomValues(item)"
+                  :key="entry.field.id"
+                  class="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 ring-1 ring-slate-200"
+                  :title="entry.field.name"
+                >
+                  {{ entry.field.name }}: {{ entry.label }}
+                </span>
+              </div>
               <div class="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
                 <div class="flex items-center gap-2 text-[10px] text-slate-600">
                   <span v-if="branchesFor(item.id).length" class="inline-flex items-center gap-1" title="Linked branches">
@@ -885,9 +1222,59 @@ function openDelivery(): void {
             v-model="itemForm.labels"
             class="field-input"
             maxlength="240"
+            list="item-label-options"
             placeholder="Comma separated, for example: backend, needs qa"
           />
-          <p class="mt-1 text-[11px] text-slate-500">Up to 10 labels, each 24 characters or fewer.</p>
+          <datalist id="item-label-options">
+            <option v-for="label in boardLabels" :key="label.id" :value="label.name" />
+          </datalist>
+          <div v-if="selectedLabelNames.length" class="mt-2 flex flex-wrap gap-1.5">
+            <span
+              v-for="label in selectedLabelNames"
+              :key="label"
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1"
+              :class="labelTone(labelColor(label))"
+            >
+              <span class="h-1.5 w-1.5 rounded-full" :class="labelDot(labelColor(label))" />
+              {{ label }}
+            </span>
+          </div>
+          <p class="mt-1 text-[11px] text-slate-500">Up to 10 labels, each 24 characters or fewer. Unknown labels become reusable automatically.</p>
+        </div>
+
+        <div v-if="store.customFields.length" class="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <p class="flex items-center gap-2 text-xs font-semibold text-slate-700">
+            <AppIcon name="filter" :size="14" /> Custom fields
+          </p>
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <label v-for="field in store.customFields" :key="field.id" class="block">
+              <span class="field-label">
+                {{ field.name }}
+                <span v-if="field.required" class="text-red-500">*</span>
+              </span>
+              <select v-if="field.type === 'select'" v-model="customDraft[field.id]" class="field-input" :disabled="formDisabled">
+                <option value="">Not set</option>
+                <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+              <select v-else-if="field.type === 'user'" v-model="customDraft[field.id]" class="field-input" :disabled="formDisabled">
+                <option value="">Not set</option>
+                <option v-for="member in members" :key="member.user_id" :value="member.user_id">{{ member.username || member.email }}</option>
+              </select>
+              <input
+                v-else
+                v-model="customDraft[field.id]"
+                class="field-input"
+                :type="field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'"
+                :min="field.type === 'number' && field.config.min !== undefined ? String(field.config.min) : undefined"
+                :max="field.type === 'number' && field.config.max !== undefined ? String(field.config.max) : undefined"
+                :step="field.type === 'number' ? 'any' : undefined"
+                :disabled="formDisabled"
+                :placeholder="field.description || field.name"
+              />
+              <span v-if="field.description" class="mt-1 block text-[10px] text-slate-500">{{ field.description }}</span>
+            </label>
+          </div>
+          <p class="mt-2 text-[10px] text-slate-500">Values are typed and validated by the API; adding a field never changes the schema.</p>
         </div>
 
         <div v-if="itemForm.type === 'bug'" class="rounded-xl border border-red-100 bg-red-50/50 p-4">
@@ -1043,6 +1430,58 @@ function openDelivery(): void {
       :busy="itemBusy"
       confirm-label="Delete work item"
       @confirm="deleteItem"
+    />
+
+    <BaseModal
+      v-model="viewModal"
+      :title="editingView ? 'Update saved view' : 'Save board view'"
+      description="A saved view keeps filters in the URL, so sharing the link reproduces the same board."
+      max-width="sm"
+      :persistent="viewBusy"
+    >
+      <div class="space-y-4">
+        <label class="block">
+          <span class="field-label">Name</span>
+          <input v-model="viewName" class="field-input" maxlength="80" placeholder="My blocked defects" data-autofocus />
+        </label>
+        <label class="block">
+          <span class="field-label">Visibility</span>
+          <select v-model="viewVisibility" class="field-input">
+            <option value="private">Private to me</option>
+            <option value="shared" :disabled="!canShareView">Shared with the project</option>
+          </select>
+          <span v-if="!canShareView" class="mt-1 block text-[11px] text-slate-500">Shared views need <code class="font-mono">planning.write</code>.</span>
+        </label>
+        <div class="flex flex-wrap gap-4">
+          <label class="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input v-model="viewPinned" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
+            Pin to the top
+          </label>
+          <label class="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input v-model="viewDefault" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
+            Default for my board
+          </label>
+        </div>
+        <p v-if="viewError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">{{ viewError }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" :disabled="viewBusy" @click="viewModal = false">Cancel</button>
+        <button type="button" class="btn-primary" :disabled="viewBusy" @click="saveView">
+          <AppIcon v-if="viewBusy" name="loader" :size="14" class="animate-spin" />
+          {{ viewBusy ? 'Saving…' : editingView ? 'Update view' : 'Save view' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <ConfirmDialog
+      :open="Boolean(deleteViewId)"
+      title="Delete saved view"
+      :message="selectedView ? `Delete ${selectedView.name}? Work items are not affected.` : ''"
+      confirm-label="Delete view"
+      :busy="deletingView"
+      @confirm="deleteView"
+      @cancel="deleteViewId = ''"
+      @update:open="(value) => { if (!value) deleteViewId = '' }"
     />
 
     <WorkItemDrawer

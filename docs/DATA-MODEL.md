@@ -32,6 +32,10 @@ Migrations are applied by the API at startup in lexical order and recorded in
 ```text
 Project
 ├── Project members ── Users
+├── Project label
+├── Custom field
+│   └── Custom field value ── (work item, reserved for test case)
+├── Saved filter
 ├── PRD
 │   └── Epic ── (optional PRD)
 │       └── Feature ── (required Epic)
@@ -74,11 +78,14 @@ Global roles (`admin`, `member`, `viewer`) are separate from project roles.
 
 There are no soft-deleted rows. Deletes are hard deletes; the schema decides
 whether a dependent row disappears with its parent (`CASCADE`) or is kept and
-unlinked (`SET NULL`).
+unlinked (`SET NULL`). A custom field is not soft-deleted: archiving sets
+`archived_at`, which hides the definition while its values stay queryable, and
+only an explicit purge deletes rows.
 
 | Relationship | Action | Meaning |
 |---|---|---|
 | `projects` → project-scoped tables | `CASCADE` | Deleting a project removes all of its planning, delivery, test and collaboration rows. |
+| `custom_fields` → `custom_field_values` | `CASCADE` | Purging a definition removes its stored values; archiving keeps them. |
 | `epics` → `features` | `CASCADE` | A feature cannot exist without its epic. |
 | `test_cases` → `test_steps` | `CASCADE` | Steps are owned by their case. |
 | `test_cases` → `test_case_versions` | `CASCADE` | Version history is owned by its case. |
@@ -106,6 +113,12 @@ the missing link as "not linked", and nothing in the UI assumes a target still
 exists. New tables must follow the same rule: `NOT NULL` parents cascade,
 optional references set null.
 
+`project_labels` is a registry, not the source of the work item label value:
+`work_items.labels` stays the rendered array. Renaming a label rewrites every
+matching array entry in the same transaction; deleting a label strips the name
+from every work item before removing the registry row. This keeps label display
+working even if the registry row is gone.
+
 `test_case_versions` and `test_case_version_steps` are immutable: the API only
 inserts them, never updates them, and reading history is a plain query. A live
 case can therefore be rewritten or deleted-safe (cascading its own history)
@@ -117,10 +130,11 @@ a self-cycle. Deeper cycles are rejected by the application hierarchy validation
 
 ## 4. Optimistic concurrency
 
-Eleven planning tables carry an internal concurrency token:
+Twelve project-scoped tables carry an internal concurrency token:
 
 `prds`, `epics`, `features`, `work_items`, `test_plans`, `test_suites`,
-`test_cases`, `test_runs`, `test_shared_steps`, `sprints`, `releases`.
+`test_cases`, `test_runs`, `test_shared_steps`, `sprints`, `releases`,
+`saved_filters`.
 
 ```sql
 revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0)
@@ -169,7 +183,8 @@ case never rewrites a completed run. See
 The HTTP contract is generated into [`openapi.yaml`](openapi.yaml); the
 concurrency rules are summarized in [`API.md`](API.md). Each rejected stale write
 increments `spm_planning_conflicts_total{resource}` with a bounded resource
-label (`prd`, `epic`, `feature`, `work item`, `test case`, `sprint`, `release`).
+label (`prd`, `epic`, `feature`, `work item`, `test case`, `sprint`, `release`,
+`saved filter`).
 
 ## 5. Foreign keys and indexes
 
@@ -186,6 +201,10 @@ The invariant is tested, not documented by convention:
 a foreign key lacks a leading index. Migration `016_planning_revisions` closed
 the gaps (for example `project_members.user_id`, `work_items.reporter_id`,
 `test_results.bug_work_item_id` and the deployment provenance columns).
+Migration `021_labels_custom_fields_saved_filters` follows the same rule for
+`project_labels`, `custom_fields`, `custom_field_values` and `saved_filters`
+(`project_labels_project_idx`, `custom_fields_project_idx`,
+`custom_field_values_entity_idx`, `saved_filters_owner_idx` and their peers).
 
 List queries use project-scoped composite indexes, for example
 `prds (project_id, created_at DESC)`, `work_items (project_id, updated_at DESC)`
@@ -207,6 +226,16 @@ migration.
   have no update or delete endpoint.
 - `test_shared_steps` is unique on `(project_id, name)`, so templates stay
   addressable by name within a project.
+- `project_labels` is unique on `(project_id, name)`, so a label name has one
+  color token and one rename history.
+- `custom_fields` is unique on `(project_id, key)`, so a stable key addresses
+  one definition.
+- `custom_field_values` is unique on `(field_id, entity_type, entity_id)`, so a
+  work item has at most one value per field; archiving a definition keeps its
+  rows, purging deletes them.
+- `saved_filters_default_idx` is a partial unique index on
+  `(project_id, owner_id, scope) WHERE is_default`, so each owner has at most
+  one default view per surface.
 - `schema_migrations.version` is unique; a migration can never be applied twice.
 
 ## 7. Changing the model
