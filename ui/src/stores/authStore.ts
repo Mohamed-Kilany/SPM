@@ -1,11 +1,14 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api/client'
-import type { AuthUser, ProjectAccess } from '../types/project'
+import type { AuthUser, LoginResponse, ProjectAccess } from '../types/project'
 import {
   clearStoredSession,
   getStoredToken,
+  setStoredRefreshToken,
+  setStoredSessionId,
   setStoredToken,
+  TOKEN_KEY,
   USER_KEY,
 } from '../lib/storage'
 
@@ -105,9 +108,53 @@ export const useAuthStore = defineStore('auth', () => {
     storeUser(nextUser)
   }
 
+  // The API client refreshes tokens outside the store, so mirror successful
+  // rotations (and the fresh user payload) back into reactive state.
+  function handleTokenRefreshed(event: Event): void {
+    const session = (event as CustomEvent<LoginResponse>).detail
+    if (!session?.token) return
+    token.value = session.token
+    setStoredToken(session.token)
+    if (session.user) {
+      user.value = session.user
+      storeUser(session.user)
+    }
+    initialized.value = true
+  }
+
+  // Keep other tabs in sync when one tab rotates the token or signs out.
+  function handleStorage(event: StorageEvent): void {
+    if (event.key === TOKEN_KEY) {
+      token.value = event.newValue
+      if (!event.newValue) user.value = null
+      return
+    }
+    if (event.key !== USER_KEY) return
+    if (!event.newValue) {
+      user.value = null
+      return
+    }
+    try {
+      user.value = JSON.parse(event.newValue) as AuthUser
+    } catch {
+      // Ignore malformed cross-tab data; the next /auth/me call repairs it.
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('spm:token-refreshed', handleTokenRefreshed)
+    window.addEventListener('storage', handleStorage)
+    import.meta.hot?.dispose(() => {
+      window.removeEventListener('spm:token-refreshed', handleTokenRefreshed)
+      window.removeEventListener('storage', handleStorage)
+    })
+  }
+
   async function login(username: string, password: string): Promise<AuthUser> {
     const response = await api.login(username, password)
     applySession(response.token, response.user)
+    if (response.refresh_token) setStoredRefreshToken(response.refresh_token)
+    if (response.session_id) setStoredSessionId(response.session_id)
     initialized.value = true
     return response.user
   }
@@ -174,6 +221,15 @@ export const useAuthStore = defineStore('auth', () => {
     clearStoredSession()
   }
 
+  /** Revokes the server-side session before clearing local state. */
+  async function signOut(): Promise<void> {
+    try {
+      await api.logout()
+    } finally {
+      logout()
+    }
+  }
+
   return {
     token,
     user,
@@ -195,5 +251,6 @@ export const useAuthStore = defineStore('auth', () => {
     hasProjectAccess,
     canWrite,
     logout,
+    signOut,
   }
 })

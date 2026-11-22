@@ -44,8 +44,8 @@ function close(): void {
   emit('close')
 }
 
-function signOut(): void {
-  auth.logout()
+async function signOut(): Promise<void> {
+  await auth.signOut()
   toast.show('You have been signed out.', 'info')
   close()
   void router.replace({ name: 'login' })

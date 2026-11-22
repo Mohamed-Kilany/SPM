@@ -58,6 +58,7 @@ type Handlers struct {
 	GenericWebhook   *webhook.GenericHandler
 	SSEManager       *sse.Manager
 	TicketStore      *auth.TicketStore
+	Sessions         *auth.SessionStore
 	Audit            *audit.Handler
 	Pool             *pgxpool.Pool
 	UserInvalidation nats.KeyValue
@@ -88,18 +89,27 @@ func Register(r *gin.Engine, h Handlers) {
 	r.GET("/health/ready", ready)
 
 	r.POST("/api/v1/auth/login", observability.RateLimit(30, time.Minute), h.Auth.Login)
+	r.POST("/api/v1/auth/refresh", observability.RateLimit(60, time.Minute), h.Auth.Refresh)
 	r.POST("/api/v1/webhooks/gitea", h.GiteaWebhook.Handle)
 	r.POST("/api/v1/webhooks/argocd", h.ArgoWebhook.Handle)
 	r.POST("/api/v1/webhooks/git/:provider", h.GenericWebhook.HandleGit)
 	r.POST("/api/v1/webhooks/ci/:provider", h.GenericWebhook.HandleCI)
 	r.POST("/api/v1/webhooks/cd/:provider", h.GenericWebhook.HandleCD)
 
-	jwt := auth.Middleware(h.UserInvalidation)
+	var sessionValidator auth.SessionValidator
+	if h.Sessions != nil {
+		sessionValidator = h.Sessions
+	}
+	jwt := auth.Middleware(h.UserInvalidation, sessionValidator)
 	v1 := r.Group("/api/v1", jwt)
 	{
 		v1.GET("/auth/me", h.Auth.Me)
 		v1.PATCH("/auth/me", h.Auth.UpdateMe)
 		v1.POST("/auth/password", h.Auth.ChangePassword)
+		v1.POST("/auth/logout", h.Auth.Logout)
+		v1.GET("/auth/sessions", h.Auth.ListSessions)
+		v1.DELETE("/auth/sessions/:sessionId", h.Auth.RevokeSession)
+		v1.POST("/auth/sessions/revoke-others", h.Auth.RevokeOtherSessions)
 		v1.POST("/auth/stream-ticket", h.Auth.StreamTicket)
 		v1.GET("/users", h.Auth.Directory)
 		v1.GET("/search", h.Search.Search)
@@ -255,7 +265,7 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodPost, "/environments", auth.CapDeliveryDeploy, h.Workspace.CreateEnvironment)
 	}
 
-	streamAuth := sse.StreamAuthMiddleware(h.TicketStore, h.UserInvalidation)
+	streamAuth := sse.StreamAuthMiddleware(h.TicketStore, h.UserInvalidation, sessionValidator)
 	stream := r.Group("/api/v1", streamAuth, auth.RequireProjectCapability(h.Pool, auth.CapProjectRead))
 	{
 		stream.GET("/projects/:id/stream", h.SSEManager.Stream)

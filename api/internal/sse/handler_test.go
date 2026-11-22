@@ -22,19 +22,19 @@ func TestSubscribe_ReplaySafety(t *testing.T) {
 		subs: make(map[string]map[int64]*subscriber),
 	}
 
-	_, _, _, ok := manager.subscribe("project", "user-1", 10, true, 5)
+	_, _, _, ok := manager.subscribe("project", "user-1", "", 10, true, 5)
 	assert.False(t, ok, "a cursor ahead of the durable sequence must request a resync")
 
-	_, _, _, ok = manager.subscribe("project", "user-1", 4, true, 5)
+	_, _, _, ok = manager.subscribe("project", "user-1", "", 4, true, 5)
 	assert.False(t, ok, "a missing gap must request a resync")
 
-	replay, _, unsubscribe, ok := manager.subscribe("project", "user-1", 5, true, 5)
+	replay, _, unsubscribe, ok := manager.subscribe("project", "user-1", "", 5, true, 5)
 	require.True(t, ok)
 	assert.Empty(t, replay, "a cursor equal to the snapshot needs no replay")
 	unsubscribe()
 
 	manager.bufs["project"].Append(SSEEvent{ID: 6, EventType: "ticket.created", Data: []byte(`[]`)})
-	replay, _, unsubscribe, ok = manager.subscribe("project", "user-1", 5, true, 6)
+	replay, _, unsubscribe, ok = manager.subscribe("project", "user-1", "", 5, true, 6)
 	require.True(t, ok)
 	require.Len(t, replay, 1)
 	assert.Equal(t, int64(6), replay[0].ID)
@@ -84,7 +84,7 @@ func TestActiveConnectionsTracksSubscribeAndUnsubscribe(t *testing.T) {
 
 	assert.Equal(t, 0, manager.ActiveConnections())
 
-	_, _, unsubscribe, ok := manager.subscribe("project", "user-1", 0, false, 0)
+	_, _, unsubscribe, ok := manager.subscribe("project", "user-1", "", 0, false, 0)
 	require.True(t, ok)
 	assert.Equal(t, 1, manager.ActiveConnections())
 
@@ -98,11 +98,11 @@ func TestEvictUserClosesOnlyThatUsersStreams(t *testing.T) {
 		subs: make(map[string]map[int64]*subscriber),
 	}
 
-	_, removedCh, _, ok := manager.subscribe("project-a", "removed-user", 0, false, 0)
+	_, removedCh, _, ok := manager.subscribe("project-a", "removed-user", "", 0, false, 0)
 	require.True(t, ok)
-	_, keptCh, _, ok := manager.subscribe("project-a", "other-user", 0, false, 0)
+	_, keptCh, _, ok := manager.subscribe("project-a", "other-user", "", 0, false, 0)
 	require.True(t, ok)
-	_, otherProjectCh, _, ok := manager.subscribe("project-b", "removed-user", 0, false, 0)
+	_, otherProjectCh, _, ok := manager.subscribe("project-b", "removed-user", "", 0, false, 0)
 	require.True(t, ok)
 
 	assert.Equal(t, 2, manager.evictUser("removed-user"))
@@ -124,9 +124,9 @@ func TestHandleInvalidationEvictsByScope(t *testing.T) {
 		bufs: make(map[string]*RingBuffer),
 		subs: make(map[string]map[int64]*subscriber),
 	}
-	_, userCh, _, ok := manager.subscribe("project-a", "removed-user", 0, false, 0)
+	_, userCh, _, ok := manager.subscribe("project-a", "removed-user", "", 0, false, 0)
 	require.True(t, ok)
-	_, otherCh, _, ok := manager.subscribe("project-a", "other-user", 0, false, 0)
+	_, otherCh, _, ok := manager.subscribe("project-a", "other-user", "", 0, false, 0)
 	require.True(t, ok)
 
 	manager.handleInvalidation([]byte(`{"scope":"user","user_id":"removed-user","project_id":"project-a","reason":"member_removed"}`))
@@ -138,11 +138,31 @@ func TestHandleInvalidationEvictsByScope(t *testing.T) {
 	default:
 	}
 
-	_, projectCh, _, ok := manager.subscribe("project-a", "other-user", 0, false, 0)
+	_, projectCh, _, ok := manager.subscribe("project-a", "other-user", "", 0, false, 0)
 	require.True(t, ok)
 	manager.handleInvalidation([]byte(`{"scope":"project","project_id":"project-a","reason":"project_archived"}`))
 	_, open = <-projectCh
 	assert.False(t, open, "a project-scope invalidation closes every stream")
+}
+
+func TestHandleInvalidationEvictsSession(t *testing.T) {
+	manager := &Manager{
+		bufs: make(map[string]*RingBuffer),
+		subs: make(map[string]map[int64]*subscriber),
+	}
+	_, revokedCh, _, ok := manager.subscribe("project-a", "user-1", "session-a", 0, false, 0)
+	require.True(t, ok)
+	_, sameUserCh, _, ok := manager.subscribe("project-b", "user-1", "session-b", 0, false, 0)
+	require.True(t, ok)
+
+	manager.handleInvalidation([]byte(`{"scope":"session","session_id":"session-a","user_id":"user-1","reason":"user_revoked"}`))
+	_, open := <-revokedCh
+	assert.False(t, open, "a session-scope invalidation closes only that session's stream")
+	select {
+	case _, open := <-sameUserCh:
+		assert.True(t, open, "another session of the same user stays connected")
+	default:
+	}
 }
 
 func TestEvictProjectClosesEveryStream(t *testing.T) {
@@ -151,11 +171,11 @@ func TestEvictProjectClosesEveryStream(t *testing.T) {
 		subs: make(map[string]map[int64]*subscriber),
 	}
 
-	_, firstCh, _, ok := manager.subscribe("archived-project", "user-1", 0, false, 0)
+	_, firstCh, _, ok := manager.subscribe("archived-project", "user-1", "", 0, false, 0)
 	require.True(t, ok)
-	_, secondCh, _, ok := manager.subscribe("archived-project", "user-2", 0, false, 0)
+	_, secondCh, _, ok := manager.subscribe("archived-project", "user-2", "", 0, false, 0)
 	require.True(t, ok)
-	_, otherCh, _, ok := manager.subscribe("active-project", "user-1", 0, false, 0)
+	_, otherCh, _, ok := manager.subscribe("active-project", "user-1", "", 0, false, 0)
 	require.True(t, ok)
 
 	assert.Equal(t, 2, manager.evictProject("archived-project"))

@@ -2,9 +2,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppIcon from '../components/AppIcon.vue'
-import { api } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { api, ApiError } from '../api/client'
 import { useAuthStore } from '../stores/authStore'
 import { useToastStore } from '../stores/toastStore'
+import type { AuthSession } from '../types/project'
 
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -26,7 +28,15 @@ const password = reactive({
   confirm_password: '',
 })
 
+const sessions = ref<AuthSession[]>([])
+const sessionsBusy = ref(false)
+const sessionsError = ref('')
+const revokingId = ref('')
+const revokeOthersOpen = ref(false)
+const revokeOthersBusy = ref(false)
+
 const avatarPreview = computed(() => profile.avatar_url.trim())
+const otherSessions = computed(() => sessions.value.filter((session) => !session.current))
 
 function hydrate(): void {
   profile.display_name = auth.user?.display_name || auth.user?.username || ''
@@ -34,7 +44,77 @@ function hydrate(): void {
   profile.avatar_url = auth.user?.avatar_url || ''
 }
 
-onMounted(hydrate)
+function formatWhen(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Unknown'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function lastSeenLabel(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'unknown'
+  const elapsed = Date.now() - date.getTime()
+  if (elapsed >= 0 && elapsed < 120_000) return 'active now'
+  return formatWhen(value)
+}
+
+async function loadSessions(): Promise<void> {
+  sessionsBusy.value = true
+  sessionsError.value = ''
+  try {
+    const response = await api.listSessions()
+    sessions.value = response.sessions ?? []
+  } catch (error) {
+    sessionsError.value = error instanceof Error ? error.message : 'Failed to load sessions'
+  } finally {
+    sessionsBusy.value = false
+  }
+}
+
+async function revokeSession(session: AuthSession): Promise<void> {
+  if (session.current) return
+  revokingId.value = session.id
+  sessionsError.value = ''
+  try {
+    await api.revokeSession(session.id)
+    sessions.value = sessions.value.filter((item) => item.id !== session.id)
+    toast.success(`${session.device} has been signed out.`, 'Sessions')
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      await loadSessions()
+      toast.show('That session was already signed out.', 'info')
+    } else {
+      sessionsError.value = error instanceof Error ? error.message : 'Failed to revoke session'
+    }
+  } finally {
+    revokingId.value = ''
+  }
+}
+
+async function revokeOtherSessions(): Promise<void> {
+  revokeOthersBusy.value = true
+  sessionsError.value = ''
+  try {
+    const result = await api.revokeOtherSessions()
+    revokeOthersOpen.value = false
+    await loadSessions()
+    toast.success(
+      result.revoked === 1
+        ? 'Signed out 1 other session.'
+        : `Signed out ${result.revoked} other sessions.`,
+      'Sessions',
+    )
+  } catch (error) {
+    sessionsError.value = error instanceof Error ? error.message : 'Failed to revoke sessions'
+  } finally {
+    revokeOthersBusy.value = false
+  }
+}
+
+onMounted(() => {
+  hydrate()
+  void loadSessions()
+})
 
 async function saveProfile(): Promise<void> {
   profileBusy.value = true
@@ -164,5 +244,85 @@ async function changePassword(): Promise<void> {
         </form>
       </section>
     </div>
+
+    <section class="card mt-5 p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <AppIcon name="shield" :size="16" class="text-indigo-600" />
+            Active sessions
+          </h2>
+          <p class="mt-1 text-xs text-slate-500">
+            Every device signed in to your account. Revoke anything you do not recognise.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="btn-secondary" :disabled="sessionsBusy" @click="loadSessions">
+            <AppIcon name="refresh" :size="15" :class="{ 'animate-spin': sessionsBusy }" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            class="btn-secondary text-red-600 hover:text-red-700"
+            :disabled="sessionsBusy || revokeOthersBusy || otherSessions.length === 0"
+            @click="revokeOthersOpen = true"
+          >
+            Revoke other sessions
+          </button>
+        </div>
+      </div>
+
+      <p v-if="sessionsError" class="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+        {{ sessionsError }}
+      </p>
+
+      <p v-if="sessionsBusy && sessions.length === 0" class="mt-4 text-sm text-slate-500">Loading sessions…</p>
+      <p v-else-if="sessions.length === 0" class="mt-4 text-sm text-slate-500">No active sessions.</p>
+
+      <ul v-else class="mt-4 divide-y divide-slate-100">
+        <li
+          v-for="session in sessions"
+          :key="session.id"
+          class="flex flex-wrap items-start justify-between gap-3 py-4"
+        >
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-sm font-medium text-slate-900">{{ session.device }}</p>
+              <span
+                v-if="session.current"
+                class="badge bg-emerald-50 text-emerald-700 ring-emerald-200"
+              >
+                This device
+              </span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">
+              {{ session.ip || 'Unknown IP' }} · Last seen {{ lastSeenLabel(session.last_seen_at) }}
+            </p>
+            <p class="mt-0.5 text-[11px] text-slate-400" :title="session.user_agent">
+              Signed in {{ formatWhen(session.created_at) }}
+            </p>
+          </div>
+          <button
+            v-if="!session.current"
+            type="button"
+            class="btn-secondary text-red-600 hover:text-red-700"
+            :disabled="revokingId === session.id || revokeOthersBusy"
+            @click="revokeSession(session)"
+          >
+            <AppIcon v-if="revokingId === session.id" name="loader" :size="15" class="animate-spin" />
+            Revoke
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <ConfirmDialog
+      v-model:open="revokeOthersOpen"
+      title="Revoke other sessions"
+      :message="`This signs out ${otherSessions.length} other device${otherSessions.length === 1 ? '' : 's'}. Your current session stays signed in.`"
+      confirm-label="Revoke others"
+      :busy="revokeOthersBusy"
+      @confirm="revokeOtherSessions"
+    />
   </div>
 </template>

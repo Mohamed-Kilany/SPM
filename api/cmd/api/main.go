@@ -112,6 +112,16 @@ func main() {
 	ticketStore := auth.NewTicketStore(ctx, 10*time.Second)
 	authHandler := auth.NewHandler(pool, ticketStore, eventsClient)
 	authHandler.SetAuditLogger(auditLogger)
+	sessionStore := auth.NewSessionStore(pool, auth.SessionConfigFromEnv())
+	authHandler.SetSessions(sessionStore, eventsClient)
+	go sessionStore.RunMaintenance(ctx)
+	metricsRegistry.RegisterAuthSessions(func() int64 {
+		count, err := sessionStore.ActiveCount(context.Background())
+		if err != nil {
+			return 0
+		}
+		return count
+	})
 	projectHandler := project.NewHandler(pool, snapRepo, eventsClient, gitEngineClient)
 	projectHandler.SetAuditLogger(auditLogger)
 	ticketHandler := ticket.NewHandler(snapRepo, eventsClient, gitEngineClient, pool)
@@ -131,6 +141,7 @@ func main() {
 	searchHandler := search.NewHandler(pool)
 
 	sseManager := sse.NewManager(eventsClient.Conn(), pool)
+	sseManager.SetSessionValidator(sessionStore)
 	if err := sseManager.Start(ctx.Done()); err != nil {
 		log.Fatalf("sse: %v", err)
 	}
@@ -171,6 +182,7 @@ func main() {
 		GenericWebhook:   genericWebhook,
 		SSEManager:       sseManager,
 		TicketStore:      ticketStore,
+		Sessions:         sessionStore,
 		Audit:            audit.NewHandler(auditLogger),
 		Pool:             pool,
 		UserInvalidation: eventsClient.UserInvalidation(),

@@ -248,6 +248,19 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/LoginInput'
+  /api/v1/auth/logout:
+    post:
+      tags: ["Auth"]
+      summary: "Revoke the current session"
+      operationId: post_api_v1_auth_logout
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/auth/me:
     get:
       tags: ["Auth"]
@@ -312,6 +325,82 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ChangePasswordInput'
+  /api/v1/auth/refresh:
+    post:
+      tags: ["Auth"]
+      summary: "Rotate the refresh token"
+      operationId: post_api_v1_auth_refresh
+      x-spm-auth: public
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshInput'
+  /api/v1/auth/sessions:
+    get:
+      tags: ["Auth"]
+      summary: "List active sessions"
+      operationId: get_api_v1_auth_sessions
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/sessions/revoke-others:
+    post:
+      tags: ["Auth"]
+      summary: "Revoke every other session"
+      operationId: post_api_v1_auth_sessions_revoke_others
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevokeSessionsResponse'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/sessions/{sessionId}:
+    delete:
+      tags: ["Auth"]
+      summary: "Revoke one session"
+      operationId: delete_api_v1_auth_sessions_sessionId
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "sessionId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/auth/stream-ticket:
     post:
       tags: ["Auth"]
@@ -4629,8 +4718,10 @@ components:
     LoginResponse:
       type: object
       properties:
-        token: {type: string}
-        expires_in: {type: integer}
+        token: {type: string, description: Short-lived access token.}
+        refresh_token: {type: string, description: Opaque refresh token. Rotated on every refresh; stored only by the client.}
+        session_id: {type: string, format: uuid, description: Server-side session that can be listed and revoked.}
+        expires_in: {type: integer, description: Access-token lifetime in seconds.}
         user:
           $ref: '#/components/schemas/User'
     Member:
@@ -5503,3 +5594,31 @@ components:
           additionalProperties: {type: integer, minimum: 0, maximum: 999}
           description: 'Limit per board column (backlog, ready, in_progress, review, qa, done, blocked). Zero or absent means no limit.'
         wip_hard_block: {type: boolean, default: false, description: Reject moves that exceed a limit; when false the board only warns.}
+    RefreshInput:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: {type: string, description: Current refresh token. Reuse of an already rotated token revokes the whole session family.}
+    RevokeSessionsResponse:
+      type: object
+      properties:
+        revoked: {type: integer, minimum: 0, description: Number of sessions revoked by this request.}
+    Session:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        device: {type: string, description: Human-readable browser and operating-system label.}
+        ip: {type: string}
+        user_agent: {type: string}
+        created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        idle_expires_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        current: {type: boolean, description: True for the session that authenticated this request.}
+    SessionList:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Session'

@@ -12,13 +12,26 @@ import (
 	"spm-platform/api/internal/models"
 )
 
-// IssueToken creates and signs a JWT for the given user.
+// IssueToken creates and signs a JWT for the given user. It is kept for
+// callers that do not use persistent sessions; new sign-ins should call
+// IssueSessionToken so the token can be revoked individually.
 func IssueToken(userID, role string, projectIDs []string, secret string, expiryHours int) (string, error) {
+	if expiryHours <= 0 {
+		return "", errors.New("auth: expiryHours must be greater than zero")
+	}
+	return IssueSessionToken(userID, role, projectIDs, secret,
+		time.Duration(expiryHours)*time.Hour, "", "")
+}
+
+// IssueSessionToken creates and signs a short-lived access token bound to a
+// persistent session. sessionID becomes the "sid" claim and jti becomes the
+// standard "jti" claim; both are checked by the session middleware.
+func IssueSessionToken(userID, role string, projectIDs []string, secret string, ttl time.Duration, sessionID, jti string) (string, error) {
 	if secret == "" {
 		return "", errors.New("auth: signing secret must not be empty")
 	}
-	if expiryHours <= 0 {
-		return "", errors.New("auth: expiryHours must be greater than zero")
+	if ttl <= 0 {
+		return "", errors.New("auth: token TTL must be greater than zero")
 	}
 	if userID == "" {
 		return "", errors.New("auth: user ID must not be empty")
@@ -27,12 +40,14 @@ func IssueToken(userID, role string, projectIDs []string, secret string, expiryH
 	now := time.Now()
 	claims := models.AuthClaims{
 		UserID:     userID,
+		SessionID:  sessionID,
 		Role:       role,
 		ProjectIDs: projectIDs,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
+			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(expiryHours) * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			Issuer:    "spm-platform",
 		},
 	}

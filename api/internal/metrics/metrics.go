@@ -50,6 +50,8 @@ type Registry struct {
 	planningConflicts  *prometheus.CounterVec
 	boardMoveFailures  *prometheus.CounterVec
 
+	authSessionEvents *prometheus.CounterVec
+
 	testRunCompletions *prometheus.CounterVec
 
 	auditWrites            *prometheus.CounterVec
@@ -128,6 +130,10 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_authz_invalidations_total",
 			Help: "Authorization invalidations published by scope and reason.",
 		}, []string{"scope", "reason"}),
+		authSessionEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "spm_auth_session_events_total",
+			Help: "Session lifecycle events by bounded event name.",
+		}, []string{"event"}),
 		planningConflicts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "spm_planning_conflicts_total",
 			Help: "Rejected optimistic-concurrency writes by planning resource.",
@@ -193,6 +199,7 @@ func New(info BuildInfo) *Registry {
 		metrics.reconcileDuration,
 		metrics.reconcileLastSuccess,
 		metrics.authzInvalidations,
+		metrics.authSessionEvents,
 		metrics.planningConflicts,
 		metrics.boardMoveFailures,
 		metrics.testRunCompletions,
@@ -284,6 +291,34 @@ func (r *Registry) ObserveAuthzInvalidation(scope, reason string) {
 		return
 	}
 	r.authzInvalidations.WithLabelValues(scope, reason).Inc()
+}
+
+// ObserveSessionEvent records one session lifecycle event. The label is a
+// bounded enumeration; unknown values collapse to "other" so user input can
+// never create an unbounded series.
+func (r *Registry) ObserveSessionEvent(event string) {
+	if r == nil {
+		return
+	}
+	switch event {
+	case "created", "refreshed", "revoked", "revoke_all", "expired", "reuse_detected", "session_limit":
+	default:
+		event = "other"
+	}
+	r.authSessionEvents.WithLabelValues(event).Inc()
+}
+
+// RegisterAuthSessions exposes the number of sessions that can currently
+// authenticate. The callback is evaluated on every scrape; a failing query is
+// reported as zero rather than breaking the metrics endpoint.
+func (r *Registry) RegisterAuthSessions(active func() int64) {
+	if r == nil || active == nil {
+		return
+	}
+	r.gatherer.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "spm_auth_sessions_active",
+		Help: "Sessions that can currently authenticate.",
+	}, func() float64 { return float64(active()) }))
 }
 
 // ObservePlanningConflict records a rejected stale write. The resource label
