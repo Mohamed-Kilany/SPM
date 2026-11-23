@@ -99,6 +99,10 @@ The AI service is a stateless Python FastAPI application:
 - JWT HS256 with short expiry and a server-side session ID; refresh tokens rotate on every use and
   reuse revokes the session family. Sessions are listed and revoked per device in the profile; see
   [`SESSIONS.md`](SESSIONS.md).
+- Project ownership transfers are explicit and two-party: the target accepts or a global admin
+  confirms. Admin offboarding previews owned projects, open work, pending approvals and planning
+  artifacts, then reassigns them and revokes every session in one transaction; see
+  [`OFFBOARDING.md`](OFFBOARDING.md).
 - Single-use SSE tickets; JWTs never in query strings.
 - Webhook HMAC or bearer tokens with constant-time comparison.
 - Password hashing with bcrypt.
