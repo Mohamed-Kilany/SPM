@@ -65,6 +65,11 @@ jobs:
       - name: Check the OpenAPI contract
         run: go run ./cmd/openapi -check
 
+      # Forward migrations must stay expand-only and transaction-safe. Contract
+      # statements belong in rollback companions, which are not auto-applied.
+      - name: Lint database migrations
+        run: go run ./cmd/migrate-lint
+
       - name: Test with the race detector
         run: go test ./... -count=1 -race -timeout=180s
 

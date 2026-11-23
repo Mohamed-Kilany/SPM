@@ -1,27 +1,37 @@
 # Migration guide
 
 This guide is the working procedure for changing the SPM PostgreSQL schema. The
-release-level compatibility rules live in [`RELEASING.md`](RELEASING.md); the
-model invariants live in [`DATA-MODEL.md`](DATA-MODEL.md).
+runtime safety controls, configuration and failure runbook live in
+[`MIGRATIONS.md`](MIGRATIONS.md); the release-level compatibility rules live in
+[`RELEASING.md`](RELEASING.md); the model invariants live in
+[`DATA-MODEL.md`](DATA-MODEL.md).
 
 ## 1. How migrations run
 
 The API embeds `api/internal/migrate/sql/*.sql` and applies unapplied files in
 lexical order at startup, before the server accepts traffic. Each file is
-executed inside its own transaction and recorded in `schema_migrations`.
+executed inside its own transaction and recorded in `schema_migrations`. The
+runner also creates `migration_backfills`, applies a lock timeout (default 5s)
+and a statement timeout (default 2m) to each migration file, and verifies the
+configured pre-migration backup before applying anything.
 
 Consequences:
 
-- A migration must be valid PostgreSQL that can run inside a transaction.
-  `CREATE INDEX CONCURRENTLY`, `VACUUM` and other non-transactional statements do
-  not work here. Use a regular `CREATE INDEX` during a maintenance window, or
-  add a separate non-transactional runner first.
+- A migration must be valid PostgreSQL that can run inside a transaction, unless
+  it starts with `-- migrate:no-transaction`. That directive is required for
+  `CREATE INDEX CONCURRENTLY` and is checked by the CI linter. Keep one
+  non-transactional statement per file: PostgreSQL wraps multiple simple-query
+  statements in an implicit transaction. `VACUUM` and other maintenance commands
+  cannot run in the startup runner; run them as an explicit operator step.
 - There is no down migration at runtime. Forward files are the only scripts the
   API applies.
 - `000_create_gitea_db.sql` is a psql/initdb bootstrap and is skipped by the
   runner.
 - Never edit an applied migration. Its version is recorded; an edit silently
   diverges between environments. Add `NNN_*.sql` instead.
+- The PR gate runs `go run ./cmd/migrate-lint`, which rejects destructive
+  statements in forward migrations. Contract statements belong in the rollback
+  companions, which are never embedded or applied automatically.
 
 ## 2. Expand / contract
 
@@ -49,7 +59,7 @@ a fix; restoring a backup is the last resort.
 2. Copy `api/internal/migrate/migration_template.sql` to the next free version:
 
    ```text
-   api/internal/migrate/sql/017_<snake_case_name>.sql
+   api/internal/migrate/sql/025_<snake_case_name>.sql
    ```
 
 3. Keep the forward file idempotent. The runner applies each file once, but
@@ -59,7 +69,7 @@ a fix; restoring a backup is the last resort.
 4. Add the matching rollback companion:
 
    ```text
-   api/internal/migrate/rollback/017_<snake_case_name>.sql
+   api/internal/migrate/rollback/025_<snake_case_name>.sql
    ```
 
    The companion is the contract step. It is intentionally **not** embedded in
@@ -69,9 +79,10 @@ a fix; restoring a backup is the last resort.
    test's leading-index check must keep passing.
 6. Update [`DATA-MODEL.md`](DATA-MODEL.md) when the entity graph, cascade rules
    or concurrency contract changes.
-7. Validate forward and backward semantics locally (section 5), then open the
-   PR. The PR gate runs `go test ./...`, including the schema tests, but it does
-   **not** run PostgreSQL migrations.
+7. Run `go run ./cmd/migrate-lint` and the migration tests, validate forward and
+   backward semantics locally (section 5), then open the PR. The PR gate runs
+   `go test ./...` and the linter, but it does **not** run PostgreSQL
+   migrations; real-database coverage is owned by `QAT-02`.
 
 ### Naming rules
 
@@ -112,17 +123,20 @@ trigger keeps incrementing it for writes made through the old code.
 From `api/`:
 
 ```powershell
+go run ./cmd/migrate-lint
 go test ./internal/migrate -count=1 -v
 ```
 
-This checks migration version uniqueness and order, revision coverage, rollback
-completeness, that rollback scripts are not embedded, and that every one of the
-foreign keys has a leading index.
+The linter rejects destructive forward statements and a missing
+`-- migrate:no-transaction` directive on `CREATE INDEX CONCURRENTLY`. The tests
+check migration version uniqueness and order, revision coverage, rollback
+completeness, that rollback scripts are not embedded, and that every foreign key
+has a leading index. They also cover backup verification, timeout configuration,
+backfill checkpoints and the linter rules themselves.
 
 ### 5.2 PostgreSQL semantics (local or staging)
 
-The PR gate has no PostgreSQL service (`QAT-02` and `OPS-09` own the
-real-database path). Locally, apply all forward files to an empty database, then
+The PR gate has no PostgreSQL service (`QAT-02` owns the real-database path). Locally, apply all forward files to an empty database, then
 exercise the migration's contract:
 
 1. Apply `001` through the new version, skipping `000`.
@@ -141,18 +155,22 @@ when Docker or a PostgreSQL service is unavailable. `016` was validated this way
 all eight tables, 33 indexes, stale/wildcard updates and deletes, forced-revision
 rejection, self-parent rejection, rollback and re-expand passed.
 
-### 5.3 Production rehearsal (`OPS-09`)
+### 5.3 Production rehearsal
 
 Before a release that changes the schema, rehearse in staging:
 
-1. Deploy `vN`; wait for `/health/ready`.
-2. Run the smoke check and one write path.
-3. Deploy `vN-1` over the expanded schema without restoring the database.
-4. Confirm the previous tag still serves reads and writes.
-5. Record the date, tags and result in the release pull request.
+1. Take and verify the pre-migration backup (section 3 of
+   [`MIGRATIONS.md`](MIGRATIONS.md)).
+2. Deploy `vN`; wait for `/health/ready`.
+3. Run the smoke check and one write path.
+4. Deploy `vN-1` over the expanded schema without restoring the database.
+5. Confirm the previous tag still serves reads and writes.
+6. Record the date, tags, migration duration, lock waits and result in the
+   release pull request.
 
 Do not run a contract script during the rehearsal unless the release explicitly
-removes the old shape.
+removes the old shape. Real-database migration and lock-time coverage runs in CI
+under `QAT-02`; a local rehearsal does not replace that gate.
 
 ## 6. Rolling back a migration
 
@@ -175,13 +193,20 @@ does not start. Fix the SQL in a new commit; do not hand-edit `schema_migrations
 - No table rewrite in a request-path migration. Add columns with defaults
   (metadata-only on PostgreSQL 11+) and backfill in batches.
 - No `DROP`, `TRUNCATE` or type narrowing in an expand migration.
-- No long locks on hot tables. Add indexes during a maintenance window; the
-  current runner cannot use `CONCURRENTLY`.
+- No long locks on hot tables. Every migration runs with `lock_timeout` and
+  `statement_timeout`; tune them with `MIGRATION_LOCK_TIMEOUT` and
+  `MIGRATION_STATEMENT_TIMEOUT` rather than removing them.
+- `CREATE INDEX CONCURRENTLY` is allowed only with
+  `-- migrate:no-transaction` and one statement per file. A failure leaves an
+  invalid index that must be dropped before retrying.
 - Every foreign key gets a leading index. The test enforces this; do not disable
   it.
 - Hash-chained audit data is append-only (`015_audit_log.sql`). Retention uses
   the audited partition-drop procedure in [`AUDIT.md`](AUDIT.md); never delete
   audit rows directly.
+- Production sets `MIGRATION_REQUIRE_BACKUP=true` and supplies a non-empty
+  `MIGRATION_BACKUP_PATH` plus a SHA-256 digest. The runner verifies the digest
+  before applying anything.
 - Back up before a destructive contract step and record the restore point in
   the release pull request.
 
@@ -193,7 +218,11 @@ does not start. Fix the SQL in a new commit; do not hand-edit `schema_migrations
 - [ ] New foreign keys have a leading index.
 - [ ] New columns are nullable or have a safe default.
 - [ ] Backfills are bounded and idempotent.
+- [ ] `go run ./cmd/migrate-lint` passes.
 - [ ] `go test ./internal/migrate -count=1` passes.
+- [ ] A non-transactional migration uses `-- migrate:no-transaction`, contains
+      one statement and has an invalid-index cleanup note.
+- [ ] The production backup is configured and its digest verifies.
 - [ ] Forward/backward semantics have been exercised against PostgreSQL or
       PGlite.
 - [ ] `docs/DATA-MODEL.md` and the OpenAPI contract are updated if the public

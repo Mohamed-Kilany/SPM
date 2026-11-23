@@ -60,6 +60,9 @@ type Registry struct {
 	auditChainChecked      prometheus.Gauge
 	auditChainLastVerified prometheus.Gauge
 	auditPartitions        prometheus.Counter
+
+	migrationDuration    *prometheus.HistogramVec
+	migrationLastSuccess prometheus.Gauge
 }
 
 var defaultRegistry atomic.Pointer[Registry]
@@ -171,6 +174,15 @@ func New(info BuildInfo) *Registry {
 			Name: "spm_audit_partitions_pruned_total",
 			Help: "Expired audit partitions removed by the audited retention job.",
 		}),
+		migrationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "spm_migration_duration_seconds",
+			Help:    "Applied database migration duration by version and status.",
+			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+		}, []string{"version", "status"}),
+		migrationLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "spm_migration_last_success_timestamp_seconds",
+			Help: "Unix timestamp of the last successful migration.",
+		}),
 	}
 
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -209,6 +221,8 @@ func New(info BuildInfo) *Registry {
 		metrics.auditChainChecked,
 		metrics.auditChainLastVerified,
 		metrics.auditPartitions,
+		metrics.migrationDuration,
+		metrics.migrationLastSuccess,
 	)
 	return metrics
 }
@@ -399,6 +413,27 @@ func (r *Registry) ObserveAuditPruned(partitions int) {
 		return
 	}
 	r.auditPartitions.Add(float64(partitions))
+}
+
+// ObserveMigrationDuration records how long one applied migration took.
+func (r *Registry) ObserveMigrationDuration(version, status string, seconds float64) {
+	if r == nil {
+		return
+	}
+	if status == "" {
+		status = "unknown"
+	}
+	r.migrationDuration.WithLabelValues(version, status).Observe(seconds)
+}
+
+// ObserveMigrationSuccess marks now as the time of the last successful
+// migration. Migrations run once at startup, so a gauge is more useful than a
+// counter: an alert fires when the timestamp is stale after a deploy.
+func (r *Registry) ObserveMigrationSuccess() {
+	if r == nil {
+		return
+	}
+	r.migrationLastSuccess.Set(float64(time.Now().Unix()))
 }
 
 // RegisterPool exports pgx pool saturation and acquire statistics.

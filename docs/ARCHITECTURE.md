@@ -209,8 +209,10 @@ Schema migrations are embedded in the API and applied at startup. Releases follo
 the previous tag must remain compatible with the expanded schema for the rollback window. The
 entity graph, cascade rules, revision tokens and index invariants are in
 [`DATA-MODEL.md`](DATA-MODEL.md); the authoring and rehearsal procedure is in
-[`MIGRATION-GUIDE.md`](MIGRATION-GUIDE.md). The deploy order, rollback procedure, compatibility
-rules and the `OPS-09` rehearsal handoff are in [`RELEASING.md`](RELEASING.md).
+[`MIGRATION-GUIDE.md`](MIGRATION-GUIDE.md); the runtime safety controls, backup
+verification, timeouts and failure runbook are in [`MIGRATIONS.md`](MIGRATIONS.md). The deploy
+order, rollback procedure, compatibility rules and the `OPS-09` rehearsal handoff are in
+[`RELEASING.md`](RELEASING.md).
 
 ## 11. Observability
 

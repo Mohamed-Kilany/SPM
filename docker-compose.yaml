@@ -307,6 +307,14 @@ services:
       DATABASE_URL:              "postgres://${POSTGRES_USER:-spm}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spm}?sslmode=disable"
       NATS_URL:                  "nats://nats:4222"
       NATS_EVENT_RETENTION_DAYS: "${NATS_EVENT_RETENTION_DAYS:-90}"
+      # Migration safety. Local compose does not require a backup; production
+      # sets MIGRATION_REQUIRE_BACKUP=true and mounts a verified dump plus its
+      # SHA-256. See docs/MIGRATIONS.md.
+      MIGRATION_LOCK_TIMEOUT:      "${MIGRATION_LOCK_TIMEOUT:-5s}"
+      MIGRATION_STATEMENT_TIMEOUT: "${MIGRATION_STATEMENT_TIMEOUT:-2m}"
+      MIGRATION_REQUIRE_BACKUP:    "${MIGRATION_REQUIRE_BACKUP:-false}"
+      MIGRATION_BACKUP_PATH:       "${MIGRATION_BACKUP_PATH:-}"
+      MIGRATION_BACKUP_SHA256:     "${MIGRATION_BACKUP_SHA256:-}"
       # Whole-month audit partitions older than this are dropped by the audited
       # retention job. 0 disables pruning; partitions are still extended.
       AUDIT_RETENTION_DAYS:      "${AUDIT_RETENTION_DAYS:-365}"
