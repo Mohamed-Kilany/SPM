@@ -513,6 +513,104 @@ properties:
   role: { type: string, enum: [admin, member, viewer] }
   is_active: { type: boolean }
   password: { type: string, format: password, minLength: 10, maxLength: 128 }`,
+	"OwnershipTransferInput": `type: object
+required: [to_user_id]
+properties:
+  to_user_id: { type: string, format: uuid, description: An active member of the project. }
+  reason: { type: string, maxLength: 500 }`,
+	"OwnershipTransfer": `type: object
+required: [id, project_id, project_name, from_user_id, to_user_id, requested_by, status, created_at]
+properties:
+  id: { type: string, format: uuid }
+  project_id: { type: string, format: uuid }
+  project_name: { type: string }
+  from_user_id: { type: string, format: uuid }
+  from_user: { type: string }
+  to_user_id: { type: string, format: uuid }
+  to_user: { type: string }
+  requested_by: { type: string, format: uuid }
+  requested_by_name: { type: string }
+  status: { type: string, enum: [pending, accepted, declined, confirmed, cancelled] }
+  reason: { type: string }
+  created_at: { type: string, format: date-time }
+  resolved_at: { type: [string, "null"], format: date-time }
+  resolved_by: { type: [string, "null"], format: uuid }`,
+	"OwnershipTransferList": `type: array
+items: { $ref: '#/components/schemas/OwnershipTransfer' }`,
+	"OwnershipTransferInbox": `type: object
+required: [incoming, outgoing]
+properties:
+  incoming:
+    type: array
+    items: { $ref: '#/components/schemas/OwnershipTransfer' }
+  outgoing:
+    type: array
+    items: { $ref: '#/components/schemas/OwnershipTransfer' }`,
+	"OffboardingInput": `type: object
+required: [reason]
+properties:
+  reason: { type: string, minLength: 3, maxLength: 500 }
+  reassign_to: { type: string, format: uuid, description: Required when the preview reports requires_reassignment. }
+  project_owners:
+    type: object
+    description: Optional per-project successor overrides keyed by project ID.
+    additionalProperties: { type: string, format: uuid }`,
+	"OffboardingImpact": `type: object
+required: [user_id, username, role, is_active, is_last_admin, owned_projects, open_assignments, pending_approvals, owned_artifacts, active_sessions, requires_reassignment, warnings]
+properties:
+  user_id: { type: string, format: uuid }
+  username: { type: string }
+  display_name: { type: string }
+  role: { type: string }
+  is_active: { type: boolean }
+  is_last_admin: { type: boolean }
+  owned_projects:
+    type: array
+    items:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string }
+        owner_count: { type: integer }
+        sole_owner: { type: boolean }
+  open_assignments:
+    type: array
+    items:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string }
+        title: { type: string }
+        status: { type: string }
+        project_id: { type: string, format: uuid }
+        project_name: { type: string }
+  pending_approvals:
+    type: array
+    items:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        project_name: { type: string }
+  owned_artifacts:
+    type: object
+    additionalProperties: { type: integer }
+  active_sessions: { type: integer }
+  requires_reassignment: { type: boolean }
+  warnings:
+    type: array
+    items: { type: string }`,
+	"OffboardingResult": `type: object
+required: [impact, reassigned_projects, reassigned_items, reassigned_approvals, reassigned_artifacts, revoked_sessions]
+properties:
+  impact: { $ref: '#/components/schemas/OffboardingImpact' }
+  reassigned_projects: { type: integer }
+  reassigned_items: { type: integer }
+  reassigned_approvals: { type: integer }
+  reassigned_artifacts: { type: integer }
+  revoked_sessions: { type: integer }`,
 	"MemberInput": `type: object
 required: [user_id, role]
 properties:
@@ -1343,7 +1441,8 @@ func operationYAML(route server.Route, openAPIPath string) string {
 	// Request body.
 	if isFileUpload(route.Method, openAPIPath) {
 		b.WriteString("requestBody:\n  required: true\n  content:\n    multipart/form-data:\n      schema:\n        type: object\n        required: [file]\n        properties:\n          file: { type: string, format: binary }\n")
-	} else if strings.EqualFold(route.Method, "POST") && strings.HasSuffix(openAPIPath, "/watch") {
+	} else if strings.EqualFold(route.Method, "POST") &&
+		(strings.HasSuffix(openAPIPath, "/watch") || isOwnershipTransferAction(openAPIPath)) {
 		b.WriteString("requestBody:\n  required: false\n  content:\n    application/json:\n      schema: { type: object, additionalProperties: false }\n")
 	} else if schema := requestSchema(route.Method, openAPIPath); schema != "" {
 		required := "true"
@@ -1471,6 +1570,18 @@ func isRevisionedMutation(method, path string) bool {
 	}
 }
 
+// isOwnershipTransferAction reports the accept/decline/confirm endpoints. They
+// are parameterised only by the transfer in the path and do not read a body,
+// but the contract still declares an optional empty JSON object.
+func isOwnershipTransferAction(path string) bool {
+	if !strings.Contains(path, "/ownership-transfers/{transferId}/") {
+		return false
+	}
+	return strings.HasSuffix(path, "/accept") ||
+		strings.HasSuffix(path, "/decline") ||
+		strings.HasSuffix(path, "/confirm")
+}
+
 // isLifecycleMutation reports whether a lifecycle sub-resource consumes a
 // revision token and returns the new revision. These paths sit below a single
 // revisioned resource, so they are not covered by isRevisionedPath.
@@ -1559,6 +1670,11 @@ func successCode(method, path string) string {
 		switch {
 		case strings.HasSuffix(path, "/auth/logout"):
 			return "204"
+		case strings.HasSuffix(path, "/admin/users/{userId}/offboarding"),
+			strings.HasSuffix(path, "/ownership-transfers/{transferId}/accept"),
+			strings.HasSuffix(path, "/ownership-transfers/{transferId}/decline"),
+			strings.HasSuffix(path, "/ownership-transfers/{transferId}/confirm"):
+			return "200"
 		case strings.HasSuffix(path, "/auth/login"),
 			strings.HasSuffix(path, "/auth/refresh"),
 			strings.HasSuffix(path, "/auth/sessions/revoke-others"),
@@ -1604,6 +1720,12 @@ func errorCodes(route server.Route, path string) []string {
 		codes = appendUnique(codes, "409")
 	}
 	if successCode(route.Method, path) == "201" && !strings.Contains(path, "/auth/login") {
+		codes = appendUnique(codes, "409")
+	}
+	if strings.HasSuffix(path, "/admin/users/{userId}/offboarding") && strings.EqualFold(route.Method, "POST") {
+		codes = appendUnique(codes, "409")
+	}
+	if strings.Contains(path, "/ownership-transfers/") {
 		codes = appendUnique(codes, "409")
 	}
 	if isRevisionedMutation(route.Method, path) || isLifecycleMutation(route.Method, path) || isTestManagementMutation(route.Method, path) {
@@ -1656,6 +1778,10 @@ func requestSchema(method, path string) string {
 		return "ProfileUpdateInput"
 	case strings.HasSuffix(path, "/auth/password"):
 		return "ChangePasswordInput"
+	case strings.HasSuffix(path, "/admin/users/{userId}/offboarding"):
+		return "OffboardingInput"
+	case strings.HasSuffix(path, "/ownership-transfers"):
+		return "OwnershipTransferInput"
 	case strings.HasSuffix(path, "/admin/users"):
 		return "AdminUserInput"
 	case strings.Contains(path, "/admin/users/"):
@@ -1847,6 +1973,20 @@ func successSchema(method, path string) string {
 		return "SessionList"
 	case strings.HasSuffix(path, "/auth/sessions/revoke-others"):
 		return "RevokeSessionsResponse"
+	case strings.HasSuffix(path, "/auth/ownership-transfers"):
+		return "OwnershipTransferInbox"
+	case strings.HasSuffix(path, "/admin/users/{userId}/offboarding"):
+		if strings.EqualFold(method, "POST") {
+			return "OffboardingResult"
+		}
+		return "OffboardingImpact"
+	case strings.HasSuffix(path, "/ownership-transfers"):
+		if strings.EqualFold(method, "GET") {
+			return "OwnershipTransferList"
+		}
+		return "OwnershipTransfer"
+	case strings.Contains(path, "/ownership-transfers/"):
+		return "OwnershipTransfer"
 	case strings.HasSuffix(path, "/auth/me"):
 		return "User"
 	case strings.HasSuffix(path, "/admin/audit/events"):
@@ -1922,11 +2062,14 @@ var summaryOverrides = map[string]string{
 	"DELETE /api/v1/auth/sessions/{sessionId}":                                                      "Revoke one session",
 	"POST /api/v1/auth/sessions/revoke-others":                                                      "Revoke every other session",
 	"POST /api/v1/auth/stream-ticket":                                                               "Issue a stream ticket",
+	"GET /api/v1/auth/ownership-transfers":                                                          "List my ownership transfer requests",
 	"GET /api/v1/users":                                                                             "List directory users",
 	"GET /api/v1/search":                                                                            "Search artifacts",
 	"GET /api/v1/admin/users":                                                                       "List users",
 	"POST /api/v1/admin/users":                                                                      "Create a user",
 	"PATCH /api/v1/admin/users/{userId}":                                                            "Update a user",
+	"GET /api/v1/admin/users/{userId}/offboarding":                                                  "Preview user offboarding impact",
+	"POST /api/v1/admin/users/{userId}/offboarding":                                                 "Deactivate a user and reassign their work",
 	"GET /api/v1/admin/audit/events":                                                                "List audit events",
 	"GET /api/v1/admin/audit/events/{auditId}":                                                      "Get an audit event",
 	"GET /api/v1/admin/audit/export":                                                                "Export audit events",
@@ -1947,6 +2090,12 @@ var summaryOverrides = map[string]string{
 	"POST /api/v1/projects/{id}/members":                                                            "Add a project member",
 	"PATCH /api/v1/projects/{id}/members/{userId}":                                                  "Update a project member",
 	"DELETE /api/v1/projects/{id}/members/{userId}":                                                 "Remove a project member",
+	"GET /api/v1/projects/{id}/ownership-transfers":                                                 "List ownership transfers",
+	"POST /api/v1/projects/{id}/ownership-transfers":                                                "Request an ownership transfer",
+	"POST /api/v1/projects/{id}/ownership-transfers/{transferId}/accept":                            "Accept an ownership transfer",
+	"POST /api/v1/projects/{id}/ownership-transfers/{transferId}/decline":                           "Decline an ownership transfer",
+	"POST /api/v1/projects/{id}/ownership-transfers/{transferId}/confirm":                           "Confirm an ownership transfer",
+	"DELETE /api/v1/projects/{id}/ownership-transfers/{transferId}":                                 "Cancel an ownership transfer",
 	"GET /api/v1/projects/{id}/stream":                                                              "Stream project events",
 	"GET /api/v1/projects/{id}/ai/search":                                                           "Search with AI",
 	"POST /api/v1/projects/{id}/ai/ask":                                                             "Ask a question",
