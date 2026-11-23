@@ -2564,7 +2564,7 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** token usage metric, `docs/API-TOKENS.md`.
 
 #### GOV-12 · Ownership transfer, offboarding and permission-aware UI
-- **Status:** IN PROGRESS · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-offboarding`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-offboarding`
 - **Depends on:** GOV-01, GOV-02
 - **Scope:** Add explicit ownership transfer, user deactivation impact preview (owned projects,
   open assignments, approvals, tokens), reassignment workflow and a permission-aware UI that
@@ -2575,9 +2575,23 @@ actions still work), permission-filtered.
   - [x] A deactivated user cannot authenticate, refresh, stream or use tokens.
   - [x] Disabled actions have an accessible reason ("Requires project maintainer").
   - [x] The last owner/admin protections remain enforced.
-- **Tests/evidence:** offboarding integration test, ownership transfer test, UI permission
-  tests.
-- **Docs/telemetry:** offboarding checklist, audit events.
+- **Tests/evidence:** `workspace/handler_ownership_test.go` covers the transfer permission
+  matrix, reason validation and status mapping; `auth/offboarding_test.go` covers reason,
+  successor and override parsing plus the reassignment predicate; `migrate/schema_test.go` pins
+  `024_ownership_transfers` and its rollback companion; `ui/src/lib/permissions.test.ts` adds 12
+  permission-reason tests. `api/tests/integration/ownership_test.go` exercises request/accept,
+  admin confirm and the full offboarding reassignment/session-revocation flow; the package
+  compiles with `-tags integration` but needs `DATABASE_URL`/`NATS_URL`, which are not available
+  locally, so real-database execution remains with QAT-02/CI. Verified locally with
+  `go build ./...`, `go vet ./...`, `go test ./...`, `go run ./cmd/openapi -check`, UI typecheck,
+  101 tests / 12 files, production build, bundle check and `git diff --check`. OpenAPI grows from
+  140 to 149 operations. Merged as PR #58 (`79d5175`) after all required checks passed.
+- **Docs/telemetry:** [`docs/OFFBOARDING.md`](docs/OFFBOARDING.md) documents the lifecycle,
+  permission matrix, endpoints, error codes, transaction, audit events, rollout and rollback;
+  `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/OBSERVABILITY.md` and `README.md` are updated.
+  Offboarding emits `spm_auth_session_events_total{event="revoke_all"}` and
+  `spm_authz_invalidations_total{scope="session",reason="offboarding"}`, and records
+  `admin.user.offboard` plus per-project `project.ownership.transfer` audit entries.
 
 ### Phase 2 — Design system and application shell
 
@@ -5377,7 +5391,7 @@ labels must exist in the repository.
 | Phase | Prefix | Cards | Done | In progress | Todo |
 |---|---|---|---|---|---|
 | 0 - Baseline, truth and delivery gate | `BASE` | 9 | 8 | 0 | 1 |
-| 1 - Identity, authorization, audit | `GOV` | 12 | 4 | 0 | 8 |
+| 1 - Identity, authorization, audit | `GOV` | 12 | 5 | 0 | 7 |
 | 2 — Design system and shell | `UX` | 16 | 0 | 0 | 16 |
 | 3 — Screen redesigns | `UI` | 16 | 0 | 0 | 16 |
 | 4 - Planning, board, test depth | `PLN`, `BRD`, `TST` | 13 | 11 | 0 | 2 |
@@ -5386,7 +5400,7 @@ labels must exist in the repository.
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **24** | **0** | **104** |
+| **Total** | - | **128** | **25** | **0** | **103** |
 
 ### C.2 Card index by phase
 
@@ -5449,6 +5463,7 @@ labels must exist in the repository.
 | 2026-11-22 | Closed BRD-02: added pointer drag with a 6 px threshold, touch support, a floating preview and click suppression, plus optimistic status changes backed by a `pendingMoves` overlay that rolls back and offers retry on failure. Added `Alt+Left/Right` keyboard moves that scan to the nearest legal column, announce the position through `aria-live` and restore focus, and multi-select bulk moves with per-item revisioned PATCHes, a `moved`/`failed`/`skipped` results dialog and `Retry failed`. Coalesced `workspaceStore.refresh()` callers, recorded `work_item.move` audit entries with before/after status, and added `spm_board_move_failures_total{reason}` with bounded reasons. OpenAPI stays at 135 operations. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, Redocly lint, UI typecheck/test (80 passed)/build and `git diff --check`; the Playwright drag/keyboard/bulk/axe path was extended but not run locally because the Docker stack is unavailable. Merged as PR #44 (`030e4a6`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed BRD-03: made the board predictable at 2,000 cards by grouping each swimlane into columns in one pass, paginating columns at 40 cards with `Show next … of … hidden`, revealing the target page on keyboard/drag moves, debouncing search by 180 ms and resetting pages when filters/sort/swimlanes change. Replaced per-card scans of features, custom values, branches, PRs and parents with lookup maps, computed WIP counts and board stats in single passes, added a five-project LRU workspace snapshot cache and documented the existing 220 ms SSE refresh coalescing. Added `data-render-ms`/`data-move-ms` diagnostics, the `ui/e2e/board-scale.spec.ts` 2,000-card stress test with a Chrome performance trace and accelerated forced-GC heap soak, and gzip bundle budgets enforced by `npm run bundle:check` in the PR gate. Verified with UI typecheck, 86 unit tests / 10 files, production build, bundle check (JS 199.6 KiB / 224.6 KiB, CSS 11.3 KiB / 15.6 KiB, largest chunk 103.3 KiB / 122.1 KiB) and `playwright test --list`; the full-stack stress spec needs the Docker stack and was not run locally, so CI/full-stack is the authority. No API or migration change; OpenAPI stays at 135 operations. Merged as PR #46 (`6eed163`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed GOV-09: added persistent `auth_sessions` and `auth_session_rotations` (migration `023` plus rollback) with a 15-minute access token (`sid`/`jti`), a 30-day rotating refresh token stored only as SHA-256, a 24-hour idle timeout, a 20-session cap and 30-day retention. Every authenticated request now validates the session row (`401 SESSION_REVOKED`/`SESSION_EXPIRED`, fail-closed `503 SESSION_CHECK_FAILED`), and revocation publishes a session-scoped NATS invalidation so every replica closes the matching SSE stream with a 20-second heartbeat fallback. Added `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/sessions`, `DELETE /auth/sessions/{sessionId}` and `POST /auth/sessions/revoke-others` (140 operations), plus `spm_auth_sessions_active` and `spm_auth_session_events_total{event}`. The profile lists device/browser/IP/last seen, marks the current device and confirms "revoke other sessions"; the client stores the refresh token, performs single-flight refresh with one retry, serializes rotation across tabs with the Web Locks API and syncs tabs through `storage` events. Password changes, deactivation and admin password/role changes revoke all target sessions. Added `docs/SESSIONS.md` and updated `API.md`, `OBSERVABILITY.md`, `ARCHITECTURE.md`, `.env.example` and Compose. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (89 passed)/build/bundle check; the four new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #48 (`fd604dc`) after all required checks passed | Maintainer |
+| 2026-11-23 | Closed GOV-12: added explicit project ownership transfers (`ownership_transfers`, migration `024` plus rollback) with a one-pending-request constraint, target accept/decline, admin confirmation, requester/owner/admin cancellation and a profile inbox available without project access. Added a deactivation impact preview (owned projects, open work, pending approvals, planning artifacts and sessions) and a transactional offboarding endpoint that reassigns work, moves project ownership, removes memberships, revokes every session and deactivates the account; generic deactivation now returns `409 REASSIGNMENT_REQUIRED` when work would be orphaned. Added permission-aware project settings, profile inbox and admin offboarding UI with accessible reasons, 9 routes (149 operations), `docs/OFFBOARDING.md` and updated API/architecture/observability docs. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (101 passed)/build/bundle check and `git diff --check`; the new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #58 (`79d5175`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
