@@ -225,6 +225,61 @@ paths:
           in: path
           required: true
           schema: {type: string}
+  /api/v1/admin/users/{userId}/offboarding:
+    get:
+      tags: ["Admin"]
+      summary: "Preview user offboarding impact"
+      operationId: get_api_v1_admin_users_userId_offboarding
+      x-spm-auth: admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OffboardingImpact'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "userId"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Admin"]
+      summary: "Deactivate a user and reassign their work"
+      operationId: post_api_v1_admin_users_userId_offboarding
+      x-spm-auth: admin
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OffboardingResult'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OffboardingInput'
+      parameters:
+        - name: "userId"
+          in: path
+          required: true
+          schema: {type: string}
   /api/v1/auth/login:
     post:
       tags: ["Auth"]
@@ -301,6 +356,23 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ProfileUpdateInput'
+  /api/v1/auth/ownership-transfers:
+    get:
+      tags: ["Auth"]
+      summary: "List my ownership transfer requests"
+      operationId: get_api_v1_auth_ownership_transfers
+      x-spm-auth: bearer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferInbox'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/auth/password:
     post:
       tags: ["Auth"]
@@ -1435,6 +1507,194 @@ paths:
           required: true
           schema: {type: string}
         - name: "userId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ownership-transfers:
+    get:
+      tags: ["Projects"]
+      summary: "List ownership transfers"
+      operationId: get_api_v1_projects_id_ownership_transfers
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferList'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+    post:
+      tags: ["Projects"]
+      summary: "Request an ownership transfer"
+      operationId: post_api_v1_projects_id_ownership_transfers
+      x-spm-auth: project-admin
+      x-spm-capability: member.write
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransfer'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferInput'
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ownership-transfers/{transferId}:
+    delete:
+      tags: ["Projects"]
+      summary: "Cancel an ownership transfer"
+      operationId: delete_api_v1_projects_id_ownership_transfers_transferId
+      x-spm-auth: project-admin
+      x-spm-capability: member.write
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "transferId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ownership-transfers/{transferId}/accept:
+    post:
+      tags: ["Projects"]
+      summary: "Accept an ownership transfer"
+      operationId: post_api_v1_projects_id_ownership_transfers_transferId_accept
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransfer'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "transferId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ownership-transfers/{transferId}/confirm:
+    post:
+      tags: ["Projects"]
+      summary: "Confirm an ownership transfer"
+      operationId: post_api_v1_projects_id_ownership_transfers_transferId_confirm
+      x-spm-auth: project-admin
+      x-spm-capability: member.write
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransfer'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "transferId"
+          in: path
+          required: true
+          schema: {type: string}
+  /api/v1/projects/{id}/ownership-transfers/{transferId}/decline:
+    post:
+      tags: ["Projects"]
+      summary: "Decline an ownership transfer"
+      operationId: post_api_v1_projects_id_ownership_transfers_transferId_decline
+      x-spm-auth: project-read
+      x-spm-capability: project.read
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransfer'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema: {type: string}
+        - name: "transferId"
           in: path
           required: true
           schema: {type: string}
@@ -5622,3 +5882,108 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Session'
+    OffboardingImpact:
+      type: object
+      required: [user_id, username, role, is_active, is_last_admin, owned_projects, open_assignments, pending_approvals, owned_artifacts, active_sessions, requires_reassignment, warnings]
+      properties:
+        user_id: {type: string, format: uuid}
+        username: {type: string}
+        display_name: {type: string}
+        role: {type: string}
+        is_active: {type: boolean}
+        is_last_admin: {type: boolean}
+        owned_projects:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string, format: uuid}
+              name: {type: string}
+              status: {type: string}
+              owner_count: {type: integer}
+              sole_owner: {type: boolean}
+        open_assignments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string, format: uuid}
+              key: {type: string}
+              title: {type: string}
+              status: {type: string}
+              project_id: {type: string, format: uuid}
+              project_name: {type: string}
+        pending_approvals:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string, format: uuid}
+              deployment_id: {type: string, format: uuid}
+              project_id: {type: string, format: uuid}
+              project_name: {type: string}
+        owned_artifacts:
+          type: object
+          additionalProperties: {type: integer}
+        active_sessions: {type: integer}
+        requires_reassignment: {type: boolean}
+        warnings:
+          type: array
+          items: {type: string}
+    OffboardingInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 3, maxLength: 500}
+        reassign_to: {type: string, format: uuid, description: Required when the preview reports requires_reassignment.}
+        project_owners:
+          type: object
+          description: Optional per-project successor overrides keyed by project ID.
+          additionalProperties: {type: string, format: uuid}
+    OffboardingResult:
+      type: object
+      required: [impact, reassigned_projects, reassigned_items, reassigned_approvals, reassigned_artifacts, revoked_sessions]
+      properties:
+        impact: {$ref: '#/components/schemas/OffboardingImpact'}
+        reassigned_projects: {type: integer}
+        reassigned_items: {type: integer}
+        reassigned_approvals: {type: integer}
+        reassigned_artifacts: {type: integer}
+        revoked_sessions: {type: integer}
+    OwnershipTransfer:
+      type: object
+      required: [id, project_id, project_name, from_user_id, to_user_id, requested_by, status, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        project_name: {type: string}
+        from_user_id: {type: string, format: uuid}
+        from_user: {type: string}
+        to_user_id: {type: string, format: uuid}
+        to_user: {type: string}
+        requested_by: {type: string, format: uuid}
+        requested_by_name: {type: string}
+        status: {type: string, enum: [pending, accepted, declined, confirmed, cancelled]}
+        reason: {type: string}
+        created_at: {type: string, format: date-time}
+        resolved_at: {type: [string, "null"], format: date-time}
+        resolved_by: {type: [string, "null"], format: uuid}
+    OwnershipTransferInbox:
+      type: object
+      required: [incoming, outgoing]
+      properties:
+        incoming:
+          type: array
+          items: {$ref: '#/components/schemas/OwnershipTransfer'}
+        outgoing:
+          type: array
+          items: {$ref: '#/components/schemas/OwnershipTransfer'}
+    OwnershipTransferInput:
+      type: object
+      required: [to_user_id]
+      properties:
+        to_user_id: {type: string, format: uuid, description: An active member of the project.}
+        reason: {type: string, maxLength: 500}
+    OwnershipTransferList:
+      type: array
+      items: {$ref: '#/components/schemas/OwnershipTransfer'}
