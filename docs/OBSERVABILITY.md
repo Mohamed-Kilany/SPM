@@ -200,6 +200,14 @@ A failed audit write is a security signal. Alert on any
 `spm_audit_chain_valid == 0`. The audit schema, retention and incident runbook
 are in [`docs/AUDIT.md`](AUDIT.md).
 
+Ownership transfers emit `project.ownership.request`, `accept`, `decline`,
+`confirm`, `cancel` and `transfer` entries. Offboarding emits
+`admin.user.offboard` with the reason, reassigned counts and revoked session
+count, plus one `project.ownership.transfer` entry per moved project. The
+sessions revoked by offboarding increment
+`spm_auth_session_events_total{event="revoke_all"}` and
+`spm_authz_invalidations_total{scope="session",reason="offboarding"}`.
+
 ### Outbound dependencies
 
 | Metric | Type | Labels | Meaning |

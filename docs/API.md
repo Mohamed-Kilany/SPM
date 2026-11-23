@@ -13,7 +13,7 @@ inventory, not hand-maintained.
 | Generator and drift check | `api/cmd/openapi` |
 
 `TestRoutesMatchRegistration` proves the metadata table and the real Gin engine serve the same
-140 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
+149 method/path pairs. `TestOpenAPIContractMatchesRouter` proves the document and the metadata
 describe the same operations in both directions. `TestUIClientPathsExist` proves every API path
 used by `ui/src/api/client.ts` is documented.
 
@@ -70,6 +70,22 @@ or a document that fails OpenAPI validation, fails the gate.
   accepts it through the `ticket` query parameter. Legacy `?token=` URLs are rejected.
 - Webhooks: Gitea and Argo CD authenticate with their configured signature or token; generic
   delivery webhooks use the repository webhook token.
+
+## Ownership transfer and offboarding
+
+Project ownership moves through an explicit request stored in
+`ownership_transfers`. An owner or global admin requests the transfer, the
+target accepts or declines, and a global admin may confirm on the target's
+behalf. Only one request may be pending per project. The full lifecycle,
+permission matrix, error codes and audit events are documented in
+[`OFFBOARDING.md`](OFFBOARDING.md).
+
+Deactivating a user who still owns projects, open assignments, pending
+approvals or planning artifacts is rejected by the generic
+`PATCH /api/v1/admin/users/{userId}` with `409 REASSIGNMENT_REQUIRED`. The
+offboarding preview (`GET /api/v1/admin/users/{userId}/offboarding`) lists the
+impact, and `POST /api/v1/admin/users/{userId}/offboarding` reassigns the work,
+deactivates the account and revokes every session in one transaction.
 
 ## Optimistic concurrency
 

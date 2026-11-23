@@ -7,11 +7,16 @@ import LabelManager from './LabelManager.vue'
 import CustomFieldManager from './CustomFieldManager.vue'
 import { api } from '../../api/client'
 import { boardColumns } from '../../lib/workspace'
+import {
+  canRequestOwnershipTransfer,
+  canResolveOwnershipTransfer,
+} from '../../lib/permissions'
+import type { OwnershipTransferAction, PermissionDecision } from '../../lib/permissions'
 import { useAuthStore } from '../../stores/authStore'
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import { useToastStore } from '../../stores/toastStore'
 import { PROJECT_ROLES } from '../../types/admin'
-import type { DirectoryUser, ProjectMember } from '../../types/admin'
+import type { DirectoryUser, OwnershipTransfer, ProjectMember } from '../../types/admin'
 import type { BoardSettings } from '../../types/workspace'
 
 const auth = useAuthStore()
@@ -179,6 +184,147 @@ function initials(member: ProjectMember): string {
 }
 
 // ---------------------------------------------------------------------------
+// Ownership transfer
+// ---------------------------------------------------------------------------
+
+const ownership = ref<OwnershipTransfer[]>([])
+const ownershipBusy = ref(false)
+const ownershipError = ref('')
+const transferTarget = ref('')
+const transferReason = ref('')
+const transferBusy = ref(false)
+const transferActionBusy = ref('')
+const cancelTransferTarget = ref<OwnershipTransfer | null>(null)
+const confirmTransferTarget = ref<OwnershipTransfer | null>(null)
+
+const currentUserId = computed(() => auth.user?.id ?? '')
+const ownerMember = computed(() => members.value.find((member) => member.role === 'owner') ?? null)
+const pendingTransfer = computed(
+  () => ownership.value.find((transfer) => transfer.status === 'pending') ?? null,
+)
+const transferCandidates = computed(() =>
+  members.value.filter(
+    (member) => member.role !== 'owner' && member.user_id !== currentUserId.value,
+  ),
+)
+const requestDecision = computed(() =>
+  canRequestOwnershipTransfer({
+    isOwnerOrAdmin: canGrantOwner.value,
+    hasPending: Boolean(pendingTransfer.value),
+    candidateCount: transferCandidates.value.length,
+  }),
+)
+const canRequestTransfer = computed(() => requestDecision.value.allowed)
+const requestDisabledReason = computed(() => requestDecision.value.reason)
+
+function resolveTransferDecision(action: OwnershipTransferAction): PermissionDecision {
+  if (!pendingTransfer.value) {
+    return { allowed: false, reason: 'No pending ownership transfer.' }
+  }
+  return canResolveOwnershipTransfer({
+    action,
+    actorId: currentUserId.value,
+    isAdmin: auth.isAdmin,
+    transfer: pendingTransfer.value,
+  })
+}
+
+const acceptDecision = computed(() => resolveTransferDecision('accept'))
+const confirmDecision = computed(() => resolveTransferDecision('confirm'))
+const cancelDecision = computed(() => resolveTransferDecision('cancel'))
+const canAcceptTransfer = computed(() => acceptDecision.value.allowed)
+const canConfirmTransfer = computed(() => confirmDecision.value.allowed)
+const canCancelTransfer = computed(() => cancelDecision.value.allowed)
+const acceptDisabledReason = computed(() => acceptDecision.value.reason)
+const confirmDisabledReason = computed(() => confirmDecision.value.reason)
+const cancelDisabledReason = computed(() => cancelDecision.value.reason)
+const resolvedTransfers = computed(() =>
+  ownership.value.filter((transfer) => transfer.status !== 'pending').slice(0, 5),
+)
+
+async function loadOwnership(): Promise<void> {
+  if (!projectId.value) return
+  ownershipBusy.value = true
+  ownershipError.value = ''
+  try {
+    ownership.value = await api.listOwnershipTransfers(projectId.value)
+  } catch (error) {
+    ownershipError.value = error instanceof Error ? error.message : 'Failed to load ownership transfers'
+  } finally {
+    ownershipBusy.value = false
+  }
+}
+
+async function requestTransfer(): Promise<void> {
+  if (!projectId.value || !transferTarget.value || !canRequestTransfer.value) return
+  transferBusy.value = true
+  ownershipError.value = ''
+  try {
+    await api.requestOwnershipTransfer(projectId.value, {
+      to_user_id: transferTarget.value,
+      reason: transferReason.value.trim(),
+    })
+    transferTarget.value = ''
+    transferReason.value = ''
+    await loadOwnership()
+    toast.success('Ownership transfer requested. The target must accept it.', 'Ownership')
+  } catch (error) {
+    ownershipError.value = error instanceof Error ? error.message : 'Failed to request the transfer'
+  } finally {
+    transferBusy.value = false
+  }
+}
+
+async function resolveTransfer(transfer: OwnershipTransfer, action: 'accept' | 'decline' | 'confirm' | 'cancel'): Promise<void> {
+  if (!projectId.value) return
+  transferActionBusy.value = `${transfer.id}:${action}`
+  ownershipError.value = ''
+  try {
+    if (action === 'accept') await api.acceptOwnershipTransfer(projectId.value, transfer.id)
+    else if (action === 'decline') await api.declineOwnershipTransfer(projectId.value, transfer.id)
+    else if (action === 'confirm') await api.confirmOwnershipTransfer(projectId.value, transfer.id)
+    else await api.cancelOwnershipTransfer(projectId.value, transfer.id)
+    cancelTransferTarget.value = null
+    confirmTransferTarget.value = null
+    await Promise.all([loadOwnership(), store.refresh()])
+    const labels: Record<typeof action, string> = {
+      accept: 'Ownership accepted.',
+      decline: 'Ownership transfer declined.',
+      confirm: 'Ownership transfer confirmed.',
+      cancel: 'Ownership transfer cancelled.',
+    }
+    toast.success(labels[action], 'Ownership')
+  } catch (error) {
+    ownershipError.value = error instanceof Error ? error.message : 'Failed to resolve the transfer'
+  } finally {
+    transferActionBusy.value = ''
+  }
+}
+
+function transferStatusClass(status: string): string {
+  if (status === 'accepted' || status === 'confirmed') {
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+  }
+  if (status === 'pending') return 'bg-amber-50 text-amber-700 ring-amber-200'
+  return 'bg-slate-100 text-slate-600 ring-slate-200'
+}
+
+function formatTransferDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Unknown'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+watch(projectId, () => {
+  ownership.value = []
+  transferTarget.value = ''
+  transferReason.value = ''
+  void loadOwnership()
+})
+
+onMounted(loadOwnership)
+
+// ---------------------------------------------------------------------------
 // Board policy (WIP limits)
 // ---------------------------------------------------------------------------
 
@@ -305,8 +451,17 @@ async function saveBoardPolicy(): Promise<void> {
         <p v-if="detailsError" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
           {{ detailsError }}
         </p>
-        <div class="flex justify-end">
-          <button type="submit" class="btn-primary" :disabled="!canEditSettings || detailsBusy">
+        <div class="flex flex-wrap items-center justify-end gap-3">
+          <p v-if="!canEditSettings" id="settings-write-reason" class="text-[11px] text-slate-500">
+            Requires project owner or maintainer (<code class="font-mono">settings.write</code>).
+          </p>
+          <button
+            type="submit"
+            class="btn-primary"
+            :disabled="!canEditSettings || detailsBusy"
+            :title="!canEditSettings ? 'Requires project owner or maintainer' : undefined"
+            :aria-describedby="!canEditSettings ? 'settings-write-reason' : undefined"
+          >
             <AppIcon v-if="detailsBusy" name="loader" :size="15" class="animate-spin" />
             Save project
           </button>
@@ -400,6 +555,164 @@ async function saveBoardPolicy(): Promise<void> {
     <section class="card p-6">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
+          <h3 class="text-sm font-semibold text-slate-900">Project ownership</h3>
+          <p class="mt-1 text-xs text-slate-500">
+            Ownership moves only when the target accepts or a global admin confirms. Every change is audited.
+          </p>
+        </div>
+        <span v-if="ownerMember" class="badge bg-indigo-50 text-indigo-700 ring-indigo-200">
+          Owner: {{ memberName(ownerMember) }}
+        </span>
+        <span v-else class="badge bg-amber-50 text-amber-700 ring-amber-200">No owner membership</span>
+      </div>
+
+      <p v-if="ownershipError" class="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+        {{ ownershipError }}
+      </p>
+
+      <div v-if="ownershipBusy && !ownership.length" class="mt-4 space-y-2">
+        <div class="skeleton h-14 rounded-lg" />
+      </div>
+
+      <div v-else-if="pendingTransfer" class="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p class="text-sm font-semibold text-amber-900">Pending transfer</p>
+            <p class="mt-1 text-xs text-amber-800">
+              {{ pendingTransfer.from_user }} → {{ pendingTransfer.to_user }} · requested by
+              {{ pendingTransfer.requested_by_name }} on {{ formatTransferDate(pendingTransfer.created_at) }}
+            </p>
+            <p v-if="pendingTransfer.reason" class="mt-1 text-xs text-amber-800">
+              Reason: {{ pendingTransfer.reason }}
+            </p>
+          </div>
+          <span class="badge" :class="transferStatusClass(pendingTransfer.status)">Pending</span>
+        </div>
+
+        <div class="mt-3 flex flex-wrap gap-2">
+          <span :title="acceptDisabledReason || 'Accept ownership of this project'">
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="!canAcceptTransfer || Boolean(transferActionBusy)"
+              :aria-describedby="!canAcceptTransfer ? 'transfer-accept-reason' : undefined"
+              @click="resolveTransfer(pendingTransfer, 'accept')"
+            >
+              <AppIcon v-if="transferActionBusy === `${pendingTransfer.id}:accept`" name="loader" :size="14" class="animate-spin" />
+              Accept
+            </button>
+          </span>
+          <span :title="acceptDisabledReason || 'Decline ownership of this project'">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="!canAcceptTransfer || Boolean(transferActionBusy)"
+              :aria-describedby="!canAcceptTransfer ? 'transfer-accept-reason' : undefined"
+              @click="resolveTransfer(pendingTransfer, 'decline')"
+            >
+              Decline
+            </button>
+          </span>
+          <span :title="confirmDisabledReason || 'Confirm on the target’s behalf'">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="!canConfirmTransfer || Boolean(transferActionBusy)"
+              :aria-describedby="!canConfirmTransfer ? 'transfer-confirm-reason' : undefined"
+              @click="confirmTransferTarget = pendingTransfer"
+            >
+              Confirm on target’s behalf
+            </button>
+          </span>
+          <span :title="cancelDisabledReason || 'Cancel this transfer'">
+            <button
+              type="button"
+              class="btn-ghost text-red-600 hover:bg-red-50"
+              :disabled="!canCancelTransfer || Boolean(transferActionBusy)"
+              :aria-describedby="!canCancelTransfer ? 'transfer-cancel-reason' : undefined"
+              @click="cancelTransferTarget = pendingTransfer"
+            >
+              Cancel transfer
+            </button>
+          </span>
+        </div>
+        <p v-if="!canAcceptTransfer" id="transfer-accept-reason" class="mt-2 text-[11px] text-amber-800">
+          Accept and decline require the transfer target.
+        </p>
+        <p v-if="!canConfirmTransfer" id="transfer-confirm-reason" class="mt-1 text-[11px] text-amber-800">
+          Confirming on the target’s behalf requires a global admin.
+        </p>
+        <p v-if="!canCancelTransfer" id="transfer-cancel-reason" class="mt-1 text-[11px] text-amber-800">
+          Cancelling requires the requester, the current owner or a global admin.
+        </p>
+      </div>
+
+      <form v-else class="mt-4 space-y-3" @submit.prevent="requestTransfer">
+        <div class="grid gap-3 sm:grid-cols-[minmax(200px,1fr)_minmax(220px,1.4fr)_auto]">
+          <label class="block">
+            <span class="field-label">New owner</span>
+            <select
+              v-model="transferTarget"
+              class="field-input"
+              :disabled="!canRequestTransfer"
+              :title="requestDisabledReason || undefined"
+              :aria-describedby="requestDisabledReason ? 'transfer-request-reason' : undefined"
+              required
+            >
+              <option value="">Select a project member…</option>
+              <option v-for="member in transferCandidates" :key="member.user_id" :value="member.user_id">
+                {{ memberName(member) }} ({{ roleLabel(member.role) }})
+              </option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="field-label">Reason (optional)</span>
+            <input
+              v-model="transferReason"
+              class="field-input"
+              maxlength="500"
+              placeholder="Handover context for the audit log"
+              :disabled="!canRequestTransfer"
+              :title="requestDisabledReason || undefined"
+            />
+          </label>
+          <div class="flex items-end">
+            <button
+              type="submit"
+              class="btn-primary w-full justify-center sm:w-auto"
+              :disabled="!canRequestTransfer || transferBusy || !transferTarget"
+              :title="requestDisabledReason || undefined"
+              :aria-describedby="requestDisabledReason ? 'transfer-request-reason' : undefined"
+            >
+              <AppIcon v-if="transferBusy" name="loader" :size="14" class="animate-spin" />
+              Request transfer
+            </button>
+          </div>
+        </div>
+        <p v-if="requestDisabledReason" id="transfer-request-reason" class="text-[11px] text-slate-500">
+          {{ requestDisabledReason }}
+        </p>
+        <p v-else class="text-[11px] text-slate-500">
+          The target must already be a project member. They will receive the request in their profile.
+        </p>
+      </form>
+
+      <div v-if="resolvedTransfers.length" class="mt-5 border-t border-slate-200 pt-4">
+        <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Recent transfers</p>
+        <ul class="mt-2 divide-y divide-slate-100">
+          <li v-for="transfer in resolvedTransfers" :key="transfer.id" class="flex flex-wrap items-center justify-between gap-2 py-2">
+            <p class="text-xs text-slate-600">
+              {{ transfer.from_user }} → {{ transfer.to_user }} · {{ formatTransferDate(transfer.created_at) }}
+            </p>
+            <span class="badge" :class="transferStatusClass(transfer.status)">{{ transfer.status }}</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
           <h3 class="text-sm font-semibold text-slate-900">Board policy</h3>
           <p class="mt-1 text-xs text-slate-500">
             Work-in-progress limits are per column. Limits warn by default; the hard block is explicit and enforced by the API.
@@ -438,8 +751,17 @@ async function saveBoardPolicy(): Promise<void> {
           </span>
         </label>
         <p v-if="boardError" class="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">{{ boardError }}</p>
-        <div class="flex justify-end">
-          <button type="submit" class="btn-primary" :disabled="boardBusy || !canEditSettings">
+        <div class="flex flex-wrap items-center justify-end gap-3">
+          <p v-if="!canEditSettings" id="board-write-reason" class="text-[11px] text-slate-500">
+            Requires project owner or maintainer (<code class="font-mono">settings.write</code>).
+          </p>
+          <button
+            type="submit"
+            class="btn-primary"
+            :disabled="boardBusy || !canEditSettings"
+            :title="!canEditSettings ? 'Requires project owner or maintainer' : undefined"
+            :aria-describedby="!canEditSettings ? 'board-write-reason' : undefined"
+          >
             <AppIcon v-if="boardBusy" name="loader" :size="14" class="animate-spin" />
             {{ boardBusy ? 'Saving…' : 'Save board policy' }}
           </button>
@@ -459,6 +781,28 @@ async function saveBoardPolicy(): Promise<void> {
       @confirm="removeMember"
       @cancel="removeTarget = null"
       @update:open="(value) => { if (!value) removeTarget = null }"
+    />
+
+    <ConfirmDialog
+      :open="Boolean(confirmTransferTarget)"
+      title="Confirm ownership transfer"
+      :message="confirmTransferTarget ? `Move ownership from ${confirmTransferTarget.from_user} to ${confirmTransferTarget.to_user} without the target accepting first? The change is audited and takes effect immediately.` : ''"
+      confirm-label="Confirm transfer"
+      :busy="Boolean(transferActionBusy)"
+      @confirm="confirmTransferTarget && resolveTransfer(confirmTransferTarget, 'confirm')"
+      @cancel="confirmTransferTarget = null"
+      @update:open="(value) => { if (!value) confirmTransferTarget = null }"
+    />
+
+    <ConfirmDialog
+      :open="Boolean(cancelTransferTarget)"
+      title="Cancel ownership transfer"
+      :message="cancelTransferTarget ? `Cancel the pending transfer from ${cancelTransferTarget.from_user} to ${cancelTransferTarget.to_user}? The project owner stays unchanged.` : ''"
+      confirm-label="Cancel transfer"
+      :busy="Boolean(transferActionBusy)"
+      @confirm="cancelTransferTarget && resolveTransfer(cancelTransferTarget, 'cancel')"
+      @cancel="cancelTransferTarget = null"
+      @update:open="(value) => { if (!value) cancelTransferTarget = null }"
     />
   </div>
 </template>

@@ -111,6 +111,7 @@ func Register(r *gin.Engine, h Handlers) {
 		v1.DELETE("/auth/sessions/:sessionId", h.Auth.RevokeSession)
 		v1.POST("/auth/sessions/revoke-others", h.Auth.RevokeOtherSessions)
 		v1.POST("/auth/stream-ticket", h.Auth.StreamTicket)
+		v1.GET("/auth/ownership-transfers", h.Workspace.ListMyOwnershipTransfers)
 		v1.GET("/users", h.Auth.Directory)
 		v1.GET("/search", h.Search.Search)
 
@@ -119,6 +120,8 @@ func Register(r *gin.Engine, h Handlers) {
 			admin.GET("/users", h.Auth.AdminListUsers)
 			admin.POST("/users", h.Auth.AdminCreateUser)
 			admin.PATCH("/users/:userId", h.Auth.AdminUpdateUser)
+			admin.GET("/users/:userId/offboarding", h.Auth.OffboardingImpact)
+			admin.POST("/users/:userId/offboarding", h.Auth.OffboardUser)
 			admin.GET("/audit/events", h.Audit.List)
 			admin.GET("/audit/events/:auditId", h.Audit.Get)
 			admin.GET("/audit/export", h.Audit.Export)
@@ -160,6 +163,12 @@ func Register(r *gin.Engine, h Handlers) {
 		project(http.MethodPost, "/members", auth.CapMemberWrite, h.Workspace.AddMember)
 		project(http.MethodPatch, "/members/:userId", auth.CapMemberWrite, h.Workspace.UpdateMember)
 		project(http.MethodDelete, "/members/:userId", auth.CapMemberWrite, h.Workspace.RemoveMember)
+		project(http.MethodGet, "/ownership-transfers", auth.CapProjectRead, h.Workspace.ListOwnershipTransfers)
+		project(http.MethodPost, "/ownership-transfers", auth.CapMemberWrite, h.Workspace.RequestOwnershipTransfer)
+		project(http.MethodPost, "/ownership-transfers/:transferId/accept", auth.CapProjectRead, h.Workspace.AcceptOwnershipTransfer)
+		project(http.MethodPost, "/ownership-transfers/:transferId/decline", auth.CapProjectRead, h.Workspace.DeclineOwnershipTransfer)
+		project(http.MethodPost, "/ownership-transfers/:transferId/confirm", auth.CapMemberWrite, h.Workspace.ConfirmOwnershipTransfer)
+		project(http.MethodDelete, "/ownership-transfers/:transferId", auth.CapMemberWrite, h.Workspace.CancelOwnershipTransfer)
 
 		// Work items. Testers hold work_item.write for defects and status
 		// changes; the ticket and work-item handlers enforce that restriction.
