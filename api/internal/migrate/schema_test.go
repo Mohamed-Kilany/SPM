@@ -51,8 +51,8 @@ func TestEmbeddedMigrationsAreUniqueAndOrdered(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatal("no embedded migrations found")
 	}
-	if names[len(names)-1] != "023_auth_sessions.sql" {
-		t.Fatalf("latest migration = %q, want 023_auth_sessions.sql", names[len(names)-1])
+	if names[len(names)-1] != "024_ownership_transfers.sql" {
+		t.Fatalf("latest migration = %q, want 024_ownership_transfers.sql", names[len(names)-1])
 	}
 
 	seenVersions := map[string]string{}
@@ -553,6 +553,40 @@ func TestAuthSessionMigrationIsComplete(t *testing.T) {
 		if !strings.Contains(body, "DROP TABLE IF EXISTS "+table+";") {
 			t.Errorf("rollback does not drop %s", table)
 		}
+	}
+}
+
+func TestOwnershipTransferMigrationIsComplete(t *testing.T) {
+	forward := readMigration(t, "024_ownership_transfers.sql")
+	for _, fragment := range []string{
+		"CREATE TABLE IF NOT EXISTS ownership_transfers",
+		"project_id   UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE",
+		"from_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+		"to_user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+		"requested_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+		"status       VARCHAR(20) NOT NULL DEFAULT 'pending'",
+		"CHECK (status IN ('pending', 'accepted', 'declined', 'confirmed', 'cancelled'))",
+		"reason       VARCHAR(500) NOT NULL DEFAULT ''",
+		"resolved_at  TIMESTAMPTZ",
+		"resolved_by  UUID REFERENCES users(id) ON DELETE SET NULL",
+		"ownership_transfers_distinct_users",
+		"ownership_transfers_resolution_consistent",
+		"ownership_transfers_one_pending_idx",
+		"WHERE status = 'pending'",
+		"ownership_transfers_target_idx",
+		"ownership_transfers_project_idx",
+	} {
+		if !strings.Contains(forward, fragment) {
+			t.Errorf("024 is missing %q", fragment)
+		}
+	}
+
+	rollback, err := os.ReadFile("rollback/024_ownership_transfers.sql")
+	if err != nil {
+		t.Fatalf("read ownership transfer rollback companion: %v", err)
+	}
+	if !strings.Contains(string(rollback), "DROP TABLE IF EXISTS ownership_transfers;") {
+		t.Error("rollback does not drop ownership_transfers")
 	}
 }
 

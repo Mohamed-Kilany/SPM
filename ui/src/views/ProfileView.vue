@@ -4,9 +4,11 @@ import { useRouter } from 'vue-router'
 import AppIcon from '../components/AppIcon.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { api, ApiError } from '../api/client'
+import { canResolveOwnershipTransfer } from '../lib/permissions'
 import { useAuthStore } from '../stores/authStore'
 import { useToastStore } from '../stores/toastStore'
 import type { AuthSession } from '../types/project'
+import type { OwnershipTransfer, OwnershipTransferInbox } from '../types/admin'
 
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -37,6 +39,84 @@ const revokeOthersBusy = ref(false)
 
 const avatarPreview = computed(() => profile.avatar_url.trim())
 const otherSessions = computed(() => sessions.value.filter((session) => !session.current))
+
+// ---------------------------------------------------------------------------
+// Ownership transfer inbox
+// ---------------------------------------------------------------------------
+
+const inbox = ref<OwnershipTransferInbox>({ incoming: [], outgoing: [] })
+const inboxBusy = ref(false)
+const inboxError = ref('')
+const transferActionBusy = ref('')
+
+const incomingTransfers = computed(() => inbox.value.incoming ?? [])
+const outgoingTransfers = computed(() => inbox.value.outgoing ?? [])
+
+async function loadInbox(): Promise<void> {
+  inboxBusy.value = true
+  inboxError.value = ''
+  try {
+    inbox.value = await api.listMyOwnershipTransfers()
+  } catch (error) {
+    inboxError.value = error instanceof Error ? error.message : 'Failed to load ownership transfer requests'
+  } finally {
+    inboxBusy.value = false
+  }
+}
+
+async function resolveIncoming(transfer: OwnershipTransfer, action: 'accept' | 'decline'): Promise<void> {
+  transferActionBusy.value = `${transfer.id}:${action}`
+  inboxError.value = ''
+  try {
+    if (action === 'accept') {
+      await api.acceptOwnershipTransfer(transfer.project_id, transfer.id)
+    } else {
+      await api.declineOwnershipTransfer(transfer.project_id, transfer.id)
+    }
+    await Promise.all([loadInbox(), auth.refreshUser()])
+    toast.success(
+      action === 'accept'
+        ? `You now own ${transfer.project_name}.`
+        : `You declined ownership of ${transfer.project_name}.`,
+      'Ownership',
+    )
+  } catch (error) {
+    inboxError.value = error instanceof Error ? error.message : 'Failed to resolve the transfer'
+  } finally {
+    transferActionBusy.value = ''
+  }
+}
+
+async function cancelOutgoing(transfer: OwnershipTransfer): Promise<void> {
+  transferActionBusy.value = `${transfer.id}:cancel`
+  inboxError.value = ''
+  try {
+    await api.cancelOwnershipTransfer(transfer.project_id, transfer.id)
+    await loadInbox()
+    toast.success('Ownership transfer cancelled.', 'Ownership')
+  } catch (error) {
+    inboxError.value = error instanceof Error ? error.message : 'Failed to cancel the transfer'
+  } finally {
+    transferActionBusy.value = ''
+  }
+}
+
+function transferStatusClass(status: string): string {
+  if (status === 'accepted' || status === 'confirmed') {
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+  }
+  if (status === 'pending') return 'bg-amber-50 text-amber-700 ring-amber-200'
+  return 'bg-slate-100 text-slate-600 ring-slate-200'
+}
+
+function transferDecision(transfer: OwnershipTransfer, action: 'accept' | 'decline' | 'cancel') {
+  return canResolveOwnershipTransfer({
+    action,
+    actorId: auth.user?.id ?? '',
+    isAdmin: auth.isAdmin,
+    transfer,
+  })
+}
 
 function hydrate(): void {
   profile.display_name = auth.user?.display_name || auth.user?.username || ''
@@ -114,6 +194,7 @@ async function revokeOtherSessions(): Promise<void> {
 onMounted(() => {
   hydrate()
   void loadSessions()
+  void loadInbox()
 })
 
 async function saveProfile(): Promise<void> {
@@ -314,6 +395,140 @@ async function changePassword(): Promise<void> {
           </button>
         </li>
       </ul>
+    </section>
+
+    <section class="card mt-5 p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <AppIcon name="users" :size="16" class="text-indigo-600" />
+            Ownership transfer requests
+          </h2>
+          <p class="mt-1 text-xs text-slate-500">
+            Incoming requests wait for your decision. Outgoing requests can be cancelled until the target resolves them.
+          </p>
+        </div>
+        <button type="button" class="btn-secondary" :disabled="inboxBusy" @click="loadInbox">
+          <AppIcon name="refresh" :size="15" :class="{ 'animate-spin': inboxBusy }" />
+          Refresh
+        </button>
+      </div>
+
+      <p v-if="inboxError" class="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+        {{ inboxError }}
+      </p>
+
+      <p v-if="inboxBusy && !incomingTransfers.length && !outgoingTransfers.length" class="mt-4 text-sm text-slate-500">
+        Loading requests…
+      </p>
+      <p
+        v-else-if="!incomingTransfers.length && !outgoingTransfers.length"
+        class="mt-4 text-sm text-slate-500"
+      >
+        No pending ownership transfer requests.
+      </p>
+
+      <div v-if="incomingTransfers.length" class="mt-4">
+        <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Incoming</p>
+        <ul class="mt-2 divide-y divide-slate-100">
+          <li
+            v-for="transfer in incomingTransfers"
+            :key="transfer.id"
+            class="flex flex-wrap items-start justify-between gap-3 py-4"
+          >
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <p class="text-sm font-medium text-slate-900">{{ transfer.project_name }}</p>
+                <span class="badge" :class="transferStatusClass(transfer.status)">{{ transfer.status }}</span>
+              </div>
+              <p class="mt-1 text-xs text-slate-600">
+                {{ transfer.from_user }} wants you to take ownership · requested by {{ transfer.requested_by_name }}
+              </p>
+              <p v-if="transfer.reason" class="mt-1 text-xs text-slate-500">Reason: {{ transfer.reason }}</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="Boolean(transferActionBusy) || !transferDecision(transfer, 'accept').allowed"
+                :title="transferDecision(transfer, 'accept').reason || 'Accept ownership of this project'"
+                :aria-describedby="!transferDecision(transfer, 'accept').allowed ? `incoming-accept-reason-${transfer.id}` : undefined"
+                @click="resolveIncoming(transfer, 'accept')"
+              >
+                <AppIcon
+                  v-if="transferActionBusy === `${transfer.id}:accept`"
+                  name="loader"
+                  :size="14"
+                  class="animate-spin"
+                />
+                Accept
+              </button>
+              <button
+                type="button"
+                class="btn-secondary"
+                :disabled="Boolean(transferActionBusy) || !transferDecision(transfer, 'decline').allowed"
+                :title="transferDecision(transfer, 'decline').reason || 'Decline ownership of this project'"
+                :aria-describedby="!transferDecision(transfer, 'decline').allowed ? `incoming-decline-reason-${transfer.id}` : undefined"
+                @click="resolveIncoming(transfer, 'decline')"
+              >
+                Decline
+              </button>
+              <p
+                v-if="!transferDecision(transfer, 'accept').allowed"
+                :id="`incoming-accept-reason-${transfer.id}`"
+                class="basis-full text-[11px] text-slate-500"
+              >
+                {{ transferDecision(transfer, 'accept').reason }}
+              </p>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <div v-if="outgoingTransfers.length" class="mt-4 border-t border-slate-100 pt-4">
+        <p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Outgoing</p>
+        <ul class="mt-2 divide-y divide-slate-100">
+          <li
+            v-for="transfer in outgoingTransfers"
+            :key="transfer.id"
+            class="flex flex-wrap items-center justify-between gap-3 py-3"
+          >
+            <div class="min-w-0">
+              <p class="text-sm text-slate-800">
+                {{ transfer.project_name }} → {{ transfer.to_user }}
+              </p>
+              <p class="mt-0.5 text-xs text-slate-500">
+                Requested by {{ transfer.requested_by_name }} · waiting for the target
+              </p>
+            </div>
+            <div class="flex flex-col items-end gap-1">
+              <button
+                type="button"
+                class="btn-ghost text-red-600 hover:bg-red-50"
+                :disabled="Boolean(transferActionBusy) || !transferDecision(transfer, 'cancel').allowed"
+                :title="transferDecision(transfer, 'cancel').reason || 'Cancel this ownership request'"
+                :aria-describedby="!transferDecision(transfer, 'cancel').allowed ? `outgoing-cancel-reason-${transfer.id}` : undefined"
+                @click="cancelOutgoing(transfer)"
+              >
+                <AppIcon
+                  v-if="transferActionBusy === `${transfer.id}:cancel`"
+                  name="loader"
+                  :size="14"
+                  class="animate-spin"
+                />
+                Cancel request
+              </button>
+              <p
+                v-if="!transferDecision(transfer, 'cancel').allowed"
+                :id="`outgoing-cancel-reason-${transfer.id}`"
+                class="text-[11px] text-slate-500"
+              >
+                {{ transferDecision(transfer, 'cancel').reason }}
+              </p>
+            </div>
+          </li>
+        </ul>
+      </div>
     </section>
 
     <ConfirmDialog

@@ -231,6 +231,13 @@ func (h *Handler) AddMember(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to add project member")
 		return
 	}
+	if role == auth.ProjectRoleOwner {
+		if _, err := tx.Exec(c.Request.Context(),
+			`UPDATE projects SET owner_id = $1, updated_at = NOW() WHERE id = $2`, userID, projectID); err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
+			return
+		}
+	}
 	if err := tx.Commit(c.Request.Context()); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit membership")
 		return
@@ -331,6 +338,13 @@ func (h *Handler) UpdateMember(c *gin.Context) {
 		projectID, userID, role); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update member")
 		return
+	}
+	if role == auth.ProjectRoleOwner {
+		if _, err := tx.Exec(c.Request.Context(),
+			`UPDATE projects SET owner_id = $1, updated_at = NOW() WHERE id = $2`, userID, projectID); err != nil {
+			apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to transfer ownership")
+			return
+		}
 	}
 	if err := tx.Commit(c.Request.Context()); err != nil {
 		apiError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to commit membership")

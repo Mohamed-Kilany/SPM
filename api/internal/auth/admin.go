@@ -214,6 +214,20 @@ func (h *Handler) AdminUpdateUser(c *gin.Context) {
 			return
 		}
 	}
+	// Deactivation through the generic update endpoint must not orphan owned
+	// projects, open assignments, pending approvals or planning artifacts.
+	// The offboarding endpoint performs the required reassignment.
+	if req.IsActive != nil && !*req.IsActive && currentActive {
+		impact, impactErr := h.loadOffboardingImpact(c.Request.Context(), targetID)
+		if impactErr != nil {
+			c.JSON(http.StatusInternalServerError, errorResponse{Error: errorBody{Code: "INTERNAL_ERROR", Message: "Failed to check offboarding impact"}})
+			return
+		}
+		if impact.RequiresReassignment {
+			c.JSON(http.StatusConflict, errorResponse{Error: errorBody{Code: "REASSIGNMENT_REQUIRED", Message: "Reassign owned projects, assignments, approvals and artifacts before deactivation"}})
+			return
+		}
+	}
 
 	sets := make([]string, 0, 8)
 	args := make([]interface{}, 0, 8)
