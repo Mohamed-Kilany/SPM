@@ -6,7 +6,15 @@ import {
   setStoredSessionId,
   setStoredToken,
 } from '../lib/storage'
-import type { AdminUser, DirectoryUser, ProjectMember } from '../types/admin'
+import type {
+  AdminUser,
+  DirectoryUser,
+  OffboardingImpact,
+  OffboardingResult,
+  OwnershipTransfer,
+  OwnershipTransferInbox,
+  ProjectMember,
+} from '../types/admin'
 import type { AuditEvent, AuditFilters, AuditPage, AuditVerification } from '../types/audit'
 import type { AiAskResponse, AiInsightResponse, AiSearchResponse } from '../types/ai'
 import type { SearchResponse } from '../types/search'
@@ -386,6 +394,31 @@ export const api = {
     })
   },
 
+  /** Previews every project, assignment, approval and artifact an offboarding
+   * would affect before the admin chooses successors. */
+  async adminOffboardingImpact(userId: string): Promise<OffboardingImpact> {
+    return request<OffboardingImpact>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/offboarding`,
+      { timeoutMs: 20_000 },
+    )
+  },
+
+  /** Deactivates a user, reassigns their work and revokes every session in one
+   * transaction. `reassign_to` is required when the preview says so. */
+  async adminOffboardUser(
+    userId: string,
+    payload: {
+      reason: string
+      reassign_to?: string
+      project_owners?: Record<string, string>
+    },
+  ): Promise<OffboardingResult> {
+    return request<OffboardingResult>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/offboarding`,
+      { method: 'POST', body: payload, timeoutMs: 30_000 },
+    )
+  },
+
   async adminListAuditEvents(filters: AuditFilters = {}): Promise<AuditPage> {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(filters)) {
@@ -600,6 +633,56 @@ export const api = {
       `/api/v1/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`,
       { method: 'DELETE' },
     )
+  },
+
+  async listOwnershipTransfers(projectId: string): Promise<OwnershipTransfer[]> {
+    return request<OwnershipTransfer[]>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/ownership-transfers`,
+    )
+  },
+
+  async requestOwnershipTransfer(
+    projectId: string,
+    payload: { to_user_id: string; reason?: string },
+  ): Promise<OwnershipTransfer> {
+    return request<OwnershipTransfer>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/ownership-transfers`,
+      { method: 'POST', body: payload, timeoutMs: 20_000 },
+    )
+  },
+
+  async acceptOwnershipTransfer(projectId: string, transferId: string): Promise<OwnershipTransfer> {
+    return request<OwnershipTransfer>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/ownership-transfers/${encodeURIComponent(transferId)}/accept`,
+      { method: 'POST', timeoutMs: 20_000 },
+    )
+  },
+
+  async declineOwnershipTransfer(projectId: string, transferId: string): Promise<OwnershipTransfer> {
+    return request<OwnershipTransfer>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/ownership-transfers/${encodeURIComponent(transferId)}/decline`,
+      { method: 'POST', timeoutMs: 20_000 },
+    )
+  },
+
+  async confirmOwnershipTransfer(projectId: string, transferId: string): Promise<OwnershipTransfer> {
+    return request<OwnershipTransfer>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/ownership-transfers/${encodeURIComponent(transferId)}/confirm`,
+      { method: 'POST', timeoutMs: 20_000 },
+    )
+  },
+
+  async cancelOwnershipTransfer(projectId: string, transferId: string): Promise<OwnershipTransfer> {
+    return request<OwnershipTransfer>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/ownership-transfers/${encodeURIComponent(transferId)}`,
+      { method: 'DELETE', timeoutMs: 20_000 },
+    )
+  },
+
+  async listMyOwnershipTransfers(): Promise<OwnershipTransferInbox> {
+    return request<OwnershipTransferInbox>('/api/v1/auth/ownership-transfers', {
+      timeoutMs: 15_000,
+    })
   },
 
   async importTestRun(
