@@ -2564,17 +2564,17 @@ actions still work), permission-filtered.
 - **Docs/telemetry:** token usage metric, `docs/API-TOKENS.md`.
 
 #### GOV-12 · Ownership transfer, offboarding and permission-aware UI
-- **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-offboarding`
+- **Status:** IN PROGRESS · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/auth-offboarding`
 - **Depends on:** GOV-01, GOV-02
 - **Scope:** Add explicit ownership transfer, user deactivation impact preview (owned projects,
   open assignments, approvals, tokens), reassignment workflow and a permission-aware UI that
   explains why an action is unavailable.
 - **Acceptance criteria:**
-  - [ ] Deactivation shows affected projects/assignments and requires reassignment choices.
-  - [ ] Ownership transfer requires the target to accept or an admin to confirm.
-  - [ ] A deactivated user cannot authenticate, refresh, stream or use tokens.
-  - [ ] Disabled actions have an accessible reason ("Requires project maintainer").
-  - [ ] The last owner/admin protections remain enforced.
+  - [x] Deactivation shows affected projects/assignments and requires reassignment choices.
+  - [x] Ownership transfer requires the target to accept or an admin to confirm.
+  - [x] A deactivated user cannot authenticate, refresh, stream or use tokens.
+  - [x] Disabled actions have an accessible reason ("Requires project maintainer").
+  - [x] The last owner/admin protections remain enforced.
 - **Tests/evidence:** offboarding integration test, ownership transfer test, UI permission
   tests.
 - **Docs/telemetry:** offboarding checklist, audit events.
@@ -5177,6 +5177,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Active (`GOV-04`) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
 | `docs/SESSIONS.md` | Session model, refresh rotation, revocation and UI flow | Maintainer | Active (`GOV-09`) |
+| `docs/OFFBOARDING.md` | Ownership transfer, offboarding preview, reassignment and audit events | Maintainer | Active (`GOV-12`) |
 | `docs/METRICS.md` | Metric catalog and formulas | Maintainer | Planned (`ANL-04`) |
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
 | `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
