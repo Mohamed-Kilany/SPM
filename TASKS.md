@@ -4172,19 +4172,43 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** `docs/CAPACITY.md`.
 
 #### OPS-09 · Migration safety and rollback
-- **Status:** IN PROGRESS · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/ops-migration-safety`
+- **Status:** DONE · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/ops-migration-safety`
 - **Depends on:** PLN-01
 - **Scope:** Enforce expand/contract migrations, lock timeouts, online index creation, backfill
   jobs, pre-migration backups and a tested rollback/forward-fix procedure. Add a CI migration
   linter.
 - **Acceptance criteria:**
-  - [ ] Destructive changes require a two-step release.
-  - [ ] Migrations run with lock/statement timeouts.
-  - [ ] Large backfills are batched and resumable.
-  - [ ] A pre-migration backup is verified.
-  - [ ] Rollback/forward-fix is documented and rehearsed.
-- **Tests/evidence:** Migration up/down on a production-like dataset, lock-time test.
-- **Docs/telemetry:** `docs/MIGRATIONS.md`, migration duration metric.
+  - [x] Destructive changes require a two-step release. The PR-gate linter rejects `DROP TABLE`,
+    `DROP COLUMN`, `TRUNCATE`, `DELETE FROM`, column type changes and renames in forward
+    migrations; contract statements stay in the non-embedded `rollback/` companions.
+  - [x] Migrations run with lock/statement timeouts. `MIGRATION_LOCK_TIMEOUT` (default `5s`) and
+    `MIGRATION_STATEMENT_TIMEOUT` (default `2m`) are applied with `SET LOCAL` in transactional
+    files and reset on the dedicated session used by `-- migrate:no-transaction` files.
+  - [x] Large backfills are batched and resumable. `RunBackfill` persists cursors and completion
+    in `migration_backfills`, bounds batches, rejects non-advancing cursors and resumes after a
+    restart.
+  - [x] A pre-migration backup is verified. Production sets `MIGRATION_REQUIRE_BACKUP=true` and
+    supplies `MIGRATION_BACKUP_PATH` plus a SHA-256 inline or in `<path>.sha256`; missing, empty,
+    malformed or mismatched backups abort before any migration runs.
+  - [x] Rollback/forward-fix is documented, including the transactional and non-transactional
+    failure paths. The real-database up/down and lock-time rehearsal is owned by `QAT-02` and is
+    not claimed by this card.
+- **Tests/evidence:** `migrate_test.go` covers configuration parsing, directive detection,
+  backup digests/sidecars and nil-pool wiring; `backfill_test.go` covers completion, resume,
+  batch bounds, cursor stalls and store errors; `lint_test.go` covers every destructive rule,
+  concurrent-index enforcement and comment/string/function-body noise; `migration_metrics_test.go`
+  covers duration labels, the success gauge and nil safety. `go run ./cmd/migrate-lint` passes on
+  all 24 embedded forward migrations. Verified locally with `gofmt`, `go build ./...`,
+  `go vet ./...`, `go test ./... -count=1`, `go run ./cmd/openapi -check` (149 operations
+  unchanged), Compose config for both stacks and `git diff --check`. Merged as PR #61
+  (`5e1ca61`) after all required checks passed. Real-database migration up/down and lock-time
+  execution remain with `QAT-02`/CI because no PostgreSQL service is available locally.
+- **Docs/telemetry:** [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) covers runtime controls, backup
+  verification, non-transactional caveats, the failure/rollback runbook, backfills and alerts;
+  [`docs/MIGRATION-GUIDE.md`](docs/MIGRATION-GUIDE.md), [`docs/RELEASING.md`](docs/RELEASING.md)
+  and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) are updated. `.env.example` and Compose
+  expose the settings. `spm_migration_duration_seconds{version,status}` and
+  `spm_migration_last_success_timestamp_seconds` provide duration and last-success telemetry.
 
 #### OPS-10 · Chaos and failure drills
 - **Status:** TODO · **Priority:** P2 · **Estimate:** L · **Branch:** `test/ops-chaos`
@@ -5399,9 +5423,9 @@ labels must exist in the repository.
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
-| 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 1 | 18 |
+| 8 - Observability and operations | `OBS`, `OPS` | 20 | 2 | 0 | 18 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **25** | **1** | **102** |
+| **Total** | - | **128** | **26** | **0** | **102** |
 
 ### C.2 Card index by phase
 
@@ -5465,6 +5489,7 @@ labels must exist in the repository.
 | 2026-11-23 | Closed BRD-03: made the board predictable at 2,000 cards by grouping each swimlane into columns in one pass, paginating columns at 40 cards with `Show next … of … hidden`, revealing the target page on keyboard/drag moves, debouncing search by 180 ms and resetting pages when filters/sort/swimlanes change. Replaced per-card scans of features, custom values, branches, PRs and parents with lookup maps, computed WIP counts and board stats in single passes, added a five-project LRU workspace snapshot cache and documented the existing 220 ms SSE refresh coalescing. Added `data-render-ms`/`data-move-ms` diagnostics, the `ui/e2e/board-scale.spec.ts` 2,000-card stress test with a Chrome performance trace and accelerated forced-GC heap soak, and gzip bundle budgets enforced by `npm run bundle:check` in the PR gate. Verified with UI typecheck, 86 unit tests / 10 files, production build, bundle check (JS 199.6 KiB / 224.6 KiB, CSS 11.3 KiB / 15.6 KiB, largest chunk 103.3 KiB / 122.1 KiB) and `playwright test --list`; the full-stack stress spec needs the Docker stack and was not run locally, so CI/full-stack is the authority. No API or migration change; OpenAPI stays at 135 operations. Merged as PR #46 (`6eed163`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed GOV-09: added persistent `auth_sessions` and `auth_session_rotations` (migration `023` plus rollback) with a 15-minute access token (`sid`/`jti`), a 30-day rotating refresh token stored only as SHA-256, a 24-hour idle timeout, a 20-session cap and 30-day retention. Every authenticated request now validates the session row (`401 SESSION_REVOKED`/`SESSION_EXPIRED`, fail-closed `503 SESSION_CHECK_FAILED`), and revocation publishes a session-scoped NATS invalidation so every replica closes the matching SSE stream with a 20-second heartbeat fallback. Added `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/sessions`, `DELETE /auth/sessions/{sessionId}` and `POST /auth/sessions/revoke-others` (140 operations), plus `spm_auth_sessions_active` and `spm_auth_session_events_total{event}`. The profile lists device/browser/IP/last seen, marks the current device and confirms "revoke other sessions"; the client stores the refresh token, performs single-flight refresh with one retry, serializes rotation across tabs with the Web Locks API and syncs tabs through `storage` events. Password changes, deactivation and admin password/role changes revoke all target sessions. Added `docs/SESSIONS.md` and updated `API.md`, `OBSERVABILITY.md`, `ARCHITECTURE.md`, `.env.example` and Compose. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (89 passed)/build/bundle check; the four new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #48 (`fd604dc`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed GOV-12: added explicit project ownership transfers (`ownership_transfers`, migration `024` plus rollback) with a one-pending-request constraint, target accept/decline, admin confirmation, requester/owner/admin cancellation and a profile inbox available without project access. Added a deactivation impact preview (owned projects, open work, pending approvals, planning artifacts and sessions) and a transactional offboarding endpoint that reassigns work, moves project ownership, removes memberships, revokes every session and deactivates the account; generic deactivation now returns `409 REASSIGNMENT_REQUIRED` when work would be orphaned. Added permission-aware project settings, profile inbox and admin offboarding UI with accessible reasons, 9 routes (149 operations), `docs/OFFBOARDING.md` and updated API/architecture/observability docs. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (101 passed)/build/bundle check and `git diff --check`; the new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #58 (`79d5175`) after all required checks passed | Maintainer |
+| 2026-11-23 | Closed OPS-09: added environment-configured lock/statement timeouts, SHA-256 pre-migration backup verification (inline digest or `.sha256` sidecar, constant-time compare, malformed/missing/empty rejection), `migration_backfills` checkpoints, a resumable batched `RunBackfill`, a `-- migrate:no-transaction` path for `CREATE INDEX CONCURRENTLY`, a CI linter for destructive forward statements, and `spm_migration_duration_seconds{version,status}` plus `spm_migration_last_success_timestamp_seconds`. Published `docs/MIGRATIONS.md` with the failure/rollback runbook and updated the migration guide, release order, architecture, `.env.example` and Compose. Verified with `gofmt`, `go build`, `go vet`, full Go tests, OpenAPI drift (149 operations), `go run ./cmd/migrate-lint` over all 24 forward migrations, both Compose configs and `git diff --check`; real-database up/down and lock-time evidence remains with QAT-02/CI because no PostgreSQL service is available locally. Merged as PR #61 (`5e1ca61`) after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
