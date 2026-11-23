@@ -4172,7 +4172,7 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** `docs/CAPACITY.md`.
 
 #### OPS-09 · Migration safety and rollback
-- **Status:** TODO · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/ops-migration-safety`
+- **Status:** IN PROGRESS · **Priority:** P1 · **Estimate:** M · **Branch:** `feature/ops-migration-safety`
 - **Depends on:** PLN-01
 - **Scope:** Enforce expand/contract migrations, lock timeouts, online index creation, backfill
   jobs, pre-migration backups and a tested rollback/forward-fix procedure. Add a CI migration
@@ -5192,6 +5192,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
 | `docs/SESSIONS.md` | Session model, refresh rotation, revocation and UI flow | Maintainer | Active (`GOV-09`) |
 | `docs/OFFBOARDING.md` | Ownership transfer, offboarding preview, reassignment and audit events | Maintainer | Active (`GOV-12`) |
+| `docs/MIGRATIONS.md` | Runtime migration safety, backup verification, timeouts, backfills and failure runbook | Maintainer | Active (`OPS-09`) |
 | `docs/METRICS.md` | Metric catalog and formulas | Maintainer | Planned (`ANL-04`) |
 | `docs/SLO.md` | SLOs and error budgets | Maintainer | Planned (`OBS-05`) |
 | `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
@@ -5398,9 +5399,9 @@ labels must exist in the repository.
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
-| 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 0 | 19 |
+| 8 - Observability and operations | `OBS`, `OPS` | 20 | 1 | 1 | 18 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **25** | **0** | **103** |
+| **Total** | - | **128** | **25** | **1** | **102** |
 
 ### C.2 Card index by phase
 

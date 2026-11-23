@@ -128,9 +128,9 @@ Every schema change follows expand/contract across two releases:
 
 1. **Expand** (`vN`): add nullable columns, new tables or new indexes. The new code
    writes both old and new shapes when needed. The previous application version (`vN-1`) remains
-   compatible with the schema. The migration runner applies each file inside a transaction, so
-   non-transactional DDL such as `CREATE INDEX CONCURRENTLY` is not available; see
-   [`MIGRATION-GUIDE.md`](MIGRATION-GUIDE.md).
+   compatible with the schema. The migration runner applies each file inside a transaction unless
+   it opts into `-- migrate:no-transaction` for `CREATE INDEX CONCURRENTLY`; see
+   [`MIGRATION-GUIDE.md`](MIGRATION-GUIDE.md) and [`MIGRATIONS.md`](MIGRATIONS.md).
 2. **Migrate**: backfill data in bounded batches, with progress logging and an idempotent query.
 3. **Switch**: the new code reads the new shape. Keep the old shape writable until `vN+1`.
 4. **Contract** (`vN+1` or later): drop the old column, table or index only after `vN` has been
@@ -138,8 +138,10 @@ Every schema change follows expand/contract across two releases:
 
 Deploy order is therefore:
 
-1. Backup.
-2. Start the new API image; migrations run before the server accepts traffic.
+1. Take the backup and record its SHA-256. Production sets `MIGRATION_REQUIRE_BACKUP=true`, so
+   the runner refuses to start if the backup is missing, empty or does not match.
+2. Start the new API image; migrations run with lock/statement timeouts before the server accepts
+   traffic.
 3. Wait for `/health/ready`.
 4. Deploy the UI and AI images.
 5. Run the smoke check.
