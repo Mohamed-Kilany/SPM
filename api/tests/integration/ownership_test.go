@@ -118,6 +118,9 @@ func TestOwnershipTransferRequiresTargetAcceptance(t *testing.T) {
 	userID := createTestUser(t, adminToken, username, testUserPassword)
 	addProjectMember(t, adminToken, projectID, userID, "developer")
 
+	// Adding a member invalidates that user's tokens; wait for the
+	// second-precision boundary before signing in as the target.
+	waitPastInvalidation()
 	targetSession := loginSession(t, username, testUserPassword)
 	transfer := requestOwnershipTransfer(t, adminToken, projectID, userID)
 
@@ -201,6 +204,9 @@ func TestOffboardingRequiresReassignmentAndRevokesAccess(t *testing.T) {
 	userID := createTestUser(t, adminToken, username, testUserPassword)
 	addProjectMember(t, adminToken, projectID, userID, "developer")
 
+	// Adding a member invalidates that user's tokens; wait for the
+	// second-precision boundary before signing in as the target.
+	waitPastInvalidation()
 	targetSession := loginSession(t, username, testUserPassword)
 	transfer := requestOwnershipTransfer(t, adminToken, projectID, userID)
 	resp := do(t, http.MethodPost,
