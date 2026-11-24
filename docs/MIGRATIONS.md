@@ -61,9 +61,14 @@ must mount the dump into the container and set:
 
 ```text
 MIGRATION_REQUIRE_BACKUP=true
-MIGRATION_BACKUP_PATH=/backups/spm-before-<release>.dump
+MIGRATION_BACKUP_PATH=/backups/spm-before-<release>.tar.enc
 MIGRATION_BACKUP_SHA256=<64 hex characters>
 ```
+
+Point `MIGRATION_BACKUP_PATH` at the artifact that would actually be restored:
+the encrypted backup bundle, or the database dump when the deployment pipeline
+only mounts the SPM database. The runner checks that the file is non-empty and
+matches the digest; it does not decrypt or read the archive.
 
 The digest is compared in constant time. A missing file, a directory, a
 zero-length file, a missing required digest or a mismatch aborts startup before
@@ -71,16 +76,20 @@ any migration runs.
 
 ## 3. Backup verification
 
-1. Take the dump with the existing backup tooling (`scripts/backup.ps1` or the
-   platform equivalent).
-2. Compute the SHA-256 on the host that produced the dump.
-3. Copy both the dump and the digest to the location the API will read.
+1. Take a verified bundle with `scripts/backup.ps1` (or a database dump when
+   the deployment pipeline only needs the SPM database).
+2. Record the SHA-256 printed by the job on the host that produced the artifact.
+3. Copy the artifact and its digest to the location the API will read. The
+   `.sha256` sidecar written by the backup job already uses the verifier's
+   expected format.
 4. Deploy with `MIGRATION_REQUIRE_BACKUP=true`.
 5. Confirm the API log line `migrate: verified backup ...` before the first
    `migrate: applied ...` line.
 
-The runner verifies integrity, not restorability. Restore drills and RPO/RTO
-evidence belong to `OPS-01`; an unverified backup is not a restore point.
+The runner verifies integrity, not restorability. Bundle verification and
+restore drills are documented in
+[`BACKUP-RESTORE.md`](BACKUP-RESTORE.md); an unverified backup is not a restore
+point.
 
 ## 4. CI linter
 

@@ -110,7 +110,13 @@ same way.
    docker compose up -d --build
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -CheckStack
    ```
-3. Back up production: `scripts/backup.ps1`.
+3. Back up production and record the artifact: run `scripts/backup.ps1` with the
+   production key and off-host destination. Keep the printed SHA-256 and confirm
+   the API sees the job (`spm_backup_last_success_timestamp_seconds` advances and
+   `spm_backup_encrypted` is `1`). Use the verified bundle as the
+   `MIGRATION_REQUIRE_BACKUP` artifact, or point the migration gate at a
+   database-only dump. Do not promote when the backup job failed. Details are in
+   [docs/BACKUP-RESTORE.md](BACKUP-RESTORE.md).
 4. Deploy the identical tag to production with `SPM_VERSION` set to the same value and the same
    build command.
 5. Verify `/health` reports the tag, the API ready endpoint is green, and the UI footer shows the
@@ -138,8 +144,10 @@ Every schema change follows expand/contract across two releases:
 
 Deploy order is therefore:
 
-1. Take the backup and record its SHA-256. Production sets `MIGRATION_REQUIRE_BACKUP=true`, so
-   the runner refuses to start if the backup is missing, empty or does not match.
+1. Take the verified backup and record its SHA-256. Production sets
+   `MIGRATION_REQUIRE_BACKUP=true`, so the runner refuses to start if the backup
+   is missing, empty or does not match. See
+   [docs/BACKUP-RESTORE.md](BACKUP-RESTORE.md).
 2. Start the new API image; migrations run with lock/statement timeouts before the server accepts
    traffic.
 3. Wait for `/health/ready`.

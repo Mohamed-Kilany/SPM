@@ -60,6 +60,12 @@ func main() {
 
 	metricsRegistry := metrics.New(metrics.BuildInfo{Version: version, Commit: commit, BuiltAt: buildDate})
 	metrics.SetDefault(metricsRegistry)
+	// The backup job runs outside the API. It publishes its last-run state in a
+	// JSON file that the metrics collector reads on every scrape, so a failed
+	// or stale backup is observable without coupling the job to this process.
+	if statusPath := envOr("BACKUP_STATUS_FILE", ""); statusPath != "" {
+		metricsRegistry.RegisterBackupStatus(statusPath)
+	}
 
 	poolCfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {

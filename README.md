@@ -135,7 +135,9 @@ docker-compose.test.yml  Isolated test stack
 
 ## Operations
 
-- Backup/restore: `scripts/backup.ps1`, `scripts/restore.ps1`.
+- Backup/restore/drill: `scripts/backup.ps1`, `scripts/restore.ps1`, `scripts/restore-drill.ps1`.
+  Bundle format, encryption, retention, restore runbook and RPO/RTO status are in
+  [docs/BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md).
 - Load test: `scripts/loadtest.ps1`.
 - Air-gapped image mirroring: `scripts/mirror-images.ps1` (a verified runbook is `OPS-02`).
 - Release: `scripts/release.ps1` prepares the changelog pull request and tags the merged version.

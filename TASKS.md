@@ -4053,19 +4053,44 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** `docs/TELEMETRY-PRIVACY.md`.
 
 #### OPS-01 · Backup, restore and verification drills
-- **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/ops-backup-restore`
+- **Status:** IN PROGRESS · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/ops-backup-restore`
 - **Depends on:** OPS-09
 - **Scope:** Make backup/restore production-grade for PostgreSQL, Gitea, NATS, Argo CD and
   configuration. Encrypt backups, store off-host, verify integrity, document RPO/RTO, and run
   scheduled restore drills into an isolated environment.
 - **Acceptance criteria:**
-  - [ ] Backups run on schedule and on demand; failures alert.
-  - [ ] Restore into a clean environment reproduces data and passes integrity checks.
-  - [ ] RPO ≤ 15 minutes (WAL/continuous archiving) and RTO ≤ 2 hours are demonstrated.
-  - [ ] Encryption keys are managed separately from backups.
-  - [ ] A drill report records date, duration, gaps and owners.
-- **Tests/evidence:** Restore drill, checksum/integrity test, timed RTO measurement.
-- **Docs/telemetry:** `docs/BACKUP-RESTORE.md`, backup age/failure metrics.
+  - [x] Backups run on demand and can be scheduled; failures alert. `scripts/backup.ps1`
+    creates an encrypted, verified bundle, writes an atomic status file and optionally posts to
+    `SPM_BACKUP_ALERT_WEBHOOK`; `spm_backup_*` exposes age, failures and drill state. Scheduling
+    is delegated to the host scheduler, with Task Scheduler and cron examples in the runbook; no
+    embedded scheduler is claimed.
+  - [ ] Restore into a clean environment reproduces data and passes integrity checks. Bundle
+    verification, restore and non-destructive drill tooling are implemented and the verifier is
+    unit-tested, but no restore has been executed against a real stack in this environment.
+  - [ ] RPO ≤ 15 minutes (WAL/continuous archiving) and RTO ≤ 2 hours are demonstrated. Not met:
+    the current recovery point is the last full bundle and full-stack RTO is unmeasured;
+    WAL/PITR and DR evidence remain with `OPS-03` and the quarterly isolated-stack drill.
+  - [x] Encryption keys are managed separately from backups. AES-256-GCM uses a 32-byte key from
+    `SPM_BACKUP_KEY_FILE`, records an 8-byte key ID in the header, never embeds the key, includes
+    `.env` only in encrypted bundles and documents generation, custody and rotation.
+  - [ ] A drill report records date, duration, gaps and owners. `scripts/restore-drill.ps1` writes
+    JSON and Markdown with date, duration, fingerprints and errors, but a real drill and named
+    owners are still outstanding.
+- **Tests/evidence:** `api/internal/backup` covers manifest classification and validation, digest
+  mismatch/extra/missing/truncated rejection, AES-256-GCM round-trip, tamper and chunk-reorder
+  rejection, key formats, retention and status transitions; `api/internal/metrics/backup_test.go`
+  covers the status collector; `api/cmd/backupctl/main_test.go` covers the CLI round-trip,
+  retention, traversal and status validation. PowerShell parser checks pass for `backup.ps1`,
+  `restore.ps1` and `restore-drill.ps1`. No real backup, restore, drill or RPO/RTO measurement was
+  executed locally because Docker/PostgreSQL are unavailable; those are the remaining closure
+  evidence. Local static verification is recorded in the change log.
+- **Docs/telemetry:** [`docs/BACKUP-RESTORE.md`](docs/BACKUP-RESTORE.md) covers the data
+  inventory, bundle format, key custody, scheduling, off-host copy, retention, restore and drill
+  procedures, RPO/RTO status and security caveats.
+  [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) lists the fifteen `spm_backup_*` metrics and
+  alert queries; [`docs/RELEASING.md`](docs/RELEASING.md) and
+  [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) use the verified bundle as the pre-migration
+  artifact. `.env.example` and Compose expose the backup settings and the read-only status mount.
 
 #### OPS-02 · Air-gapped installation and upgrade runbook
 - **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `docs/airgapped-runbook`
@@ -5213,6 +5238,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`); community links added by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Active (`GOV-04`) |
+| `docs/BACKUP-RESTORE.md` | Bundle format, encryption, retention, restore/drill runbook and RPO/RTO status | Maintainer | Active (`OPS-01`, in progress) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
 | `docs/SESSIONS.md` | Session model, refresh rotation, revocation and UI flow | Maintainer | Active (`GOV-09`) |
 | `docs/OFFBOARDING.md` | Ownership transfer, offboarding preview, reassignment and audit events | Maintainer | Active (`GOV-12`) |
@@ -5423,9 +5449,9 @@ labels must exist in the repository.
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
-| 8 - Observability and operations | `OBS`, `OPS` | 20 | 2 | 0 | 18 |
+| 8 - Observability and operations | `OBS`, `OPS` | 20 | 2 | 1 | 17 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **26** | **0** | **102** |
+| **Total** | - | **128** | **26** | **1** | **101** |
 
 ### C.2 Card index by phase
 
@@ -5490,6 +5516,7 @@ labels must exist in the repository.
 | 2026-11-23 | Closed GOV-09: added persistent `auth_sessions` and `auth_session_rotations` (migration `023` plus rollback) with a 15-minute access token (`sid`/`jti`), a 30-day rotating refresh token stored only as SHA-256, a 24-hour idle timeout, a 20-session cap and 30-day retention. Every authenticated request now validates the session row (`401 SESSION_REVOKED`/`SESSION_EXPIRED`, fail-closed `503 SESSION_CHECK_FAILED`), and revocation publishes a session-scoped NATS invalidation so every replica closes the matching SSE stream with a 20-second heartbeat fallback. Added `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/sessions`, `DELETE /auth/sessions/{sessionId}` and `POST /auth/sessions/revoke-others` (140 operations), plus `spm_auth_sessions_active` and `spm_auth_session_events_total{event}`. The profile lists device/browser/IP/last seen, marks the current device and confirms "revoke other sessions"; the client stores the refresh token, performs single-flight refresh with one retry, serializes rotation across tabs with the Web Locks API and syncs tabs through `storage` events. Password changes, deactivation and admin password/role changes revoke all target sessions. Added `docs/SESSIONS.md` and updated `API.md`, `OBSERVABILITY.md`, `ARCHITECTURE.md`, `.env.example` and Compose. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (89 passed)/build/bundle check; the four new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #48 (`fd604dc`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed GOV-12: added explicit project ownership transfers (`ownership_transfers`, migration `024` plus rollback) with a one-pending-request constraint, target accept/decline, admin confirmation, requester/owner/admin cancellation and a profile inbox available without project access. Added a deactivation impact preview (owned projects, open work, pending approvals, planning artifacts and sessions) and a transactional offboarding endpoint that reassigns work, moves project ownership, removes memberships, revokes every session and deactivates the account; generic deactivation now returns `409 REASSIGNMENT_REQUIRED` when work would be orphaned. Added permission-aware project settings, profile inbox and admin offboarding UI with accessible reasons, 9 routes (149 operations), `docs/OFFBOARDING.md` and updated API/architecture/observability docs. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (101 passed)/build/bundle check and `git diff --check`; the new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #58 (`79d5175`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed OPS-09: added environment-configured lock/statement timeouts, SHA-256 pre-migration backup verification (inline digest or `.sha256` sidecar, constant-time compare, malformed/missing/empty rejection), `migration_backfills` checkpoints, a resumable batched `RunBackfill`, a `-- migrate:no-transaction` path for `CREATE INDEX CONCURRENTLY`, a CI linter for destructive forward statements, and `spm_migration_duration_seconds{version,status}` plus `spm_migration_last_success_timestamp_seconds`. Published `docs/MIGRATIONS.md` with the failure/rollback runbook and updated the migration guide, release order, architecture, `.env.example` and Compose. Verified with `gofmt`, `go build`, `go vet`, full Go tests, OpenAPI drift (149 operations), `go run ./cmd/migrate-lint` over all 24 forward migrations, both Compose configs and `git diff --check`; real-database up/down and lock-time evidence remains with QAT-02/CI because no PostgreSQL service is available locally. Merged as PR #61 (`5e1ca61`) after all required checks passed | Maintainer |
+| 2026-11-24 | Advanced OPS-01 (in progress): added the `backup` package and `backupctl` CLI (per-file SHA-256 manifest, safe pack/unpack, full verification, chunked AES-256-GCM with an 8-byte key ID, key generation, atomic status and count/age retention), encrypted bundle creation with off-host digest comparison and failure alerting, bundle-aware restore, a scratch-database drill with JSON/Markdown reports, 15 `spm_backup_*` metrics, and `docs/BACKUP-RESTORE.md` with release, migration and observability wiring. Verified with `gofmt`, `go build`, `go vet`, full `go test ./...` and `-race`, OpenAPI drift (149 operations), migrate-lint, both Compose configs, YAML parsing, PowerShell parser checks and `git diff --check`; no real backup, restore, drill or RPO/RTO measurement was executed locally because Docker/PostgreSQL are unavailable. Opened as PR #63; OPS-01 remains IN PROGRESS | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
