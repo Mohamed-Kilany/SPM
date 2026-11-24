@@ -221,11 +221,18 @@ func InspectBundle(path string, key []byte) (*InspectReport, error) {
 
 // Unpack extracts a verified bundle into dest. dest must not already contain
 // any of the archived paths. Symlinks, hard links, devices and parent
-// traversal are rejected.
+// traversal are rejected. Extraction goes through os.Root so every write is
+// confined to dest even if a path check is bypassed.
 func Unpack(reader io.Reader, dest string) (*Manifest, error) {
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		return nil, fmt.Errorf("backup: create destination %s: %w", dest, err)
 	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return nil, fmt.Errorf("backup: open destination %s: %w", dest, err)
+	}
+	defer root.Close()
+
 	archive := tar.NewReader(reader)
 	seen := make(map[string]struct{})
 	var manifest *Manifest
@@ -250,11 +257,13 @@ func Unpack(reader io.Reader, dest string) (*Manifest, error) {
 		}
 		seen[clean] = struct{}{}
 
-		target := filepath.Join(dest, filepath.FromSlash(clean))
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return nil, fmt.Errorf("backup: create directory for %s: %w", clean, err)
+		target := filepath.FromSlash(clean)
+		if directory := filepath.Dir(target); directory != "." {
+			if err := root.MkdirAll(directory, 0o700); err != nil {
+				return nil, fmt.Errorf("backup: create directory for %s: %w", clean, err)
+			}
 		}
-		file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		file, err := root.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("backup: create %s: %w", clean, err)
 		}
@@ -270,7 +279,7 @@ func Unpack(reader io.Reader, dest string) (*Manifest, error) {
 			return nil, fmt.Errorf("backup: %s ended after %d of %d bytes", clean, written, header.Size)
 		}
 		if clean == ManifestName {
-			data, err := os.ReadFile(target)
+			data, err := root.ReadFile(target)
 			if err != nil {
 				return nil, fmt.Errorf("backup: read extracted manifest: %w", err)
 			}
