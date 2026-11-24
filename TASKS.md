@@ -4326,19 +4326,25 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** Coverage policy.
 
 #### QAT-02 · Integration tests with real dependencies in CI
-- **Status:** IN PROGRESS · **Priority:** P0 · **Estimate:** L · **Branch:** `test/ci-integration`
+- **Status:** DONE · **Priority:** P0 · **Estimate:** L · **Branch:** `test/ci-integration`
 - **Depends on:** BASE-02, OPS-09
 - **Scope:** Run the 28 Go integration tests against real PostgreSQL and NATS (and a real or
   contract-tested Gitea) in GitHub Actions. Apply migrations, seed deterministic data, and
   publish logs/artifacts on failure.
 - **Acceptance criteria:**
-  - [ ] Integration tests run on every PR touching API/migrations.
-  - [ ] PostgreSQL/NATS are real services, not mocks.
-  - [ ] Migrations run from zero and from the previous release.
-  - [ ] Failures upload Compose logs, verbose test output and the upgrade API log. Distributed
+  - [x] Integration tests run on every PR touching API/migrations.
+  - [x] PostgreSQL/NATS are real services, not mocks.
+  - [x] Migrations run from zero and from the pull request base commit (N−1 rehearsal).
+  - [x] Failures upload Compose logs, verbose test output and the upgrade API log. Distributed
     traces are `OBS-02`; the gate does not claim trace export.
-  - [ ] Runtime stays within the PR budget.
-- **Tests/evidence:** CI job logs, migration-from-zero test.
+  - [x] Runtime stays within the PR budget.
+- **Tests/evidence:** Required context `Integration: real dependencies` in the PR gate. Run
+  [45463085413](https://github.com/Mohamed-Kilany/SPM/actions/runs/45463085413/job/138690661045)
+  on head `76e8298` finished in 3m7s: 24 migrations applied from zero, the same 24 applied in the
+  N−1 rehearsal with the sentinel row intact, and 27 tests passed with 1 skipped
+  (`TestResourceLimits_IdleMemoryWithinBudget` needs the Docker CLI, which is absent inside the
+  runner container). The run also exposed an offboarding insert that passed a text parameter into
+  a `uuid` column; fixed in `393b46c`.
 - **Docs/telemetry:** `docs/TESTING.md` integration section.
 
 #### QAT-03 · Playwright E2E and axe in CI
@@ -5454,8 +5460,8 @@ labels must exist in the repository.
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
 | 8 - Observability and operations | `OBS`, `OPS` | 20 | 2 | 1 | 17 |
-| 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **26** | **1** | **101** |
+| 9 — Quality and certification | `QAT` | 10 | 1 | 0 | 9 |
+| **Total** | - | **128** | **27** | **1** | **100** |
 
 ### C.2 Card index by phase
 
@@ -5483,7 +5489,6 @@ labels must exist in the repository.
 | `OPS-01` | Backups exist but restore is unproven |
 | `OPS-02` | The air-gapped install path is undocumented and unverified |
 | `OPS-13` | Project isolation is not proven across search/AI/SSE/exports |
-| `QAT-02` | Integration tests are not in the PR gate |
 | `QAT-03` | E2E and axe are not in the PR gate |
 | `QAT-07` | No automated authorization/security regression suite |
 
@@ -5521,6 +5526,7 @@ labels must exist in the repository.
 | 2026-11-23 | Closed GOV-12: added explicit project ownership transfers (`ownership_transfers`, migration `024` plus rollback) with a one-pending-request constraint, target accept/decline, admin confirmation, requester/owner/admin cancellation and a profile inbox available without project access. Added a deactivation impact preview (owned projects, open work, pending approvals, planning artifacts and sessions) and a transactional offboarding endpoint that reassigns work, moves project ownership, removes memberships, revokes every session and deactivates the account; generic deactivation now returns `409 REASSIGNMENT_REQUIRED` when work would be orphaned. Added permission-aware project settings, profile inbox and admin offboarding UI with accessible reasons, 9 routes (149 operations), `docs/OFFBOARDING.md` and updated API/architecture/observability docs. Verified with `go build`, `go vet`, full Go tests, OpenAPI drift, UI typecheck/test (101 passed)/build/bundle check and `git diff --check`; the new real-database integration tests compile but were not executed locally because `DATABASE_URL`/`NATS_URL` are unavailable, so QAT-02/CI owns that run. Merged as PR #58 (`79d5175`) after all required checks passed | Maintainer |
 | 2026-11-23 | Closed OPS-09: added environment-configured lock/statement timeouts, SHA-256 pre-migration backup verification (inline digest or `.sha256` sidecar, constant-time compare, malformed/missing/empty rejection), `migration_backfills` checkpoints, a resumable batched `RunBackfill`, a `-- migrate:no-transaction` path for `CREATE INDEX CONCURRENTLY`, a CI linter for destructive forward statements, and `spm_migration_duration_seconds{version,status}` plus `spm_migration_last_success_timestamp_seconds`. Published `docs/MIGRATIONS.md` with the failure/rollback runbook and updated the migration guide, release order, architecture, `.env.example` and Compose. Verified with `gofmt`, `go build`, `go vet`, full Go tests, OpenAPI drift (149 operations), `go run ./cmd/migrate-lint` over all 24 forward migrations, both Compose configs and `git diff --check`; real-database up/down and lock-time evidence remains with QAT-02/CI because no PostgreSQL service is available locally. Merged as PR #61 (`5e1ca61`) after all required checks passed | Maintainer |
 | 2026-11-24 | Advanced OPS-01 (in progress): added the `backup` package and `backupctl` CLI (per-file SHA-256 manifest, safe pack/unpack, full verification, chunked AES-256-GCM with an 8-byte key ID, key generation, atomic status and count/age retention), encrypted bundle creation with off-host digest comparison and failure alerting, bundle-aware restore, a scratch-database drill with JSON/Markdown reports, 15 `spm_backup_*` metrics, and `docs/BACKUP-RESTORE.md` with release, migration and observability wiring. Verified with `gofmt`, `go build`, `go vet`, full `go test ./...` and `-race`, OpenAPI drift (149 operations), migrate-lint, both Compose configs, YAML parsing, PowerShell parser checks and `git diff --check`; no real backup, restore, drill or RPO/RTO measurement was executed locally because Docker/PostgreSQL are unavailable. Merged as PR #63 (`4beb8c6`) after all required checks passed; OPS-01 remains IN PROGRESS | Maintainer |
+| 2026-11-24 | Closed QAT-02: added the path-aware `Integration: real dependencies` PR job that starts the isolated PostgreSQL 18, NATS JetStream, Gitea and API stack, applies 24 migrations from zero, rehearses the same migrations from the pull request base commit with a sentinel row, and runs the 28-test tagged Go suite (27 passed, 1 skipped because the runner container has no Docker CLI). Added `scripts/ci-integration.sh`, the lean `integration_only` Docker target, loopback test ports, Compose logs/test output/upgrade API log artifacts on failure and `docs/TESTING.md`; the job runs on PRs touching API, NATS, test-stack files or the workflow and reports a fast green check otherwise. The new gate exposed and fixed an offboarding `INSERT … SELECT` that passed a text parameter into the `uuid` `project_members.user_id` column, and the ownership tests now model the one-second membership-invalidation boundary. Merged as PR #65 after all required checks passed | Maintainer |
 
 > **Maintenance rule:** when a task moves to `DONE`, update its card status, the totals in
 > C.1, and (if a P0) mark it closed in C.3 in the same PR. `TASKS.md` is reviewed at every
