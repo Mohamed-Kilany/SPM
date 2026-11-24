@@ -146,7 +146,17 @@ func TestOwnershipTransferRequiresTargetAcceptance(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, "accepted", resolved.Status)
 
-	members := listProjectMembers(t, targetSession.Token, projectID)
+	// Accepting the transfer invalidates both parties' tokens because their
+	// claims still describe the previous owner.
+	resp = do(t, http.MethodGet, "/api/v1/projects/"+projectID+"/members", targetSession.Token, nil)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	ignoredBody(resp)
+
+	waitPastInvalidation()
+	targetToken := authToken(t, username, testUserPassword)
+	adminToken = authToken(t, adminUser, adminPass)
+
+	members := listProjectMembers(t, targetToken, projectID)
 	require.Equal(t, "owner", memberRole(members, userID), "the target becomes the owner")
 	adminID := currentUserID(t, adminToken)
 	require.Equal(t, "maintainer", memberRole(members, adminID), "the previous owner is demoted")
@@ -173,6 +183,10 @@ func TestOwnershipTransferAdminCanConfirm(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, "confirmed", resolved.Status)
 
+	// Confirming invalidates the previous owner's tokens as well.
+	waitPastInvalidation()
+	adminToken = authToken(t, adminUser, adminPass)
+
 	members := listProjectMembers(t, adminToken, projectID)
 	require.Equal(t, "owner", memberRole(members, userID))
 }
@@ -193,6 +207,11 @@ func TestOffboardingRequiresReassignmentAndRevokesAccess(t *testing.T) {
 		"/api/v1/projects/"+projectID+"/ownership-transfers/"+transfer.ID+"/accept", targetSession.Token, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	ignoredBody(resp)
+
+	// Accepting invalidates both parties' tokens, so the admin signs in again
+	// before previewing the offboarding.
+	waitPastInvalidation()
+	adminToken = authToken(t, adminUser, adminPass)
 
 	// The preview reports the project that must be reassigned.
 	resp = do(t, http.MethodGet, "/api/v1/admin/users/"+userID+"/offboarding", adminToken, nil)

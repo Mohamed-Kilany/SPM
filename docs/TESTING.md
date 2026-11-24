@@ -59,6 +59,16 @@ The suite creates unique users and projects per run. Volumes are removed after
 every run, so no state leaks between pull requests. The credentials are test
 fixtures, never production secrets.
 
+## Test isolation and session invalidation
+
+Membership and ownership changes invalidate the affected user's tokens so the
+new roles take effect on the next request. Because JWTs carry second-precision
+issue times, a sign-in made in the same wall-clock second as the change is also
+rejected; the ownership tests wait for the next second before signing in again.
+This is product behavior, not a test-only switch. The suite still asserts that
+the pre-change token is rejected, then verifies the new role with a fresh
+token.
+
 ## What the integration gate proves
 
 1. **Migrations from zero.** The API starts against a fresh database and every

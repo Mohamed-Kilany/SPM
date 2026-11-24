@@ -4328,7 +4328,7 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 #### QAT-02 · Integration tests with real dependencies in CI
 - **Status:** IN PROGRESS · **Priority:** P0 · **Estimate:** L · **Branch:** `test/ci-integration`
 - **Depends on:** BASE-02, OPS-09
-- **Scope:** Run the 29 Go integration tests against real PostgreSQL and NATS (and a real or
+- **Scope:** Run the 28 Go integration tests against real PostgreSQL and NATS (and a real or
   contract-tested Gitea) in GitHub Actions. Apply migrations, seed deterministic data, and
   publish logs/artifacts on failure.
 - **Acceptance criteria:**
