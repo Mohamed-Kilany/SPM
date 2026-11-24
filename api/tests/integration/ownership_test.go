@@ -266,14 +266,24 @@ func TestOffboardingRequiresReassignmentAndRevokesAccess(t *testing.T) {
 	require.GreaterOrEqual(t, result.ReassignedProjects, 1)
 	require.GreaterOrEqual(t, result.RevokedSessions, 1)
 
-	// The deactivated user cannot sign in or rotate the old refresh token.
+	// The deactivated user cannot sign in. A disabled account is deliberately
+	// reported as 403 ACCOUNT_DISABLED rather than 401, so the client can show
+	// the right message without exposing whether the password was correct.
 	resp = do(t, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
 		"username": username,
 		"password": testUserPassword,
 	})
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	ignoredBody(resp)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	var disabled struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&disabled))
+	resp.Body.Close()
+	require.Equal(t, "ACCOUNT_DISABLED", disabled.Error.Code)
 
+	// The old refresh token was revoked by offboarding.
 	resp = do(t, http.MethodPost, "/api/v1/auth/refresh", "", map[string]string{
 		"refresh_token": targetSession.RefreshToken,
 	})
