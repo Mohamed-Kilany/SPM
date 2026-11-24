@@ -4053,19 +4053,44 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** `docs/TELEMETRY-PRIVACY.md`.
 
 #### OPS-01 · Backup, restore and verification drills
-- **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/ops-backup-restore`
+- **Status:** IN PROGRESS · **Priority:** P0 · **Estimate:** L · **Branch:** `feature/ops-backup-restore`
 - **Depends on:** OPS-09
 - **Scope:** Make backup/restore production-grade for PostgreSQL, Gitea, NATS, Argo CD and
   configuration. Encrypt backups, store off-host, verify integrity, document RPO/RTO, and run
   scheduled restore drills into an isolated environment.
 - **Acceptance criteria:**
-  - [ ] Backups run on schedule and on demand; failures alert.
-  - [ ] Restore into a clean environment reproduces data and passes integrity checks.
-  - [ ] RPO ≤ 15 minutes (WAL/continuous archiving) and RTO ≤ 2 hours are demonstrated.
-  - [ ] Encryption keys are managed separately from backups.
-  - [ ] A drill report records date, duration, gaps and owners.
-- **Tests/evidence:** Restore drill, checksum/integrity test, timed RTO measurement.
-- **Docs/telemetry:** `docs/BACKUP-RESTORE.md`, backup age/failure metrics.
+  - [x] Backups run on demand and can be scheduled; failures alert. `scripts/backup.ps1`
+    creates an encrypted, verified bundle, writes an atomic status file and optionally posts to
+    `SPM_BACKUP_ALERT_WEBHOOK`; `spm_backup_*` exposes age, failures and drill state. Scheduling
+    is delegated to the host scheduler, with Task Scheduler and cron examples in the runbook; no
+    embedded scheduler is claimed.
+  - [ ] Restore into a clean environment reproduces data and passes integrity checks. Bundle
+    verification, restore and non-destructive drill tooling are implemented and the verifier is
+    unit-tested, but no restore has been executed against a real stack in this environment.
+  - [ ] RPO ≤ 15 minutes (WAL/continuous archiving) and RTO ≤ 2 hours are demonstrated. Not met:
+    the current recovery point is the last full bundle and full-stack RTO is unmeasured;
+    WAL/PITR and DR evidence remain with `OPS-03` and the quarterly isolated-stack drill.
+  - [x] Encryption keys are managed separately from backups. AES-256-GCM uses a 32-byte key from
+    `SPM_BACKUP_KEY_FILE`, records an 8-byte key ID in the header, never embeds the key, includes
+    `.env` only in encrypted bundles and documents generation, custody and rotation.
+  - [ ] A drill report records date, duration, gaps and owners. `scripts/restore-drill.ps1` writes
+    JSON and Markdown with date, duration, fingerprints and errors, but a real drill and named
+    owners are still outstanding.
+- **Tests/evidence:** `api/internal/backup` covers manifest classification and validation, digest
+  mismatch/extra/missing/truncated rejection, AES-256-GCM round-trip, tamper and chunk-reorder
+  rejection, key formats, retention and status transitions; `api/internal/metrics/backup_test.go`
+  covers the status collector; `api/cmd/backupctl/main_test.go` covers the CLI round-trip,
+  retention, traversal and status validation. PowerShell parser checks pass for `backup.ps1`,
+  `restore.ps1` and `restore-drill.ps1`. No real backup, restore, drill or RPO/RTO measurement was
+  executed locally because Docker/PostgreSQL are unavailable; those are the remaining closure
+  evidence. Local static verification is recorded in the change log.
+- **Docs/telemetry:** [`docs/BACKUP-RESTORE.md`](docs/BACKUP-RESTORE.md) covers the data
+  inventory, bundle format, key custody, scheduling, off-host copy, retention, restore and drill
+  procedures, RPO/RTO status and security caveats.
+  [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) lists the fifteen `spm_backup_*` metrics and
+  alert queries; [`docs/RELEASING.md`](docs/RELEASING.md) and
+  [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) use the verified bundle as the pre-migration
+  artifact. `.env.example` and Compose expose the backup settings and the read-only status mount.
 
 #### OPS-02 · Air-gapped installation and upgrade runbook
 - **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `docs/airgapped-runbook`
@@ -5213,6 +5238,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `SECURITY.md` | Disclosure, supply-chain and exception policy | Maintainer | Active (`BASE-06`); community links added by `BASE-07` |
 | `docs/AIRGAPPED.md` | Offline install/upgrade runbook | Maintainer | Planned (`OPS-02`) |
 | `docs/AUDIT.md` | Audit model and retention | Maintainer | Active (`GOV-04`) |
+| `docs/BACKUP-RESTORE.md` | Bundle format, encryption, retention, restore/drill runbook and RPO/RTO status | Maintainer | Active (`OPS-01`, in progress) |
 | `docs/AUTHZ.md` | Capability matrix and enforcement | Maintainer | Active (`GOV-01`) |
 | `docs/SESSIONS.md` | Session model, refresh rotation, revocation and UI flow | Maintainer | Active (`GOV-09`) |
 | `docs/OFFBOARDING.md` | Ownership transfer, offboarding preview, reassignment and audit events | Maintainer | Active (`GOV-12`) |
@@ -5423,9 +5449,9 @@ labels must exist in the repository.
 | 5 — Code and delivery | `COD`, `DEL` | 12 | 0 | 0 | 12 |
 | 6 — Search and analytics | `SRH`, `ANL` | 11 | 0 | 0 | 11 |
 | 7 — AI | `AI` | 9 | 0 | 0 | 9 |
-| 8 - Observability and operations | `OBS`, `OPS` | 20 | 2 | 0 | 18 |
+| 8 - Observability and operations | `OBS`, `OPS` | 20 | 2 | 1 | 17 |
 | 9 — Quality and certification | `QAT` | 10 | 0 | 0 | 10 |
-| **Total** | - | **128** | **26** | **0** | **102** |
+| **Total** | - | **128** | **26** | **1** | **101** |
 
 ### C.2 Card index by phase
 

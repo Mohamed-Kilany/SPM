@@ -38,6 +38,15 @@ scrape_configs:
       credentials_file: /etc/prometheus/spm-metrics-token
 ```
 
+The backup job publishes its last-known state through a JSON status file
+instead of a second metrics endpoint. Set `BACKUP_STATUS_FILE` to the file path
+inside the API container; Compose mounts `./backups` read-only at `/backups`, and
+the documented `.env.example` value is `/backups/backup-status.json`. The
+collector reads the file on every scrape. A missing file reports
+`spm_backup_status_present 0` without failing the scrape; an unreadable or
+invalid file also increments `spm_backup_status_read_errors_total`. See
+[`docs/BACKUP-RESTORE.md`](BACKUP-RESTORE.md).
+
 ## 2. Naming conventions
 
 - Every metric starts with `spm_`.
@@ -208,6 +217,31 @@ sessions revoked by offboarding increment
 `spm_auth_session_events_total{event="revoke_all"}` and
 `spm_authz_invalidations_total{scope="session",reason="offboarding"}`.
 
+### Backup
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `spm_backup_status_present` | gauge | - | `1` when the status file was readable at scrape time |
+| `spm_backup_last_attempt_timestamp_seconds` | gauge | - | Last backup attempt (`0` when never run) |
+| `spm_backup_last_success_timestamp_seconds` | gauge | - | Last successful, verified bundle (`0` when never run) |
+| `spm_backup_last_failure_timestamp_seconds` | gauge | - | Last failed attempt (`0` when never failed) |
+| `spm_backup_last_verified_timestamp_seconds` | gauge | - | Last successful verification or drill check |
+| `spm_backup_last_drill_timestamp_seconds` | gauge | - | Last restore drill (`0` when never run) |
+| `spm_backup_last_drill_ok` | gauge | - | `1` when the last drill passed, `0` when it failed or never ran |
+| `spm_backup_last_duration_seconds` | gauge | - | Duration of the last attempt |
+| `spm_backup_last_size_bytes` | gauge | - | Size of the last successful bundle |
+| `spm_backup_age_seconds` | gauge | - | Seconds since the last successful backup, `0` when none |
+| `spm_backup_encrypted` | gauge | - | `1` when the last successful bundle is encrypted |
+| `spm_backup_successes_total` | counter | - | Successful attempts recorded in the status file |
+| `spm_backup_failures_total` | counter | - | Failed attempts recorded in the status file |
+| `spm_backup_consecutive_failures` | gauge | - | Consecutive failed attempts |
+| `spm_backup_status_read_errors_total` | counter | - | Status reads that failed for a reason other than a missing file |
+
+The `_total` values are replayed from the status file rather than counted in the
+API process, so they reset when the file is replaced. Alert on
+`spm_backup_consecutive_failures`, `spm_backup_age_seconds` and the timestamps;
+do not infer a failure from a counter reset alone.
+
 ### Outbound dependencies
 
 | Metric | Type | Labels | Meaning |
@@ -272,6 +306,17 @@ time() - spm_delivery_reconcile_last_success_timestamp_seconds > 300
 # Audit writes failing, or a broken audit chain
 sum(rate(spm_audit_writes_total{outcome="failure"}[5m])) > 0
 spm_audit_chain_valid == 0
+
+# No successful backup in 26 hours
+time() - spm_backup_last_success_timestamp_seconds > 26 * 3600
+
+# Repeated backup failures, or a missing status file
+spm_backup_consecutive_failures > 0
+spm_backup_status_present == 0
+
+# Stale or failed restore drill
+spm_backup_last_drill_ok == 0
+time() - spm_backup_last_drill_timestamp_seconds > 90 * 24 * 3600
 ```
 
 ## 6. Deliberately deferred
@@ -291,3 +336,6 @@ The required gate proves:
 - 404 requests use `unmatched`.
 - A configured token returns 401 without credentials and 200 with them.
 - SSE, AI, dependency and reconciliation collectors record bounded labels.
+- The backup collector reports a missing status file as
+  `spm_backup_status_present 0` and a valid file as `1` with the expected
+  timestamps and counters.

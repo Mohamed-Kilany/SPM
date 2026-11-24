@@ -346,6 +346,9 @@ services:
       # published to the host; METRICS_TOKEN optionally requires a bearer token.
       METRICS_ADDR:              "${METRICS_ADDR:-0.0.0.0:9090}"
       METRICS_TOKEN:             "${METRICS_TOKEN:-}"
+      # Backup job status file, read-only. The API exposes spm_backup_* metrics
+      # from it; see docs/BACKUP-RESTORE.md.
+      BACKUP_STATUS_FILE:        "${BACKUP_STATUS_FILE:-}"
       # Work item attachments. Files are validated, scanned and stored outside
       # the container filesystem; ClamAV is optional and fails closed when set.
       ATTACHMENTS_DIR:           "/data/attachments"
@@ -357,6 +360,7 @@ services:
       - "9090"
     volumes:
       - attachments_data:/data/attachments
+      - ./backups:/backups:ro
     networks:
       - spm_net
     depends_on:
