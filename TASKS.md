@@ -158,6 +158,7 @@ The workflows are **pull-request-only**. The required status contexts are:
 | `PR gate` | `UI: typecheck, test, build` | Vue/TypeScript correctness, Vitest suite and a production Vite build |
 | `PR gate` | `AI: pytest` | FastAPI service health, search, citations and insight tests |
 | `PR gate` | `Compose: config` | Production and isolated test Compose definitions resolve |
+| `PR gate` | `Integration: real dependencies` | Real PostgreSQL/NATS/Gitea, migrations from zero, N−1 upgrade rehearsal and the tagged Go integration suite |
 | `PR gate` | `Images: docker build` | API, UI and AI images build from source with the real Dockerfiles |
 | `PR gate` | `Security: dependency review` | No high-severity vulnerability introduced by dependency changes |
 | `CodeQL` | `CodeQL (go)` | Go security and quality analysis |
@@ -4325,16 +4326,17 @@ its loading, empty, error, partial, permission-denied and responsive states exis
 - **Docs/telemetry:** Coverage policy.
 
 #### QAT-02 · Integration tests with real dependencies in CI
-- **Status:** TODO · **Priority:** P0 · **Estimate:** L · **Branch:** `test/ci-integration`
+- **Status:** IN PROGRESS · **Priority:** P0 · **Estimate:** L · **Branch:** `test/ci-integration`
 - **Depends on:** BASE-02, OPS-09
-- **Scope:** Run the 21 Go integration tests against real PostgreSQL and NATS (and a real or
+- **Scope:** Run the 29 Go integration tests against real PostgreSQL and NATS (and a real or
   contract-tested Gitea) in GitHub Actions. Apply migrations, seed deterministic data, and
   publish logs/artifacts on failure.
 - **Acceptance criteria:**
   - [ ] Integration tests run on every PR touching API/migrations.
   - [ ] PostgreSQL/NATS are real services, not mocks.
   - [ ] Migrations run from zero and from the previous release.
-  - [ ] Failures upload logs and traces.
+  - [ ] Failures upload Compose logs, verbose test output and the upgrade API log. Distributed
+    traces are `OBS-02`; the gate does not claim trace export.
   - [ ] Runtime stays within the PR budget.
 - **Tests/evidence:** CI job logs, migration-from-zero test.
 - **Docs/telemetry:** `docs/TESTING.md` integration section.
@@ -5249,6 +5251,7 @@ gate. An exception may not waive secret scanning, authorization checks or data-l
 | `docs/RELEASING.md` | Release, promotion, migration order and rollback procedure | Maintainer | Active (`BASE-08`) |
 | `CHANGELOG.md` | Generated release history | Maintainer | Active (`BASE-08`) |
 | `docs/OBSERVABILITY.md` | Metric catalog, naming, cardinality and exposure policy | Maintainer | Active (`OBS-01`) |
+| `docs/TESTING.md` | Test layers, live integration stack, N−1 upgrade rehearsal and CI failure artifacts | Maintainer | Active (`QAT-02`) |
 
 ### 13.2 Standards and specifications
 

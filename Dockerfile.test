@@ -1,8 +1,9 @@
 # Multi-stage test runner image for the SPM platform CI gate.
 #
-# Stage 1: Go — builds the binary and runs all Go tests (unit + integration).
-# Stage 2: Node — runs the TypeScript/Vue vitest suite.
-# Stage 3: Final — combines exit codes; exits non-zero if either suite fails.
+# go_test            — builds the API and runs the Go unit suite.
+# node_test          — runs the UI typecheck, Vitest suite and production build.
+# integration_runner — combines both unit results and runs the tagged integration suite.
+# integration_only   — compiles and runs only the tagged integration suite for CI.
 
 # ── Go test stage ────────────────────────────────────────────────────────────
 FROM golang:1.27.4-alpine AS go_test
@@ -43,11 +44,11 @@ RUN npm run typecheck \
     && echo "NODE_UNIT_TESTS=PASS" > /node_unit_result.txt \
     || (echo "NODE_UNIT_TESTS=FAIL" > /node_unit_result.txt && cat /node_unit_result.txt && exit 1)
 
-# ── Integration test runner ──────────────────────────────────────────────────
-# This stage is what docker-compose.test.yml runs as the `test_runner` service.
-# The COPY instructions below force Docker to execute the Go unit-test and
-# frontend typecheck/Vitest stages, so the final image represents the complete
-# quality gate rather than integration tests alone.
+# ── Full local integration runner ────────────────────────────────────────────
+# Used by the manual full-stack command documented in docs/TESTING.md. The COPY
+# instructions below force Docker to execute the Go unit-test and frontend
+# typecheck/Vitest stages, so the image represents the complete local gate
+# rather than integration tests alone. The PR gate uses `integration_only`.
 FROM golang:1.27.4-alpine AS integration_runner
 
 RUN apk add --no-cache curl
@@ -74,3 +75,22 @@ RUN cd api && CGO_ENABLED=0 go test -tags integration -c \
 CMD /integration.test -test.v -test.count=1 -test.timeout=300s \
     && echo "INTEGRATION_TESTS=PASS" \
     || (echo "INTEGRATION_TESTS=FAIL" && exit 1)
+
+# ── Integration-only runner ──────────────────────────────────────────────────
+# The pull-request gate runs the Go unit suite, the UI suite and this
+# integration suite in separate jobs, so this target deliberately does not
+# re-run the unit stages. It compiles the tagged suite once and runs it against
+# the live PostgreSQL/NATS/Gitea stack.
+FROM golang:1.27.4-alpine AS integration_only
+
+WORKDIR /app
+
+COPY api/go.mod api/go.sum ./api/
+RUN cd api && go mod download
+
+COPY api/ ./api/
+
+RUN cd api && CGO_ENABLED=0 go test -tags integration -c \
+        -o /integration.test ./tests/integration/...
+
+CMD ["sh", "-c", "/integration.test -test.v -test.count=1 -test.timeout=300s"]
