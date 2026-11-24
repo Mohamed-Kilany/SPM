@@ -474,7 +474,7 @@ func (h *Handler) transferProjectInTx(ctx context.Context, tx pgx.Tx, projectID,
 func (h *Handler) reassignWorkItems(ctx context.Context, tx pgx.Tx, from, to uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO project_members (project_id, user_id, role)
-		SELECT DISTINCT project_id, $1, 'developer'
+		SELECT DISTINCT project_id, $1::uuid, 'developer'
 		FROM work_items
 		WHERE assignee_id = $2 AND status = ANY($3::text[])
 		ON CONFLICT (project_id, user_id) DO NOTHING`, to, from, openWorkItemStatuses); err != nil {
@@ -489,7 +489,7 @@ func (h *Handler) reassignWorkItems(ctx context.Context, tx pgx.Tx, from, to uui
 func (h *Handler) reassignApprovals(ctx context.Context, tx pgx.Tx, from, to uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO project_members (project_id, user_id, role)
-		SELECT DISTINCT d.project_id, $1, 'developer'
+		SELECT DISTINCT d.project_id, $1::uuid, 'developer'
 		FROM deployment_approvals a
 		JOIN deployments d ON d.id = a.deployment_id
 		WHERE a.approver_id = $2 AND a.status = 'pending'
@@ -509,7 +509,7 @@ func (h *Handler) reassignArtifacts(ctx context.Context, tx pgx.Tx, from, to uui
 		// Table names are constants from the fixed list above.
 		if _, err := tx.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO project_members (project_id, user_id, role)
-			SELECT DISTINCT project_id, $1, 'developer'
+			SELECT DISTINCT project_id, $1::uuid, 'developer'
 			FROM %s WHERE owner_id = $2
 			ON CONFLICT (project_id, user_id) DO NOTHING`, table), to, from); err != nil {
 			return total, err
