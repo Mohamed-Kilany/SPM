@@ -6,7 +6,8 @@
 # Usage:
 #   docker compose -f docker-compose.test.yml up --exit-code-from test_runner
 #
-# The test_runner exits with the combined Go unit + integration test result.
+# test_runner runs the tagged Go integration suite. The Go unit suite runs in
+# the separate `Go: fmt, vet, test, build` PR job.
 #
 # The separate Compose project name keeps test containers, volumes and cleanup
 # fully isolated from the main `spm` stack.
@@ -41,6 +42,11 @@ services:
     volumes:
       - test_postgres_data:/var/lib/postgresql
       - ./api/internal/migrate/sql:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Bound to loopback for the CI upgrade rehearsal, which runs the current
+      # API binary on the runner against a scratch database. Not published in
+      # the production stack.
+      - "127.0.0.1:55432:5432"
     networks:
       - spm_test_net
     healthcheck:
@@ -57,6 +63,9 @@ services:
     volumes:
       - test_nats_data:/data
       - ./nats/nats.conf:/etc/nats/nats.conf:ro
+    ports:
+      # Loopback only, used by the CI upgrade rehearsal.
+      - "127.0.0.1:54222:4222"
     networks:
       - spm_test_net
     healthcheck:
@@ -148,6 +157,8 @@ services:
         condition: service_healthy
       test_nats:
         condition: service_healthy
+      test_gitea:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 5s
@@ -199,13 +210,16 @@ services:
       start_period: 10s
 
   # â”€â”€ Test Runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  # Runs all Go unit tests + integration tests, then exits.
-  # docker compose -f docker-compose.test.yml up --exit-code-from test_runner
+  # Runs the tagged Go integration suite against the live stack.
+  # The PR gate starts only the services the suite needs and then runs:
+  #   docker compose -f docker-compose.test.yml run --rm --no-deps test_runner
+  # The full local command in the README still works and also starts the UI and
+  # edge services for manual inspection.
   test_runner:
     build:
       context: .
       dockerfile: Dockerfile.test
-      target: integration_runner
+      target: integration_only
     environment:
       SPM_BASE_URL:         "http://test_api_backend:8080"
       DATABASE_URL:         "postgres://spm_test:spm_test_password@test_postgres:5432/spm_test?sslmode=disable"

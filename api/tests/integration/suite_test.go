@@ -82,6 +82,18 @@ func authToken(t *testing.T, username, password string) string {
 	return result.Token
 }
 
+// invalidationWait covers the server's second-precision token invalidation
+// boundary. A membership or ownership change records the invalidation second
+// plus one, so a token issued in the same wall-clock second as the change is
+// rejected. Wait for the next second before signing in again.
+const invalidationWait = 1100 * time.Millisecond
+
+// waitPastInvalidation waits until a fresh sign-in succeeds after an action
+// invalidated the user's tokens.
+func waitPastInvalidation() {
+	time.Sleep(invalidationWait)
+}
+
 // do performs an authenticated HTTP request and returns the response.
 func do(t *testing.T, method, path, token string, body any) *http.Response {
 	t.Helper()

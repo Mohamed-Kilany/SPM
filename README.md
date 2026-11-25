@@ -71,6 +71,7 @@ The required pull-request gate (`.github/workflows/pr-gate.yml`) runs:
 | UI | `npm audit --audit-level=high`, `vue-tsc --noEmit`, Vitest, Vite production build, gzip bundle budget |
 | AI | `pip-audit`, `pytest` for the FastAPI service |
 | Compose | `docker compose config` for the production and test stacks |
+| Integration | real PostgreSQL, NATS and Gitea; migrations from zero, an N−1 upgrade rehearsal and the tagged Go integration suite |
 | Images | Docker build, Syft SPDX SBOM and Trivy HIGH/CRITICAL scan of the API, UI and AI images |
 | Security | dependency review, CodeQL, Dependabot alerts and secret scanning with push protection |
 
@@ -91,9 +92,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/openapi.ps1
 
 See [docs/API.md](docs/API.md) for the source-of-truth map and the versioning policy.
 
-The gate does **not** currently run the Go integration suite (`api/tests/integration`, build tag
-`integration`) or Playwright end-to-end tests (`ui/e2e`). Both run locally and are tracked as
-`QAT-02` and `QAT-03` in [TASKS.md](TASKS.md).
+The `Integration: real dependencies` job runs the Go integration suite against
+real PostgreSQL, NATS and Gitea. It applies every migration from zero, rehearses
+an upgrade from the pull request base commit, and uploads Compose and test logs
+when it fails. Playwright end-to-end tests remain tracked as `QAT-03` in
+[TASKS.md](TASKS.md); the stack, seed data, upgrade rehearsal and failure
+artifacts are documented in [docs/TESTING.md](docs/TESTING.md).
 
 Local commands (the full gate and E2E require a local Docker engine):
 
@@ -113,6 +117,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/openapi.ps1 -Check
 
 # Isolated integration stack
 docker compose -f docker-compose.test.yml up --build --exit-code-from test_runner
+
+# CI-equivalent integration gate, including migration and upgrade checks
+BASE_SHA="$(git rev-parse HEAD~1)" bash scripts/ci-integration.sh
 
 # Browser E2E (Playwright, system Chrome)
 cd ui
